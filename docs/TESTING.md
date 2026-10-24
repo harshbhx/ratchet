@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1918 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page), ~120 s
+pytest -q                     # 1920 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -65,7 +65,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 49 (45 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
 | `tests/test_judges_page.py` | 5 |
-| **Total** | **1918** |
+| **Total** | **1920** |
 
 There are three layers:
 

@@ -82,11 +82,36 @@ def test_wilson_matches_the_measured_baseline():
     assert tc.sign_p(0, 0) == 1.0 and tc.sign_p(10, 0) == pytest.approx(0.002, abs=0.0001)
 
 
-def test_verdict_uses_the_ranges_not_the_point_estimates():
+def test_verdict_uses_the_ranges_then_the_gap():
     a, b = tc.score(60, 100), tc.score(50, 100)
-    assert tc.verdict(a, b) == "about_same"  # 60 vs 50 of 100: ranges overlap
+    assert tc.verdict(a, b) == "higher"  # 60 vs 50 of 100: ranges overlap, gap of 10 points
     assert tc.verdict(tc.score(90, 100), tc.score(50, 100)) == "above"
     assert tc.verdict(tc.score(30, 100), tc.score(60, 100)) == "below"
+
+
+def test_verdict_words_for_the_three_cases():
+    # (a) ranges apart: above / below
+    assert tc.verdict(tc.score(90, 100), tc.score(50, 100)) == "above"
+    assert tc.verdict(tc.score(30, 100), tc.score(60, 100)) == "below"
+    # (b) ranges overlap, gap under 5 points: about the same (hard vs Ultra 90.7 vs 91.3, BFCL adapter vs base 80.3 vs 77.3)
+    assert tc.verdict(tc.score(136, 150), tc.score(137, 150)) == "about_same"
+    assert tc.verdict(tc.score(241, 300), tc.score(232, 300)) == "about_same"
+    # (c) ranges overlap, gap of 5 points or more: lower / higher (BFCL adapter vs Ultra 80.3 vs 88.3)
+    a, u = tc.score(241, 300), tc.score(265, 300)
+    assert a["hi"] >= u["lo"] and tc.verdict(a, u) == "lower"
+    assert tc.verdict(u, a) == "higher"
+    assert tc.verdict(tc.score(55, 100), tc.score(50, 100)) == "higher"  # exactly 5 points
+
+
+def test_phrase_says_lower_with_the_chance_clause():
+    a, u = tc.score(241, 300), tc.score(265, 300)
+    text = tc.phrase("lower", a, u, "Nemotron 3 Ultra")
+    assert text == (
+        "lower than Nemotron 3 Ultra: 80.3% against 88.3% (241/300 against 265/300; "
+        "the 95% ranges overlap only slightly, so part of the gap could be chance)"
+    )
+    assert tc.phrase("higher", u, a, "x").startswith("higher than x: 88.3% against 80.3%")
+    assert tc.phrase("about_same", a, tc.score(232, 300), "x").startswith("about the same as x: 80.3% against 77.3%")
 
 
 def test_pending_when_there_are_no_results(tmp_path):

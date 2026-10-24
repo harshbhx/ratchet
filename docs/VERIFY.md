@@ -132,6 +132,6 @@ Every claim below recomputes from files in `evidence/toolcall/`. Nothing here ne
 | The copied evidence files are unchanged | `python scripts/toolcall_results.py --check` (compares each file's SHA-256 with `evidence/toolcall/MANIFEST.json`) |
 | The drafts and the page data are the ones the numbers give | `python scripts/toolcall_results.py --render --web --check-render` |
 
-**It shows:** the published numbers are the saved answers' numbers, under the exam's own strict scorer. **It does not show:** that the adapter produced those answers on the Modal T4 as described: that rests on the training and generation logs kept with the run. A 95% range on 150 or 300 questions is wide, which is why the wording says 'about the same' when ranges overlap.
+**It shows:** the published numbers are the saved answers' numbers, under the exam's own strict scorer. **It does not show:** that the adapter produced those answers on the Modal T4 as described: that rests on the training and generation logs kept with the run. A 95% range on 150 or 300 questions is wide, which is why the wording says 'about the same' only when the ranges overlap and the gap is under 5 points, and 'lower' or 'higher' with a chance caveat when the ranges overlap and the gap is larger.
 
 Found something that does not match? Open an [issue](https://github.com/harshbhx/ratchet/issues/new/choose). A number that cannot be rechecked should not be on the page.

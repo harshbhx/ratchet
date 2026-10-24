@@ -70,9 +70,9 @@
    },
    "verdicts": {
     "adapter_vs_base": "about_same",
-    "adapter_vs_ultra": "about_same"
+    "adapter_vs_ultra": "lower"
    },
-   "sentence": "On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is about the same as the teacher: 80.3% against 88.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart).",
+   "sentence": "On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is lower than the teacher: 80.3% against 88.3% (241/300 against 265/300; the 95% ranges overlap only slightly, so part of the gap could be chance).",
    "paired": {
     "fixed": 15,
     "broke": 6,

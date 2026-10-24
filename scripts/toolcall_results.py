@@ -100,13 +100,20 @@ def score(correct: int, n: int) -> dict[str, Any]:
     return {"agree": correct, "n": n, "rate": round(correct / n, 4) if n else 0.0, "lo": lo, "hi": hi}
 
 
+GAP_POINTS = 0.05  # overlapping ranges and a gap of 5 points or more: say lower/higher, not "about the same"
+
+
 def verdict(a: dict, b: dict) -> str:
-    """a against b from the 95% ranges: 'above' and 'below' only when the ranges do not overlap, else 'about_same'."""
+    """a against b. 'above' / 'below' when the 95% ranges do not overlap. Overlapping ranges: 'about_same' when the point
+    estimates are less than 5 points apart, else 'higher' / 'lower' (the gap is real in the data, but may be chance)."""
     if a["lo"] > b["hi"]:
         return "above"
     if a["hi"] < b["lo"]:
         return "below"
-    return "about_same"
+    gap = a["agree"] / a["n"] - b["agree"] / b["n"]
+    if round(abs(gap), 9) < GAP_POINTS:
+        return "about_same"
+    return "higher" if gap > 0 else "lower"
 
 
 # ---------------------------------------------------------------- files
@@ -346,6 +353,9 @@ def phrase(v: str, a: dict, b: dict, other: str) -> str:
         return f"above {other}: {pct(a['rate'])} against {pct(b['rate'])}, and the 95% ranges do not overlap"
     if v == "below":
         return f"below {other}: {pct(a['rate'])} against {pct(b['rate'])}, and the 95% ranges do not overlap"
+    counts = f"{pct(a['rate'])} against {pct(b['rate'])} ({a['agree']}/{a['n']} against {b['agree']}/{b['n']}"
+    if v in ("higher", "lower"):
+        return f"{v} than {other}: {counts}; the 95% ranges overlap only slightly, so part of the gap could be chance)"
     side = "higher" if a["rate"] > b["rate"] else "lower" if a["rate"] < b["rate"] else "the same"
     return f"about the same as {other}: {pct(a['rate'])} against {pct(b['rate'])} ({side} by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart)"
 
@@ -455,7 +465,7 @@ def render(r: dict) -> dict[str, str]:
         "| The copied evidence files are unchanged | `python scripts/toolcall_results.py --check` (compares each file's SHA-256 with `evidence/toolcall/MANIFEST.json`) |\n"
         "| The drafts and the page data are the ones the numbers give | `python scripts/toolcall_results.py --render --web --check-render` |\n\n"
         "**It shows:** the published numbers are the saved answers' numbers, under the exam's own strict scorer. "
-        "**It does not show:** that the adapter produced those answers on the Modal T4 as described: that rests on the training and generation logs kept with the run. A 95% range on 150 or 300 questions is wide, which is why the wording says 'about the same' when ranges overlap.\n"
+        "**It does not show:** that the adapter produced those answers on the Modal T4 as described: that rests on the training and generation logs kept with the run. A 95% range on 150 or 300 questions is wide, which is why the wording says 'about the same' only when the ranges overlap and the gap is under 5 points, and 'lower' or 'higher' with a chance caveat when the ranges overlap and the gap is larger.\n"
     )
     real_entry = {
         "id": "toolcall-round3",
