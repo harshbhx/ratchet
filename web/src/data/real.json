@@ -157,8 +157,8 @@
       "status": "real",
       "evidence": "On 24 Oct 2026 the gateway was deployed in live mode on Cloudflare Containers. A request to it is answered by Nemotron 3 Ultra on Nebius Token Factory under daily spend and rate limits, and an admin key and the mock-only demo controls are refused. No trained student is served in it yet, so the teacher answers every request.",
       "check": {
-        "label": "Send it a request and read the ratchet block in the reply",
-        "command": "curl -s https://live.ratchet.dualmindlab.tech/v1/chat/completions -H 'Content-Type: application/json' -d '{\"model\":\"ratchet\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
+        "label": "Open it and send a request: the reply carries a ratchet block with who answered",
+        "href": "https://live.ratchet.dualmindlab.tech"
       },
       "paths": [
         "deploy/cloudflare-live/src/index.ts",
