@@ -817,7 +817,7 @@ def test_dashboard_admin_key_stays_in_memory():
     client sends the key only as an Authorization header."""
     src = Path(__file__).resolve().parents[1] / "web" / "src"
     storage = re.compile(r"localStorage|sessionStorage|indexedDB|document\.cookie|caches\.open")
-    users = sorted(str(p.relative_to(src)) for p in src.rglob("*.ts*") if storage.search(p.read_text(encoding="utf-8")))
+    users = sorted(p.relative_to(src).as_posix() for p in src.rglob("*.ts*") if storage.search(p.read_text(encoding="utf-8")))
     assert users == ["lib/hooks.ts"], users  # the theme toggle
     hooks = (src / "lib" / "hooks.ts").read_text(encoding="utf-8")
     assert re.findall(r"localStorage\.setItem\(([^,]+),", hooks) == ['"ratchet-theme"']
@@ -830,6 +830,17 @@ def test_dashboard_admin_key_stays_in_memory():
     api_ts = (src / "lib" / "api.ts").read_text(encoding="utf-8")
     assert "authorization: `Bearer ${k}`" in api_ts
     assert api_ts.count("adminKey") == api_ts.count("adminHeaders(adminKey)") * 2, "the admin key goes anywhere but the header"
+
+    # The judge code (ADR 0120) follows the same rule: in an input's memory, out once in a POST body, never a URL or header.
+    judge = [p for p in src.rglob("*.ts*") if re.search(r"judgeUnlock|judge-code-input|judgeCall", p.read_text(encoding="utf-8"))]
+    names = {p.name for p in judge}
+    assert names >= {"api.ts", "judge-code.tsx"}, "no judge code holder: the scan below would prove nothing"
+    for p in judge:
+        assert not url.search(p.read_text(encoding="utf-8")), f"{p.name} may put the judge code in a URL"
+    call = api_ts[api_ts.index("async function judgeCall") : api_ts.index("const taskPath")]
+    assert "JSON.stringify({ code })" in api_ts and 'credentials: "same-origin"' in call
+    assert not re.search(r"authorization|encodeURIComponent|\?code=", call, re.I), "the judge code goes anywhere but the body"
+    assert "console." not in (src / "pages" / "scout" / "judge-code.tsx").read_text(encoding="utf-8")
 
 
 # ---------- web: the story page ----------

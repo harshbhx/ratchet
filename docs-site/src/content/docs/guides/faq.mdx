@@ -154,7 +154,7 @@ The day's public share of Tavily credits ran out, or a search failed. The run st
 
 ### Is anything held back for judges?
 
-Yes, on the server side. `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` hold part of each day's Scout runs, spend and Tavily credits back from the public; the code is shared with evaluators directly, never published, and opens a session through `POST /scout/judge` and a signed cookie. A field on the Scout page to type the code in is planned. [Scout](/guides/scout/)
+Yes, on the server side. `RATCHET_SCOUT_JUDGE_CODE` and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` hold part of each day's Scout runs, spend and Tavily credits back from the public; the code is shared with evaluators directly, never published, and opens a session through `POST /scout/judge` and a signed cookie. On the Scout page, an "I am a judge" link under the question box opens a field for the code; the page keeps it in memory only and shows how many judge runs are left today. [Scout](/guides/scout/)
 
 ## For engineers
 

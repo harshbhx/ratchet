@@ -38,7 +38,7 @@ Logs constrain how an access code may travel. uvicorn's access log writes the pa
 - Per-IP windows reset on restart, as before; only the daily totals persist.
 - The first restart after upgrading misses the runs from earlier that day (they have no rows), once.
 - Restoring happens once, at startup. Two processes on one ledger still each enforce their own in-memory caps until NFR-60 detects the second one.
-- The Scout page's code field waits for the UI lane's merge; until then a judge session can be opened with `POST /scout/judge` from the browser's console, and judges without the code get the public pool.
+- The Scout page has an "I am a judge" control (`web/src/pages/scout/judge-code.tsx`) that opens a session with `POST /scout/judge`; it shows only when `/scout/status` reports `judge.enabled`. Judges without the code get the public pool.
 
 ## Alternatives considered
 
