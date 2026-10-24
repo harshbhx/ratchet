@@ -56,7 +56,7 @@
 
 | | |
 |---|---|
-| **Start** | [Try it](#try-it) · [Real results](#real-results) · [How it works](#how-it-works) · [Watch it work](#watch-it-work) · [Quick start](#quick-start) |
+| **Start** | [Try it](#try-it) · [Real results](#real-results) · [How it works](#how-it-works) · [Watch it work](#watch-it-work) · [Quick start](#quick-start) · [Run it on Nebius](#run-it-on-nebius-and-where-else-to-host-it) |
 | **Check it** | [For judges](#for-judges-a-five-minute-path) · [Status, honestly](#status-honestly) · [Limitations](#limitations) |
 | **Why** | [Why license-clean](#why-license-clean) · [NVIDIA and Nebius](#how-it-uses-nvidia-and-nebius) · [Scout](#scout-ratchet-on-agent-traffic) · [Why not a router](#why-not-a-router-or-a-distillation-api) |
 | **Background** | [NVIDIA lineage](#nvidia-lineage) · [Prior art](#prior-art-and-what-is-new) · [Documentation](#documentation) · [Repo map](#repo-map) · [License](#license) |
@@ -68,6 +68,7 @@
 | **Live demo** | Real Token Factory calls under spend limits. The teacher answers every request for now. | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech) |
 | **Simulation** | Mock models: run days, break a deploy, watch the rollback. | [demo.ratchet.dualmindlab.tech](https://demo.ratchet.dualmindlab.tech) |
 | **The story** | How it works, the results, and the judges' page. | [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech) |
+| **Scout, recorded** | Two real Scout runs replayed in your browser, on Hugging Face. | [huggingface.co/spaces/harshbhx/ratchet-scout](https://huggingface.co/spaces/harshbhx/ratchet-scout) |
 | **Your machine** | No keys, no GPU. | [Quick start](#quick-start) |
 
 ## Real results
@@ -178,13 +179,25 @@ print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage
 
 **Live mode** (real Token Factory calls): set `NEBIUS_API_KEY` and `RATCHET_API_KEYS`, then `RATCHET_MODE=live uvicorn ratchet.gateway:app --port 8000`. The full setup (student endpoint, nightly jobs, measuring a run) is in [docs/LIVE_MODE.md](docs/LIVE_MODE.md); every setting is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
+## Run it on Nebius, and where else to host it
+
+The gateway does no inference, so it runs anywhere a container does. The student and the nightly training are what need a GPU.
+
+| Where | How | State |
+|---|---|---|
+| **Nebius AI Cloud** (the student and Night School) | `bash deploy/student_endpoint.sh create` makes a Serverless Endpoint (vLLM with runtime LoRA loading), and `python -m ratchet.live night` runs the nightly Serverless Job. Add `DRY_RUN=1` to print the commands first. Steps: [docs/LIVE_MODE.md](docs/LIVE_MODE.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). | Ready to run. Nebius has no one-click "Deploy" button that we could find (Oct 2026): it deploys with its CLI and these scripts. |
+| **Nebius AI Cloud** (the demo host) | One CPU VM with Docker Compose and Caddy: [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md) | Ready to run |
+| **Cloudflare** | Workers with Containers, deployed by a manual workflow: `deploy/cloudflare-live` (live demo) and `deploy/cloudflare` (simulation) | Running: [live demo](https://live.ratchet.dualmindlab.tech), [simulation](https://demo.ratchet.dualmindlab.tech) |
+| **Hugging Face** | A static Space that replays the recorded Scout runs, and a dataset with the recordings | Published: [Space](https://huggingface.co/spaces/harshbhx/ratchet-scout), [dataset](https://huggingface.co/datasets/harshbhx/ratchet-scout-runs) |
+| **Any container host** | `make docker && docker run -p 8000:8000 ratchet-gateway` (mock mode; add the live settings from [Quick start](#quick-start)) | Works |
+
 ## For judges: a five-minute path
 
 | Check | Where | Status |
 |---|---|---|
 | Open source with a license | [`LICENSE`](LICENSE), Apache-2.0 for the code | Real |
 | A working demo that calls Token Factory | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech): send a request, read the `ratchet` block in the reply | Real |
-| A real run on record | [`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23) (20 real requests, about $0.01) and two recorded Scout runs in [`evidence/scout`](evidence/scout) | Real |
+| A real run on record | [`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23) (20 real requests, about $0.01) and two recorded Scout runs in [`evidence/scout`](evidence/scout), also [replayable on Hugging Face](https://huggingface.co/spaces/harshbhx/ratchet-scout) | Real |
 | Results that recompute | [Real results](#real-results), the data on [Hugging Face](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), `python scripts/text2sql/exam_numbers.py --check` | Measured |
 | The loop, end to end | [Simulation](https://demo.ratchet.dualmindlab.tech) or `make demo` | Simulation |
 | Everything on one page | [ratchet.dualmindlab.tech/judges](https://ratchet.dualmindlab.tech/judges) | |
@@ -193,7 +206,8 @@ print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage
 
 > [!NOTE]
 > - **Simulation numbers are mock.** Every figure from `python -m sim.simulate` comes from mock models and is labelled simulation. It shows how the loop behaves, not real model quality.
-> - **Measured on real models:** the exam scores above, from two adapters trained on rented T4 GPUs (a free Colab T4 and a Modal T4). Nothing has run on Nebius GPUs yet: the Serverless Job and Endpoint scripts are written and tested offline, but not run (no compute credit).
+> - **Measured on real models:** the exam scores above, from two adapters trained on rented T4 GPUs (a free Colab T4 and a Modal T4).
+> - **Ready to run on Nebius:** the Serverless Job and Endpoint scripts are written and tested offline; see [Run it on Nebius](#run-it-on-nebius-and-where-else-to-host-it).
 > - **The live demo calls Token Factory for real,** under spend limits, and the teacher answers every request: no trained student is served on a GPU yet, so a trained version's calls would go to a hosted, untuned Nano model (see [Limitations](#limitations)).
 > - **Recorded live Scout runs** are in [evidence/scout](evidence/scout): real Token Factory and Tavily calls, every model call answered by the teacher.
 
