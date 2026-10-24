@@ -1,6 +1,7 @@
 # ADR 0014: Upstream failure semantics: bounded retries, one error type, and statuses a client can act on
 
 - Status: Accepted
+- **Update:** audits moved off the request path in [ADR 0072](0072-off-path-audits-and-shadow.md).
 - Date: 2026-10-20
 
 ## Context

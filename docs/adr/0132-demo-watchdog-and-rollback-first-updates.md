@@ -60,3 +60,8 @@ Three things can break it without anyone noticing:
 - Unverified until run on the VM: Token Factory's exhausted-credit status, whether the VM reaches its own public IP
   (`RATCHET_WATCH_CONNECT=local` is the fallback), Slack's and Discord's handling of the body's extra keys, and the Docker
   Compose behaviour of the fake-tested rollback.
+
+## Alternatives considered
+
+- **Restart on `/readyz`.** Rejected: a teacher outage would become a restart loop.
+- **Alerts built on events only.** Rejected: judging traffic is too sparse to carry them.

@@ -44,3 +44,8 @@ A correction is kept out, with the reason in the response and the verdict still 
 - A label that replaces a teacher's on an existing training row adds no row, so it does not count toward Night School's new-data gate (`run_night`'s `min_new_examples`): corrections and imports that only relabel are trained on at the next night that has enough new rows (the runbook says so).
 - When retention purged an example's text, a later duplicate restores it with that answer's label, teacher and license, and now also its `origin` (the restored label's own; NULL from the router), where before the stored origin was kept. The label and its origin now always describe the same answer; lane F's FR-16.8, which owns `examples.origin`, should keep that when the branches merge.
 - New schema: `requests.request_id`, `requests.end_user_secondary`, `examples.verified`, `examples.golden_only`, the `feedback` table, three indexes. New setting: `RATCHET_FEEDBACK_CORRECTIONS`.
+
+## Alternatives considered
+
+- **Treat a correct verdict as a label.** Rejected: it would store student text (invariant 2).
+- **Let verdicts promote or roll back versions.** Rejected: the sample is biased (invariant 26).

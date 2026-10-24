@@ -27,3 +27,8 @@ These endpoints differ in what Ratchet can do with them. Embeddings are vectors,
 - `reasoning.effort` on `/v1/responses` must be one the OpenAI SDK's `Response` model accepts (`openai_compat.REASONING_EFFORTS`), since the response echoes it; `/v1/chat/completions` echoes nothing and keeps accepting any string.
 - The embeddings model and its price are unverified until `scripts/day1_check.py` passes with a real key (INV-9); the check lists and calls it.
 - `gateway._complete` now validates and hands over to `_serve` and `_chat_response`; the lines did not change order, so other items' edits to the chat handler land in `_serve` and reach all three endpoints.
+
+## Alternatives considered
+
+- **Leave these endpoints as 404.** Rejected: a drop-in base URL would break the first embeddings or completions call.
+- **Distill embeddings.** Rejected: vectors are not text a student can learn to write.

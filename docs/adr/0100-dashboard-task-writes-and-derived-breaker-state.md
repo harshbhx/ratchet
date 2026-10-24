@@ -25,3 +25,8 @@ Two questions decide how the new panels work:
 - A browser extension or a script injected into the page could still read the key while it is in memory, as with any page that sends one. The page loads no third-party scripts (web/CLAUDE.md), and the key is gone when the tab closes.
 - The breaker panel is honest about its source but limited by it: after 40 newer events a breaker's last change scrolls out of view ("No recent change"), and the first wait is not shown. When an endpoint serves `Ratchet.health()`, the panel should read the snapshot first and keep the log for the history; that is a backend change for another lane.
 - The event text is now an interface: `ratchet/CLAUDE.md` and `docs/ARCHITECTURE.md` say so next to the code that writes it.
+
+## Alternatives considered
+
+- **Keep the admin key in `localStorage`.** Rejected: invariant 18.
+- **Add a breaker endpoint now.** Rejected: this lane changes no Python.

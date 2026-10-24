@@ -11,7 +11,7 @@ The metrics must mean the same thing in the simulator, the mock demo and a live 
 
 ## Decision
 
-`ratchet/kpis.py` computes every metric from the ledger with pure functions over plain rows (ledger days, audit counts, release events), and `report(ledger, window_days, min_audits, mode)` reads those rows and assembles them. The gateway serves it at `GET /ratchet/kpis` (public, like `/ratchet/stats`; `?days=` picks another window) and as a `kpis` block in `/ratchet/stats` (an added key; the dashboard does not read it yet). The simulator puts it in its JSON and prints it labelled as simulation. Nothing in it writes.
+`ratchet/kpis.py` computes every metric from the ledger with pure functions over plain rows (ledger days, audit counts, release events), and `report(ledger, window_days, min_audits, mode)` reads those rows and assembles them. The gateway serves it at `GET /ratchet/kpis` (access level `dashboard`, like `/ratchet/stats`; `?days=` picks another window) and as a `kpis` block in `/ratchet/stats` (an added key; the dashboard does not read it yet). The simulator puts it in its JSON and prints it labelled as simulation. Nothing in it writes.
 
 Each metric is `{name, value, target, op, unit, met, detail}`. `met` has three values: true, false, and `null` when there is not enough data to say (no traffic in the window, too few audits, too few days to see drift, a drift episode still open within its target). A `null` is never reported as a pass. `detail` holds the counts behind the number, so a reader can recompute it.
 

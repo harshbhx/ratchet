@@ -2,26 +2,28 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-19
+- **Amended:** [ADR 0145](0145-train-on-the-served-prompt.md) replaces Unsloth with TRL and PEFT in a pinned image.
 
 ## Context
 
 The hackathon requires running on Nebius Token Factory or Nebius AI Cloud with an NVIDIA open model. The natural plan was to fine-tune and host the student on Token Factory. Research on 2026-10-19 found:
 
-- Token Factory fine-tuning supports Qwen, Llama, gpt-oss, Gemma 4 and DeepSeek, but **no Nemotron** models.
-- Token Factory serverless LoRA serving accepts only `meta-llama/Llama-3.1-8B-Instruct` and `Llama-3.3-70B-Instruct` as base models.
+- As of 2026-10-19 Token Factory offered no fine-tuning or LoRA serving for Nemotron models (the README states the same, Oct 2026). Re-check the Nebius docs before relying on this.
 - Custom weights on dedicated endpoints are beta and on request, with undocumented architectures.
-- Nemotron 3 Nano 30B-A3B needs about 60 GB of VRAM for LoRA (Unsloth). `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` is commercially usable, served by vLLM 0.15.1 or later, and fits a single L40S.
+- Nemotron 3 Nano 30B-A3B needs about 60 GB of VRAM for LoRA (research notes, 2026-10-19; no source link). `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` is commercially usable, served by vLLM 0.15.1 or later, and fits a single L40S.
 
 ## Decision
 
+Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested but have not been run on Nebius. The adapters behind the measured numbers in [evidence/](../../evidence/) were trained on a free Colab T4 and a rented Modal T4, never on Nebius GPUs. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
+
 - **Student:** `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` with LoRA (rank 16).
-- **Training:** a Nebius **Serverless Job** (`deploy/train_job.sh`, image from `deploy/Dockerfile.train`, `gpu-l40s-a`) running `ratchet.nightschool.train` (Unsloth, falling back to transformers + PEFT).
+- **Training:** a Nebius **Serverless Job** (`deploy/train_job.sh`, image from `deploy/Dockerfile.train`, `gpu-l40s-a`) running `ratchet.nightschool.train` (TRL with PEFT; see ADR 0145).
 - **Serving:** a Nebius **Serverless Endpoint** with `vllm/vllm-openai:v0.18.0-cu130`, `--enable-lora`, and runtime adapter loading (`VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`). `ratchet.live.load_adapter` calls `/v1/load_lora_adapter` after each training run. Each adapter is addressed by its name as the `model` field.
 - **Token Factory keeps:** the teacher (Ultra), the judge (Super), and the hosted untuned fallback student (Nano 30B) used when the endpoint is offline.
 
 ## Consequences
 
-- Positive: uses more of the Nebius stack (Token Factory, Serverless Jobs, Serverless Endpoints, Object Storage), which matches the judging panel.
+- Positive: uses more of the Nebius stack (Token Factory, Serverless Jobs, Serverless Endpoints, Object Storage), which the hackathon requires (run on Token Factory or Nebius AI Cloud).
 - Positive: the customer gets real adapter files they can download and run elsewhere.
 - Negative: more moving parts and GPU-hour cost. Runtime-loaded adapters vanish on restart (see [RUNBOOK.md](../RUNBOOK.md)).
 - Risk: Nemotron-H (hybrid Mamba) LoRA training and serving are unverified on this stack. The day-1 checks are in `python scripts/day1_check.py`.

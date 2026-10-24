@@ -1,6 +1,7 @@
 # ADR 0024: Foundations for the evidence features: exact statistics, Merkle trees, one schema change, reserved settings and three pinned workloads
 
 - Status: Accepted
+- **Update:** see [CONFIGURATION.md](../CONFIGURATION.md#reserved-settings) for what is still reserved; the counts in Consequences are as of this ADR's date.
 - Date: 2026-10-20
 
 ## Context

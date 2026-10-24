@@ -1,6 +1,7 @@
 # ADR 0026: Certified thresholds and a paired release gate
 
 - Status: Accepted
+- **Update:** per-task calibration was later built in [ADR 0040](0040-per-task-calibration.md).
 - Date: 2026-10-20
 
 ## Context
