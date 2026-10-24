@@ -65,7 +65,7 @@ sequenceDiagram
 **Reading this diagram.** Time runs downward. The student is always asked first, three times in one call. Only the gateway looks at the samples: it cleans them, counts agreement and computes one confidence number, and that number alone decides who answers. When the student answers, the teacher may still be called for a random audit (the `opt` block), but in live mode the client never waits for it. When the student does not answer, the teacher's answer goes to the client and is stored as training data if it is valid.
 
 <ul class="rt-key">
-  <li class="student">The student you own</li>
+  <li class="student">The student: Nano plus your adapter</li>
   <li class="teacher">The teacher you rent</li>
 </ul>
 
@@ -321,7 +321,7 @@ When the student's GPU endpoint is off (`RATCHET_STUDENT_BASE` unset), a trained
 That model never sat the exam, so no calibrated threshold or per-task record applies to it. `Ratchet.threshold` returns the fixed `Settings.confidence_threshold` (`RATCHET_CONFIDENCE_THRESHOLD`, default 0.80) for it, and its answers are **not covered by the adapter's certificate**. The same 0.80 is used for a version whose eval has no calibrated threshold.
 
 <Aside type="caution" title="No student has run on a Nebius GPU yet">
-As of Oct 22, 2026, the teacher runs on Nebius Token Factory, but no student has been served from a Nebius GPU endpoint and Night School has not calibrated a threshold on a live ledger. The scoring, calibration and certificate code is tested offline, and every threshold, precision and coverage figure from the simulator comes from mock models (simulation). The text-to-SQL adapter, trained on a free Colab T4, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
+As of Oct 25, 2026, the teacher runs on Nebius Token Factory, but no student has been served from a Nebius GPU endpoint and Night School has not calibrated a threshold on a live ledger. The scoring, calibration and certificate code is tested offline, and every threshold, precision and coverage figure from the simulator comes from mock models (simulation). The text-to-SQL adapter, trained on a free Colab T4 and a rented Modal T4, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
 </Aside>
 
 ## For engineers

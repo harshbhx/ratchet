@@ -11,7 +11,7 @@ import Compare from '../../../components/Compare.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 
-<Summary>Ratchet is for teams that pay frontier-model prices for narrow, repeated work. It moves that work to a small open model they own, learns only from teachers whose license allows it, and ships each new model only if it passes a gate. Its savings are shown in simulation today, not on live traffic.</Summary>
+<Summary>Ratchet is for teams that pay frontier-model prices for narrow, repeated work. It moves that work to a small open model with an adapter they own, learns only from teachers whose license allows it, and ships each new model only if it passes a gate. Its savings are shown in simulation today, not on live traffic.</Summary>
 
 ## The problem
 
@@ -27,7 +27,7 @@ Teams with steady, repetitive LLM traffic on tasks a small model can learn: supp
 
 <Compare before="Renting a frontier model for every call" after="With Ratchet">
   <div slot="before">Every narrow, repeated request is a paid call at frontier prices, the bill grows with traffic, and closed vendors forbid training a cheaper model on their answers.</div>
-  <div slot="after">A small open model you own takes over the work it is sure about, learns only from teachers whose license allows it, and ships each new version only if it passes a gate.</div>
+  <div slot="after">A small open model with your adapter takes over the work it is sure about, learns only from teachers whose license allows it, and ships each new version only if it passes a gate.</div>
 </Compare>
 
 <figure class="rt-diagram">
@@ -36,7 +36,7 @@ Teams with steady, repetitive LLM traffic on tasks a small model can learn: supp
 flowchart TB
   T(["Steady, narrow<br/>LLM traffic"]) ==> R["Ratchet"]
   R --> V1["Lower bill<br/>as the student<br/>takes over"]
-  R --> V2["A model you own:<br/>adapter and<br/>signed lineage"]
+  R --> V2["An adapter you own:<br/>signed lineage,<br/>open base"]
   R --> V3["License-clean:<br/>closed teachers<br/>refused"]
   R --> V4["Safe releases:<br/>gate, canary,<br/>rollback"]
   V1 --> M[("Measured per request,<br/>by token and GPU-hours")]
@@ -106,7 +106,7 @@ flowchart TB
 
 ## Honest limits
 
-<Aside type="caution" title="As of Oct 22, 2026">
+<Aside type="caution" title="As of Oct 25, 2026">
 - **Not proven on live traffic.** Real teacher calls on Nebius Token Factory built the text-to-SQL data (Oct 22, 2026), but the gateway's live mode is unverified until the day-1 checks pass, and the student endpoint has not been served on a Nebius GPU. Savings figures come from mock models and are labelled simulation. A text-to-SQL adapter trained on a free Colab T4 is the first real training result ([Results](/guides/results/)).
 - **Early stage.** There is no customer and no revenue.
 - **Savings depend on the traffic mix.** Per-token savings against the cheapest tiers of closed models are small. The large savings come from moving traffic off top-tier models, and only for tasks a small model can learn.

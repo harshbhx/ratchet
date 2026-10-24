@@ -7,13 +7,13 @@ import Summary from '../../../components/Summary.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 
-<Summary>Ratchet matters for four kinds of reader: the team with a growing LLM bill, the team that must show where its data went, the team that must show a model is safe to ship, and the builder who wants to own the model and its license trail. Each section below says what you get and links to the page that backs it.</Summary>
+<Summary>Ratchet matters for four kinds of reader: the team with a growing LLM bill, the team that must show where its data went, the team that must show a model is safe to ship, and the builder who wants to own the adapter and its license trail. Each section below says what you get and links to the page that backs it.</Summary>
 
 <PathGrid cols={2} label="Four reasons, one per reader">
   <PathCard title="If you pay for LLM calls" href="#if-you-pay-for-llm-calls" icon="coin" tone="neutral" eyebrow="Cost" description="The easy share of the traffic moves to a small model, and every request records what it cost and what the teacher alone would have cost." />
   <PathCard title="If you must know where your data went" href="#if-you-must-know-where-your-data-went" icon="shield" tone="neutral" eyebrow="Data" description="Redaction before storage, opt-outs, final erasure and export, with the teacher and license on every example." />
   <PathCard title="If you are regulated or careful" href="#if-you-are-regulated-or-careful" icon="gate" tone="neutral" eyebrow="Safe releases" description="A held-out exam, a silent trial and a staged rollout, each leaving a record a reviewer can check." />
-  <PathCard title="If you build on open models" href="#if-you-build-on-open-models" icon="key" eyebrow="License-clean, owned" description="Open teachers only, and an adapter you own that carries its licenses and signed lineage." />
+  <PathCard title="If you build on open models" href="#if-you-build-on-open-models" icon="key" eyebrow="License-clean, adapter owned" description="Open teachers only, and an adapter you own that carries its licenses and signed lineage." />
 </PathGrid>
 
 <figure class="rt-diagram">
@@ -61,7 +61,7 @@ With estimated prices (an L40S at $1.35 a GPU-hour on demand, [Nebius pricing](h
 |---|---|---|
 | The demo, 1,500 requests a day | About 60: far below | A 24/7 endpoint loses money. Use the hosted fallback or stop the endpoint when idle |
 | 10M requests a month | About 14,000: about ten times above | Self-hosting beats the teacher, but an untuned hosted Nano may cost less per answer. It then recommends the hosted fallback and says the comparison assumes the hosted model covers as many requests |
-| Very high volume | Over about 52,000 (estimate): above the hosted-fallback crossover too | Self-host |
+| Very high volume | Over about 45,000 (estimate): above the hosted-fallback crossover too | Self-host |
 
 <figure class="rt-diagram">
 
@@ -189,6 +189,6 @@ flowchart TB
 
 <div class="rt-callout rt-callout--note">
 
-The loop is built and tested offline. Real teacher calls on Nebius Token Factory built the text-to-SQL data on Oct 22, 2026; the gateway's own live mode stays unverified until `scripts/day1_check.py` passes with a real key. The student endpoint has not been served on a Nebius GPU yet, and a text-to-SQL adapter was trained on a free Colab T4. Simulation figures use mock models and are labelled. Open question: Token Factory Terms of Service §5(f), asked of Nebius support on Oct 19, 2026. See [What is Ratchet](/guides/what-is-ratchet/) and [Results](/guides/results/).
+The loop is built and tested offline. Real teacher calls on Nebius Token Factory built the text-to-SQL data on Oct 22, 2026; the gateway's own live mode stays unverified until `scripts/day1_check.py` passes with a real key. The student endpoint has not been served on a Nebius GPU yet, and text-to-SQL and tool-calling adapters were trained on a free Colab T4 and a rented Modal T4. Simulation figures use mock models and are labelled. Open question: Token Factory Terms of Service §5(f), asked of Nebius support on Oct 19, 2026. See [What is Ratchet](/guides/what-is-ratchet/) and [Results](/guides/results/).
 
 </div>

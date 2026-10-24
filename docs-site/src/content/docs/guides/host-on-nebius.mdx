@@ -13,7 +13,7 @@ import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
 
-<Summary>Ratchet runs on one small Nebius CPU VM that does no model inference, calls its teacher, judge and hosted fallback on Token Factory, and rents an L40S GPU only while you serve or train the student, so GPU money is spent only when you decide to spend it.</Summary>
+<Summary>Ratchet's Nebius deploy kit runs it on one small CPU VM that does no model inference, calls its teacher, judge and hosted fallback on Token Factory, and rents an L40S GPU only while you serve or train the student, so GPU money is spent only when you decide to spend it.</Summary>
 
 <Eli10>
 
@@ -29,7 +29,7 @@ Think of the whole restaurant as a set of rented rooms.
 </Eli10>
 
 <Aside type="caution" title="The GPU side has not run on Nebius yet">
-The teacher runs on Nebius Token Factory. As of Oct 22, 2026 the GPU parts have not: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the first SQL adapter was trained on a free Colab T4). The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command, so every call they make is unverified until it runs. Run every script with `DRY_RUN=1` first.
+The teacher runs on Nebius Token Factory. As of Oct 25, 2026 the GPU parts have not: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the adapters were trained on a free Colab T4 and a rented Modal T4). The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command, so every call they make is unverified until it runs. Run every script with `DRY_RUN=1` first.
 </Aside>
 
 ## How it really works
@@ -84,7 +84,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Green is in use today: Cloudflare Pages serves the static site and these docs, and the teacher runs on Nebius Token Factory, paid per token. Amber and dashed is the GPU side, which has not run on Nebius yet: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the first SQL adapter was trained on a free Colab T4). Plain boxes are the CPU VM this guide sets up: Caddy in front, the live gateway with its SQLite ledger, and a second gateway in mock mode for the simulation at `sim.<domain>`. The thick arrow is the paid path every live request can take; the dotted ones are optional: Tavily only for live Scout runs, the endpoint only while you run it, and the training job only once the Night School cron is turned on.
+**Reading this diagram.** Green is in use today: Cloudflare Pages serves the static site and these docs (the public demos run on Cloudflare Workers with Containers; the Nebius VM in this guide is scripted but not deployed), and the teacher runs on Nebius Token Factory, paid per token. Amber and dashed is the GPU side, which has not run on Nebius yet: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the adapters were trained on a free Colab T4 and a rented Modal T4). Plain boxes are the CPU VM this guide sets up: Caddy in front, the live gateway with its SQLite ledger, and a second gateway in mock mode for the simulation at `sim.<domain>`. The thick arrow is the paid path every live request can take; the dotted ones are optional: Tavily only for live Scout runs, the endpoint only while you run it, and the training job only once the Night School cron is turned on.
 
 <ul class="rt-key">
   <li class="ok">In use</li>
@@ -146,9 +146,7 @@ export NEBIUS_PROJECT_ID=<project ID from the console>
 nebius profile create --parent-id $NEBIUS_PROJECT_ID     # opens a browser login
 ```
 
-<Aside type="note" title="Installer URL">
-`docs/DEPLOY_NEBIUS_VM.md` and the error hint in `deploy/vm/create_vm.sh` still show an older installer URL on `storage.eu-north1.nebius.cloud`. Use the `artifacts.nebius.cloud` URL above; the repo docs will be updated.
-</Aside>
+
 
 <Aside type="tip" title="On Windows">
 The Nebius CLI runs on Ubuntu and macOS only. On Windows, use WSL (Ubuntu) or Cloud Shell in the Nebius console. The deploy scripts are bash scripts and also need `jq`, so WSL is the easier choice for the whole guide.
@@ -536,7 +534,7 @@ A rough estimate for a short evaluation period is about **$35 to $75**: 6 to 8 t
 
 ### Has any of this run on a real Nebius account?
 
-Token Factory, yes: the teacher runs there. The GPU endpoint and the training job, no, not as of Oct 22, 2026; the first SQL adapter was trained on a free Colab T4 instead. The scripts follow the Nebius docs and CLI reference (read Oct 20 and 21, 2026) and are tested offline, and the lines that could not be checked are marked "verify on day 1" in the scripts. Run each with `DRY_RUN=1` first and compare with `nebius ... --help`.
+Token Factory, yes: the teacher runs there. The GPU endpoint and the training job, no, not as of Oct 25, 2026; the adapters were trained on a free Colab T4 and a rented Modal T4 instead. The scripts follow the Nebius docs and CLI reference (read Oct 20 and 21, 2026) and are tested offline, and the lines that could not be checked are marked "verify on day 1" in the scripts. Run each with `DRY_RUN=1` first and compare with `nebius ... --help`.
 
 ### Do I need a GPU to host the demo?
 

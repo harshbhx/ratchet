@@ -45,7 +45,7 @@ export default defineConfig({
     starlight({
       title: 'Ratchet docs',
       description:
-        'Ratchet is an OpenAI-compatible gateway that distills open teacher models into a small student, with a gated nightly release. Rent intelligence today, own it tomorrow.',
+        'Ratchet is an OpenAI-compatible gateway that distills open teacher models into a small student. You end up with an adapter you own, learned only from open teachers, with a gated nightly release.',
       logo: {
         light: './src/assets/logo-light.svg',
         dark: './src/assets/logo-dark.svg',
@@ -135,7 +135,8 @@ export default defineConfig({
             { label: 'Guides', link: '/guides/big-picture/' },
             { label: 'API', link: '/api/http/' },
             { label: 'GitHub', link: REPO_URL },
-            { label: 'Live site', link: 'https://ratchet.dualmindlab.tech' },
+            { label: 'Live demo', link: 'https://live.ratchet.dualmindlab.tech' },
+            { label: 'Story site', link: 'https://ratchet.dualmindlab.tech' },
           ],
           footerText:
             'Ratchet is open source under Apache-2.0 ([GitHub](https://github.com/harshbhx/ratchet)). These pages are built from the repository’s `docs/` folder. Simulation numbers come from mock models and are labelled. Built with [Starlight](https://starlight.astro.build), the [Lucode](https://github.com/lucas-labs/lucode-starlight-theme) theme and [React Bits](https://reactbits.dev) components (MIT + Commons Clause, kept in `docs-site/src/components/rb/`).',
@@ -214,6 +215,7 @@ export default defineConfig({
             ...page('reference/api', 'HTTP API guide'),
             ...page('api/endpoints', 'Endpoint map'),
             ...page('api/environment', 'Environment variables'),
+            ...page('reference/configuration', 'Configuration guide'),
             ...page('api/cli', 'Command line'),
             ...page('api/python', 'Python API'),
             ...page('reference/architecture', 'Architecture'),
