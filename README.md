@@ -165,7 +165,7 @@ curl -s localhost:8000/v1/chat/completions -H "Content-Type: application/json" \
 | I want to | Run |
 |---|---|
 | See the whole loop, with a bad deploy rolled back | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` |
-| Run the tests (1909 tests, no network, no GPU) | `make test` |
+| Run the tests (1918 tests, no network, no GPU) | `make test` |
 | Run Scout as an outside client | `python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1` |
 | Use the Docker image (mock mode) | `make docker && docker run -p 8000:8000 ratchet-gateway` |
 | Rebuild the web UI (Node 22) | `make web` |

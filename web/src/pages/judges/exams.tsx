@@ -1,4 +1,5 @@
 import { DifficultyBars, EXAMS, ExamAuthors, FlipBars, ScoreBars } from "@/components/charts/exam-charts";
+import { ToolCallBlock } from "@/components/charts/toolcall-block";
 import { MODEL_IDS, pct, rangeText, scoreText, timesBase } from "@/lib/exams-model";
 import { Chapter, Command, Disclosure } from "./ui";
 
@@ -23,6 +24,8 @@ export function ExamsChapter() {
         </>
       }
     >
+      <ToolCallBlock where="top" />
+
       <ExamAuthors />
 
       <ul className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Strict score of each model on exam 1 and exam 2">
@@ -140,6 +143,8 @@ export function ExamsChapter() {
           wrap
         />
       </div>
+
+      <ToolCallBlock where="bottom" />
     </Chapter>
   );
 }
