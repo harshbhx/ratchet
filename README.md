@@ -68,7 +68,7 @@
 |---|---|---|
 | **Live demo** | Real Token Factory calls under spend limits. The teacher answers every request for now. | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech) |
 | **Simulation** | Mock models: run days, break a deploy, watch the rollback. | [demo.ratchet.dualmindlab.tech](https://demo.ratchet.dualmindlab.tech) |
-| **The story** | How it works, the results, and the judges' page. | [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech) |
+| **The story** | How it works, the results, and the judges' page. Its dashboard and live chapters run on the simulation; its Scout page (`/scout`) runs on the live gateway. | [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech) |
 | **Scout, recorded** | Three real Scout runs replayed in your browser, on Hugging Face. | [huggingface.co/spaces/harshbhx/ratchet-scout](https://huggingface.co/spaces/harshbhx/ratchet-scout) |
 | **Your machine** | No keys, no GPU. | [Quick start](#quick-start) |
 
