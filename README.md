@@ -403,3 +403,11 @@ python -m ratchet.live export --version 3 --out ./student-v3-export   # weights 
 ```
 
 Keep `NOTICE.md` with the adapter wherever you copy, share or deploy it, and keep the base model's license with any copy of the base model. For a base model Ratchet does not know, the notice says so instead of naming a license: add that license yourself. Not legal advice.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-footer-dark.gif">
+    <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-footer-light.gif">
+    <img src="docs/img/anim/ratchet-footer-dark.gif" alt="Ratchet. Built by Harsh Bhanushali. NVIDIA Nemotron, Nebius Token Factory, Apache-2.0." width="100%">
+  </picture>
+</p>
