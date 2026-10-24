@@ -88,6 +88,8 @@ export function Tour({ steps, onClose }: { steps: TourStep[]; onClose: () => voi
       else setIndex(n);
       return;
     }
+    // A page that folds its sections (the judges' chapters) opens the one this step lights.
+    el.dispatchEvent(new CustomEvent("tour-focus", { bubbles: true }));
     const r = el.getBoundingClientRect();
     const v = viewSize();
     const top = topInset();

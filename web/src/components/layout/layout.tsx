@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router";
+import { motion, useReducedMotion } from "motion/react";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
 import { useStats } from "@/lib/hooks";
@@ -76,6 +77,7 @@ export function Layout() {
   const { pathname, hash } = useLocation();
   // One stats call per page load for the header's surface switch and the footer's status line, not live numbers.
   const { stats, error } = useStats(0);
+  const reduce = useReducedMotion();
   useEffect(() => {
     document.title = TITLES[pathname] ?? "Ratchet";
     if (!hash) {
@@ -88,7 +90,10 @@ export function Layout() {
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
       <SiteHeader stats={stats} />
       <main id="main" className="flex-1">
-        <Outlet />
+        {/* A page fades in on a route change. Opacity only: a transform here would break the dashboard's sticky jump bar. */}
+        <motion.div key={pathname} initial={reduce ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.35, ease: "easeOut" }}>
+          <Outlet />
+        </motion.div>
       </main>
       <SiteFooter stats={stats} error={error} />
     </div>

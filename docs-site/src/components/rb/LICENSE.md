@@ -9,6 +9,10 @@ These files keep the React Bits license below. They are **not** covered by the A
 of this repository. They are used here only as part of the Ratchet documentation website; do not copy them out
 of this folder to redistribute them as components.
 
+The maintainer confirmed on 24 Oct 2026 that keeping these adapted components in this public repository, as part of the
+documentation website and not as a standalone library, is permitted under the license:
+https://github.com/DavidHDev/react-bits/discussions/1111 (question #1111). This is not a change of license.
+
 ---
 
 MIT + Commons Clause License Condition v1.0

@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { ArrowDown, ArrowUpRight, Hourglass } from "lucide-react";
 import { RealBadge } from "@/components/ui/real-badge";
-import { fmtDate, REAL_STATUSES, STATUS_TEXT, statusCounts, type RealEntry } from "@/lib/real-model";
+import { fmtDate, REAL_STATUSES, STATUS_TEXT, statusCounts, type RealEntry, type RealStatus } from "@/lib/real-model";
 import { cn } from "@/lib/utils";
-import { Chapter, Command } from "./ui";
+import { Chapter, Command, useChapters } from "./ui";
 import { REAL } from "./real";
 
 const PATH = [
@@ -26,23 +27,20 @@ const PATH = [
   },
 ];
 
-function jump(id: string) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  window.setTimeout(() => (document.getElementById(`${id}-title`) as HTMLElement | null)?.focus({ preventScroll: true }), 400);
-}
-
 export function StartHere() {
+  const ctl = useChapters();
+  const jump = (id: string) => {
+    ctl?.reveal(id);
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    window.setTimeout(() => (document.getElementById(`${id}-title`) as HTMLElement | null)?.focus({ preventScroll: true }), 400);
+  };
   return (
-    <Chapter
-      id="start"
-      title="The 90-second path"
-      lead={<p>Three things to click, in this order. Each one says what you should see.</p>}
-    >
-      <ol className="grid gap-3 md:grid-cols-3">
+    <Chapter id="start" title="Try it in 90 seconds" lead={<p>Three things to click, in this order. Each one says what you should see.</p>}>
+      <ol className="grid divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface shadow-card md:grid-cols-3 md:divide-x md:divide-y-0">
         {PATH.map((p, i) => (
-          <li key={p.to} className="relative flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5">
+          <li key={p.to} className="flex min-w-0 flex-col p-5">
             <div className="flex items-center gap-3">
               <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-ink font-mono text-[13px] text-bg tabular-nums">{i + 1}</span>
               <span className="font-mono text-[12px] text-muted">{p.where}</span>
@@ -55,7 +53,7 @@ export function StartHere() {
             <button
               type="button"
               onClick={() => jump(p.to)}
-              className="mt-4 inline-flex w-fit items-center gap-1.5 rounded-full border border-line-strong px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
+              className="mt-4 inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
             >
               Go there <ArrowDown className="size-3.5" aria-hidden />
             </button>
@@ -67,12 +65,14 @@ export function StartHere() {
 }
 
 /** The status legend: every word a badge on this page can say, and what it means. */
-export function Legend({ className }: { className?: string }) {
+export function Legend({ className, stacked }: { className?: string; stacked?: boolean }) {
   return (
-    <ul className={cn("flex flex-wrap gap-x-5 gap-y-2.5", className)} aria-label="What each status means">
+    <ul className={cn(stacked ? "grid gap-2.5" : "flex flex-wrap gap-x-5 gap-y-2.5", className)} aria-label="What each status means">
       {REAL_STATUSES.map((s) => (
-        <li key={s} className="flex min-w-0 items-center gap-2 text-[13px] text-ink-2">
-          <RealBadge status={s} />
+        <li key={s} className={cn("flex min-w-0 gap-2 text-[13px] text-ink-2", stacked ? "items-start" : "items-center")}>
+          <span className={cn(stacked && "w-[108px] shrink-0")}>
+            <RealBadge status={s} />
+          </span>
           <span className="min-w-0">{STATUS_TEXT[s].meaning}</span>
         </li>
       ))}
@@ -138,6 +138,8 @@ function Facts({ e }: { e: RealEntry }) {
 
 export function WhatsReal() {
   const counts = statusCounts(REAL);
+  const [filter, setFilter] = useState<RealStatus | "all">("all");
+  const shown = filter === "all" ? REAL.entries : REAL.entries.filter((e) => e.status === filter);
   return (
     <Chapter
       id="real"
@@ -148,18 +150,30 @@ export function WhatsReal() {
             One file holds every claim this site makes about Ratchet, with what it rests on and how to check it. The demo's numbers come from mock
             models; the text-to-SQL data and adapter are real; nothing has run live on Nebius GPUs yet.
           </p>
-          <p className="text-[14px] text-muted">
-            {counts.map((c, i) => (
-              <span key={c.status}>
-                {i > 0 && " · "}
-                {c.n} {STATUS_TEXT[c.status].label.toLowerCase()}
-              </span>
-            ))}
-            {REAL.updated && <> · updated {fmtDate(REAL.updated)}</>}
-          </p>
+          {REAL.updated && <p className="text-[13.5px] text-muted">Updated {fmtDate(REAL.updated)}.</p>}
         </>
       }
     >
+      <div role="group" aria-label="Show claims with a status" className="mb-4 flex flex-wrap gap-2">
+        {([{ status: "all" as const, n: REAL.entries.length }, ...counts] as { status: RealStatus | "all"; n: number }[]).map((c) => {
+          const on = filter === c.status;
+          return (
+            <button
+              key={c.status}
+              type="button"
+              aria-pressed={on}
+              onClick={() => setFilter(c.status)}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors",
+                on ? "border-ink bg-ink text-bg" : "border-line-strong bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink",
+              )}
+            >
+              {c.status === "all" ? "All" : STATUS_TEXT[c.status].label}
+              <span className={cn("tabular-nums", on ? "text-bg/70" : "text-muted")}>{c.n}</span>
+            </button>
+          );
+        })}
+      </div>
 
       {/* Wide screens: a table. Narrow: one card per claim. */}
       <div className="hidden overflow-hidden rounded-2xl border border-line bg-surface shadow-card lg:block">
@@ -180,7 +194,7 @@ export function WhatsReal() {
             </tr>
           </thead>
           <tbody className="divide-y divide-line align-top">
-            {REAL.entries.map((e) => (
+            {shown.map((e) => (
               <tr key={e.id} id={`real-${e.id}`}>
                 <th scope="row" className="px-4 py-4 text-[14px] font-semibold leading-snug text-ink">
                   {e.claim}
@@ -203,7 +217,7 @@ export function WhatsReal() {
         </table>
       </div>
       <ul className="space-y-3 lg:hidden">
-        {REAL.entries.map((e) => (
+        {shown.map((e) => (
           <li key={e.id} className="min-w-0 rounded-2xl border border-line bg-surface p-4 shadow-card">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <h3 className="min-w-0 text-[15px] font-semibold leading-snug text-ink">{e.claim}</h3>

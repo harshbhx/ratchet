@@ -27,6 +27,9 @@ evidence/live/[0-9]*T*Z/
 *.db-shm
 out/
 
+# Cloudflare local emulator state
+.wrangler/
+
 # Working notes kept on the author's machine, not in the repository
 docs/DAY1.md
 docs/DEMO_SCRIPT.md

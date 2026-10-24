@@ -3,7 +3,8 @@ import { ArrowUpRight } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import type { Stats } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { FOOTER_COLUMNS, type NavItem } from "./nav-model";
+import { FOOTER_COLUMNS, HF_MODEL, REACT_BITS_PERMISSION, type NavItem } from "./nav-model";
+import { REPO_URL } from "@/lib/utils";
 import { ThemeToggle } from "./site-header";
 
 function FooterLink({ item }: { item: NavItem }) {
@@ -50,21 +51,54 @@ function GatewayStatus({ stats, error }: { stats: Stats | null; error: string | 
   );
 }
 
+const CTA = "inline-flex h-10 items-center gap-1.5 rounded-lg px-4 text-[14px] font-medium transition-colors";
+const UL = "underline decoration-line-strong underline-offset-2 hover:text-ink";
+
 export function SiteFooter({ stats, error }: { stats: Stats | null; error: string | null }) {
   return (
     <footer className="border-t border-line bg-bg-sunken/60">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-        <div className="grid gap-12 py-14 sm:py-16 xl:grid-cols-[minmax(0,1fr)_minmax(0,2.4fr)] xl:gap-16">
+        <div className="relative mt-12 overflow-hidden rounded-2xl border border-line bg-surface p-6 shadow-card sm:p-8">
+          <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-50 [mask-image:linear-gradient(to_left,black,transparent_65%)]" />
+          <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div className="max-w-xl">
+              <h2 className="text-balance text-[20px] font-semibold tracking-[-0.02em] text-ink sm:text-[22px]">Don't take our word for it. Check the numbers.</h2>
+              <p className="mt-1.5 text-pretty text-[14px] leading-relaxed text-ink-2">
+                The adapter, the training data and both exams, with every answer, are public. The scores recompute from the saved answers.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2.5">
+              <Link to="/judges" className={cn(CTA, "bg-ink text-bg hover:opacity-90")}>
+                See the results
+              </Link>
+              <a href={HF_MODEL} target="_blank" rel="noopener noreferrer" className={cn(CTA, "border border-line-strong bg-surface text-ink hover:bg-surface-2")}>
+                Adapter on Hugging Face <ArrowUpRight aria-hidden className="size-3.5" />
+                <span className="sr-only"> (opens in a new tab)</span>
+              </a>
+              <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className={cn(CTA, "border border-line-strong bg-surface text-ink hover:bg-surface-2")}>
+                Source on GitHub <ArrowUpRight aria-hidden className="size-3.5" />
+                <span className="sr-only"> (opens in a new tab)</span>
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-12 py-12 sm:py-14 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,3fr)] xl:gap-14">
           <div className="max-w-sm">
             <Link to="/" aria-label="Ratchet home" className="inline-flex items-center rounded-lg">
               <Logo />
             </Link>
             <p className="mt-4 text-pretty text-[14.5px] leading-relaxed text-ink-2">
-              An open-source gateway built on NVIDIA Nemotron and Nebius. Numbers on the demo are simulation unless labelled.
+              An open-source gateway that moves work from a large rented model to a small one with our LoRA adapter, and checks each release before it serves.
             </p>
-            <p className="mt-3 text-[13px] leading-relaxed text-muted">Code under Apache-2.0. Model weights keep their own licenses.</p>
+            <p className="mt-3 text-[13px] leading-relaxed text-muted">
+              Numbers on the demo are simulation unless labelled Measured. The adapter was trained on rented T4 GPUs, not on Nebius GPUs.
+            </p>
+            <div className="mt-4">
+              <GatewayStatus stats={stats} error={error} />
+            </div>
           </div>
-          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-6 gap-y-10 md:grid-cols-4">
+          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 lg:grid-cols-5">
             {FOOTER_COLUMNS.map((col) => (
               <div key={col.title}>
                 <h2 className="text-[13px] font-semibold text-ink">{col.title}</h2>
@@ -79,14 +113,23 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
             ))}
           </nav>
         </div>
-        <div className="flex flex-col gap-4 border-t border-line py-6 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[13px] text-muted">
-            © {new Date().getFullYear()} Harsh Bhanushali · DualMind Labs
-          </p>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-            <GatewayStatus stats={stats} error={error} />
-            <ThemeToggle className="-my-1 border border-line" />
+
+        <div className="flex flex-col gap-4 border-t border-line py-6 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl space-y-1.5 text-[12.5px] leading-relaxed text-muted">
+            <p>© {new Date().getFullYear()} Harsh Bhanushali · DualMind Labs. Code under Apache-2.0; model weights and data keep their own licenses.</p>
+            <p>
+              Built for the Nebius x NVIDIA Global AI Hackathon; not an official product of either company. The documentation site uses adapted{" "}
+              <a href="https://reactbits.dev" target="_blank" rel="noopener noreferrer" className={UL}>
+                React Bits
+              </a>{" "}
+              components, with the maintainer's{" "}
+              <a href={REACT_BITS_PERMISSION} target="_blank" rel="noopener noreferrer" className={UL}>
+                confirmation
+              </a>
+              .
+            </p>
           </div>
+          <ThemeToggle className="-my-1 shrink-0 self-start border border-line" />
         </div>
       </div>
     </footer>

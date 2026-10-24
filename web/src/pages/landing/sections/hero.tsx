@@ -1,17 +1,16 @@
 import { Suspense, lazy, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, LayoutDashboard, ShieldCheck, Undo2 } from "lucide-react";
-import { Magnet } from "@/components/fx/magnet";
-import { MovingBorderLink } from "@/components/fx/moving-border";
+import { Link } from "react-router";
+import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, ShieldCheck, Undo2 } from "lucide-react";
 import { ShinyText } from "@/components/fx/shiny-text";
 import { SplitText } from "@/components/fx/split-text";
 import { TiltCard } from "@/components/fx/tilt-card";
-import { ButtonA, ButtonLink } from "@/components/ui/button";
+import { ButtonA } from "@/components/ui/button";
 import { tok } from "@/components/ui/code-block";
 import { LogoMark } from "@/components/ui/logo";
 import { Container } from "@/components/ui/section";
 import { enter } from "@/lib/motion";
-import { DEMO_URL, REPO_URL } from "@/lib/utils";
+import { REPO_URL } from "@/lib/utils";
 import { HeroFlow } from "./hero-flow";
 
 // The aurora is a WebGL shader: it loads after the hero's text has painted, and the page is complete without it.
@@ -23,7 +22,7 @@ const BASE_URL_LINE = 'client = OpenAI(base_url="http://localhost:8000/v1")';
 const POINTS = [
   { icon: ShieldCheck, title: "License-clean", body: "Closed models are refused as teachers." },
   { icon: Undo2, title: "Gated releases", body: "Shadow, canary, automatic rollback." },
-  { icon: FileSignature, title: "Signed lineage", body: "Each adapter carries a signed bill of materials: where its training data came from, under which license." },
+  { icon: FileSignature, title: "Signed lineage", body: "Each adapter carries a signed record of its training data and licenses." },
 ];
 
 /** The integration in one diff: the default OpenAI client, then the same client pointed at Ratchet. */
@@ -112,24 +111,18 @@ export function Hero() {
             {/* What it is, what the customer keeps, then the one line they change. */}
             <motion.p {...enter(0.5)} className="max-w-[34rem] text-pretty text-[17px] leading-relaxed text-ink-2 sm:text-lg">
               <strong className="font-semibold text-ink">Ratchet is an OpenAI-compatible gateway.</strong> A Nemotron adapter you own (LoRA on
-              NVIDIA's open Nano base) answers what it is sure of. Nemotron 3 Ultra answers the rest, and every night its answers train the
-              next adapter.
+              NVIDIA's open Nano base) answers what it is sure of; Nemotron 3 Ultra answers the rest and teaches the next adapter.
             </motion.p>
             <motion.div {...enter(0.58)} className="mt-6 max-w-[34rem]">
               <BaseUrlDiff />
             </motion.div>
             <motion.div {...enter(0.66)} className="mt-6 flex flex-wrap items-center gap-3">
-              <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="lg" className="w-full min-[440px]:w-auto">
-                Try the live demo (simulation) <ArrowUpRight aria-hidden />
+              <ButtonA href="#try" size="lg" className="w-full min-[440px]:w-auto">
+                Try it in a minute <ArrowRight aria-hidden />
               </ButtonA>
-              <MovingBorderLink to="/scout" containerClassName="w-full min-[440px]:w-auto">
-                Try the Scout demo <ArrowRight aria-hidden />
-              </MovingBorderLink>
-              <Magnet className="w-full min-[440px]:w-auto">
-                <ButtonLink to="/dashboard" variant="outline" size="lg" className="w-full bg-surface/80 backdrop-blur-md min-[440px]:w-auto">
-                  <LayoutDashboard aria-hidden /> Open the dashboard
-                </ButtonLink>
-              </Magnet>
+              <ButtonA href="#real-run" variant="outline" size="lg" className="w-full bg-surface/80 backdrop-blur-md min-[440px]:w-auto">
+                See the real results
+              </ButtonA>
             </motion.div>
             <motion.p {...enter(0.74)} className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]">
               <a
@@ -138,6 +131,12 @@ export function Hero() {
               >
                 Watch it learn
               </a>
+              <Link to="/scout" className="rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink">
+                Scout demo
+              </Link>
+              <Link to="/dashboard" className="rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink">
+                Dashboard
+              </Link>
               <a
                 href={REPO_URL}
                 target="_blank"

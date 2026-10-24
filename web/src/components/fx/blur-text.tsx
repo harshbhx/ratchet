@@ -5,7 +5,7 @@ import { EASE } from "@/lib/motion";
 /**
  * A heading whose words come into focus one after another as it scrolls into view (after the idea of React Bits'
  * BlurText; original code on `motion` variants). Every chapter title on the story uses it, so the scroll has one
- * rhythm. Screen readers get the sentence once; with reduced motion the blur is dropped and the words simply appear.
+ * rhythm. Screen readers get the sentence once, from the heading's label (no hidden second copy); with reduced motion the blur is dropped and the words simply appear.
  */
 export function BlurText({
   text,
@@ -25,8 +25,7 @@ export function BlurText({
   const reduce = useReducedMotion();
   const words = text.split(" ");
   return (
-    <Tag id={id} className={cn("relative", className)}>
-      <span className="sr-only">{text}</span>
+    <Tag id={id} aria-label={text} className={cn("relative", className)}>
       <motion.span
         aria-hidden
         initial="hidden"
