@@ -184,7 +184,7 @@ export const STAGES: Stage[] = [
     sub: "train from base",
     tone: "neutral",
     does:
-      "Each night a Nebius Serverless Job fine-tunes a new LoRA adapter from the base model on every stored training example, then writes the adapter's bill of materials.",
+      "Each night Night School fine-tunes a new LoRA adapter from the base model on every stored training example, then writes the adapter's bill of materials. Built to run as a Nebius Serverless Job; not run there yet.",
     inputs: "Teacher answers and attested human labels",
     outputs: "A candidate adapter and its BOM",
     safeguards: [

@@ -62,7 +62,7 @@ export const FOOTER_COLUMNS: readonly { title: string; items: readonly NavItem[]
   {
     title: "Real results",
     items: [
-      { label: "Exam scores", href: "/judges", kind: "route" },
+      { label: "Exam scores", href: "/judges#exams", kind: "route" },
       { label: "Trained adapter", href: HF_MODEL, kind: "external" },
       { label: "Training data", href: HF_TRAIN, kind: "external" },
       { label: "Exams and answers", href: HF_EXAMS, kind: "external" },

@@ -38,7 +38,7 @@ const NODES: NodeDef[] = [
   { id: "student", x: COL[1], y: ROW[0], title: "Student", sub: "Nano 4B + LoRA", short: "Nano + LoRA", tone: "owned" },
   { id: "teacher", x: COL[2], y: ROW[0], title: "Teacher", sub: "Nemotron 3 Ultra", short: "Ultra", tone: "rented" },
   { id: "ledger", x: COL[2], y: ROW[1], title: "Ledger", sub: "answer + license", short: "+ license" },
-  { id: "school", x: COL[1], y: ROW[1], title: "Night School", sub: "Serverless Job", short: "nightly job" },
+  { id: "school", x: COL[1], y: ROW[1], title: "Night School", sub: "planned Serverless Job", short: "nightly job" },
   { id: "golden", x: COL[0], y: ROW[1], title: "Golden set", sub: "held out", short: "held out" },
 ];
 

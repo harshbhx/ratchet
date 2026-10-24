@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { HoverGrid } from "@/components/fx/hover-grid";
 import { Container } from "@/components/ui/section";
+import { RealBadge } from "@/components/ui/real-badge";
 import { WhoBadge } from "@/components/ui/who";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
 
@@ -20,20 +21,26 @@ const ROLES: Role[] = [
     role: "Teacher",
     service: "Nemotron 3 Ultra on Nebius Token Factory",
     id: "nvidia/Nemotron-3-Ultra-550b-a55b",
-    why: "Best reasoning in the loop. OpenMDW-1.1 allows training on its outputs.",
+    why: "The strongest model in the loop. OpenMDW-1.1 allows training on its outputs.",
     badge: <WhoBadge servedBy="teacher" />,
   },
   {
     role: "Student",
-    service: "Nemotron 3 Nano 4B + LoRA, vLLM on a Nebius Serverless Endpoint",
+    service: "Nemotron 3 Nano 4B + LoRA, vLLM (designed for a Nebius Serverless Endpoint)",
     id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
-    why: "Cheap and fast. The adapter weights are yours.",
-    badge: <WhoBadge servedBy="student" />,
+    why: "Cheap and fast. The LoRA adapter is yours; the Nano base stays under NVIDIA's Nemotron Open Model License. Scripted for Nebius, not run there yet.",
+    badge: (
+      <span className="flex items-center gap-1.5">
+        <RealBadge status="not-run" />
+        <WhoBadge servedBy="student" />
+      </span>
+    ),
   },
   {
     role: "Night School",
-    service: "Nebius Serverless Jobs (L40S) with Unsloth",
-    why: "Fine-tunes a new adapter each night. You pay only while it trains.",
+    service: "Nebius Serverless Jobs (L40S) with Unsloth (designed, not run yet)",
+    why: "Fine-tunes a new adapter each night. A job is billed only while it runs. So far the adapters were trained by hand on a Colab T4 and a Modal T4.",
+    badge: <RealBadge status="not-run" />,
   },
   {
     role: "Judge",
@@ -50,8 +57,9 @@ const ROLES: Role[] = [
   },
   {
     role: "Storage",
-    service: "Nebius Object Storage",
+    service: "Nebius Object Storage (designed, not run yet)",
     why: "Datasets and adapters, in one bucket mounted in jobs and endpoints.",
+    badge: <RealBadge status="not-run" />,
   },
   {
     role: "Search",
@@ -60,7 +68,7 @@ const ROLES: Role[] = [
   },
   {
     role: "Why two places",
-    service: "Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the student is trained and served on Nebius AI Cloud.",
+    service: "Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the student is designed to be trained and served on Nebius AI Cloud. Those scripts exist and are tested offline; they have not been run there. The adapters so far were trained on a Colab T4 and a Modal T4.",
     why: "",
   },
 ];
@@ -74,7 +82,7 @@ export function Stack() {
           title="Built on Nebius and NVIDIA."
           lead={
             <Lead>
-              Open Nemotron models for every model role, Nebius for every place they run. The gateway itself does no inference, so it fits on a
+              Open Nemotron models for every model role. The teacher runs on Nebius Token Factory today; the student endpoint and Night School jobs are scripted for Nebius but not run yet. The gateway itself does no inference, so it fits on a
               small CPU machine.
             </Lead>
           }

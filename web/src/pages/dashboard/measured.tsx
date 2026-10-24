@@ -25,7 +25,7 @@ export function MeasuredResults() {
       </h2>
       <p className="mt-1.5 max-w-[68ch] text-[13.5px] leading-relaxed text-ink-2">
         A query counts only if it returns exactly the reference rows. It was trained on rented T4 GPUs, not on Nebius GPUs, and on synthetic data. At a 95%
-        precision bar it answers about 2% of questions by itself, so most traffic still goes to the teacher.
+        precision bar it answers 1 of 86 questions on exam 1 and none on exam 2 by itself, so most traffic still goes to the teacher.
       </p>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div className="min-w-0 rounded-xl border border-line bg-surface-2/40 p-3 sm:p-4">

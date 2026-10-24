@@ -10,8 +10,8 @@ type StageId = "candidate" | "shadow" | "canary10" | "canary50" | "live";
 const STAGES: { id: StageId; label: string; rule: string }[] = [
   { id: "candidate", label: "Candidate", rule: `Golden gate: precision ≥ ${fmtPct(POLICY.minPrecision)}, coverage ≥ ${fmtPct(POLICY.minCoverage)}` },
   { id: "shadow", label: "Shadow", rule: `Runs silently until ≥ ${POLICY.shadowMin} would-serve answers` },
-  { id: "canary10", label: "Canary 10%", rule: `≥ ${POLICY.auditsPerStage} audits to advance` },
-  { id: "canary50", label: "Canary 50%", rule: `≥ ${POLICY.auditsPerStage} audits to advance` },
+  { id: "canary10", label: "Canary 10%", rule: `≥ ${POLICY.auditsPerStage} audits to advance (15 in the simulation)` },
+  { id: "canary50", label: "Canary 50%", rule: `≥ ${POLICY.auditsPerStage} audits to advance (15 in the simulation)` },
   { id: "live", label: "Live", rule: "Serves every request it is sure about" },
 ];
 
