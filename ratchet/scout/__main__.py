@@ -96,4 +96,4 @@ def main(argv: list[str] | None = None, client: httpx.Client | None = None) -> i
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

@@ -19,3 +19,8 @@ The Scout budget guard (INV-11, [ADR 0120](0120-judge-access-and-a-persistent-sc
 - A judge always sees a real run, labelled as a recording, at its real pace, whatever the guard or the providers do.
 - A recording shows the run's numbers as they were; it does not change with later prices or models, and its date says how old it is.
 - The operator records one run after each deploy and commits it (RUNBOOK). A mock-mode recording is kept only with `--allow-mock` and is labelled a simulation.
+
+## Alternatives considered
+
+- **Run Scout live for every judge.** Rejected: the guard can refuse and live runs take tens of seconds.
+- **Store visitors' questions to replay.** Rejected: INV-12.

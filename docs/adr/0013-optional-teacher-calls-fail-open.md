@@ -1,6 +1,7 @@
 # ADR 0013: Optional teacher calls fail open for the request and count against the shadow in the release gate
 
 - Status: Accepted
+- **Update:** the off-path retry was later built in [ADR 0072](0072-off-path-audits-and-shadow.md).
 - Date: 2026-10-20
 
 ## Context

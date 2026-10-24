@@ -35,3 +35,8 @@ The mock demo is different: it is synthetic and meant to be shown, and the publi
 - Scrubbing matches patterns, so it is defence in depth for old rows and stray text, not a guarantee: the invariant that matters is still that events name exception classes, never messages (ADR 0013, ADR 0014). Admin names in events ("by ops") are operators' names and stay.
 - Pseudonyms are stable only while the set of names is: a new API key can renumber them. Hash-based pseudonyms would be stable across key changes but harder to read on a demo dashboard; the spec asked for `client-1`..`client-n`.
 - Behind the demo VM's Caddy, Caddy's own `Referrer-Policy` (`strict-origin-when-cross-origin`) replaces the gateway's.
+
+## Alternatives considered
+
+- **Leave the dashboard API public in every mode.** Rejected: it lists clients and endpoint URLs.
+- **Rely on the Caddy edge guard only.** Rejected: local and Docker deployments have no proxy.

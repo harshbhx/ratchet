@@ -1,6 +1,6 @@
 ---
 title: What is Ratchet
-description: A two-minute explanation of Ratchet, an OpenAI-compatible gateway that moves narrow, repeated work from a rented teacher model to a small student you own, and ships each new student only if it passes a statistical gate.
+description: A two-minute explanation of Ratchet, an OpenAI-compatible gateway that moves narrow, repeated work from a rented teacher model to a small student (NVIDIA's open Nano base plus an adapter you own), and ships each new student only if it passes a statistical gate.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -16,7 +16,7 @@ import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import GradientText from '../../../components/ui/GradientText.astro';
 
-<Summary>Ratchet is a gateway you point your OpenAI client at. A small model you own answers the requests it is sure about. A large open model answers the rest, and its answers become training data. Every night a new small model is trained and is released only if it passes a held-out exam, a silent trial and a staged rollout.</Summary>
+<Summary>Ratchet is a gateway you point your OpenAI client at. A small Nemotron model with your LoRA adapter on top answers the requests it is sure about. A large open model answers the rest, and its answers become training data. Every night a new small model is trained and is released only if it passes a held-out exam, a silent trial and a staged rollout.</Summary>
 
 <PlainWords>
 
@@ -27,7 +27,7 @@ Ratchet puts an apprentice next to the head chef. The apprentice cooks each dish
 </PlainWords>
 
 <StatRow cols={3} label="Ratchet at a glance">
-  <Stat value={1900} label="tests in the suite" note="They run offline, with no network and no GPU." />
+  <Stat value={1922} label="tests in the suite" note="They run offline, with no network and no GPU." />
   <Stat value={95} suffix="%" count={false} label="held-out precision floor" tone="owned" note="A new adapter must reach it on golden rows it never trained on." />
   <Stat value="Open teachers only" label="license-clean, in code" note="Closed models are refused as teachers." />
 </StatRow>
@@ -40,7 +40,7 @@ Ratchet puts an apprentice next to the head chef. The apprentice cooks each dish
 
 <Compare before="Renting a large model for every call" after="With Ratchet">
   <div slot="before">Every request, repeated or not, is a paid call to the teacher. Distilling by hand is slow, and closed models forbid training on their outputs.</div>
-  <div slot="after">A student you own answers what it is sure about, the teacher answers the rest, and a better student is trained every night from open teachers only.</div>
+  <div slot="after">A student with your adapter answers what it is sure about, the teacher answers the rest, and a better student is trained every night from open teachers only.</div>
 </Compare>
 
 ## The idea
@@ -90,7 +90,7 @@ flowchart TB
 **Reading this diagram.** Start at the top: every request reaches the student first, and the thick path is the cheap one, where a confident student answers at once. Only unsure requests go to the teacher, and every teacher answer also flows down into the ledger. The dotted line closes the loop: what the ledger collects trains the next student, and the gate decides whether that student replaces the current one. That loop is why the share of rented answers can shrink over time.
 
 <ul class="rt-key">
-  <li class="student">The student you own</li>
+  <li class="student">The student: Nano plus your adapter</li>
   <li class="teacher">The teacher, rented per token</li>
   <li class="store">Stored data</li>
   <li class="gate">A check that can stop a release</li>
@@ -143,10 +143,11 @@ Ratchet also reports the bill honestly: savings per token and by GPU-hours actua
 
 | Part | Status |
 |---|---|
-| Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,900 tests that need no network and no GPU |
+| Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,922 tests that need no network and no GPU |
 | Teacher calls | <span class="rt-badge rt-badge--live">Real</span> Nemotron 3 Ultra on Nebius Token Factory. Real teacher calls built the text-to-SQL data on Oct 22, 2026 |
-| Student endpoint | **Not served on a Nebius GPU yet.** Until it is, student calls on the live demo go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages say so |
-| A text-to-SQL adapter | Trained on a free Colab T4, not on Nebius. Its measured results are on [Results](/guides/results/) |
+| Student endpoint | **Not served on a Nebius GPU yet.** On the live demo no trained student exists yet, so the teacher answers every request. If a trained version were live without a GPU endpoint, its calls would go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages would say so |
+| A text-to-SQL adapter | Trained on a free Colab T4 (round 1) and a rented Modal T4 (round 2), not on Nebius. Its measured results are on [Results](/guides/results/) |
+| A tool-calling adapter | Trained on a rented Modal T4, not on Nebius. Hard exam 136 of 150 (90.7%) against 94 of 150 (62.7%) untrained and 137 of 150 (91.3%) for Ultra; BFCL exam 241 of 300 (80.3%) against 232 (77.3%) untrained and 265 (88.3%) for Ultra. SQL stays the headline result. See [Results](/guides/results/) |
 | Savings and precision figures from `sim.simulate` and the story page | <span class="rt-badge rt-badge--sim">Simulation</span> Mock models show how the loop behaves, not real model quality |
 | Live mode, model ids and prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
 | Token Factory Terms of Service §5(f) ("competing service") | **Open question.** Asked Nebius support in writing on Oct 19, 2026; no final answer. Not legal advice |

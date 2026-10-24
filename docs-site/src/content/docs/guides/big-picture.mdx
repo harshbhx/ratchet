@@ -42,6 +42,17 @@ Three clocks run the place: one ticks for every order, one every few minutes to 
 
 ## How it really works
 
+The design in one picture. It shows the intended flow; the adapters so far were trained by hand on rented T4 GPUs, and teacher calls run on Nebius Token Factory.
+
+<figure>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="/img/architecture-dark.png" />
+    <img src="/img/architecture-light.png" alt="Architecture: your app calls the gateway, a small student model answers first, a teacher answers when the student is unsure, answers are logged in a provenance ledger, Night School trains a new adapter from the ledger, and release gates decide whether it becomes the student." width="1600" height="900" loading="lazy" style="width:100%;height:auto" />
+  </picture>
+</figure>
+
+The detailed diagram, with the services each piece runs on:
+
 <figure class="rt-diagram">
 
 ```mermaid
@@ -87,7 +98,7 @@ flowchart TB
 **Reading this diagram.** Start at the top. The thick arrows are the request path: your app's call passes Caddy (only on the demo VM), then the cascade asks the student endpoint for 3 samples, and the teacher on Token Factory when the student is unsure, an audit is drawn or no student may answer (a cold start, a pinned task). Every request writes one row to the SQLite ledger; the release gate reads the audits there and writes version states back. At night, Night School reads the rows, a Serverless Job trains a new adapter into the Object Storage bucket, and the endpoint loads adapters from that bucket at `/data`. Not drawn, to keep it readable: the night also loads the candidate into vLLM, grades it there (the judge scores free-text rows) and hands it to the release gate. The hosted fallback answers student calls only when no endpoint is set.
 
 <ul class="rt-key">
-  <li class="student">The student you own</li>
+  <li class="student">The student: Nano plus your adapter</li>
   <li class="teacher">Rented per token</li>
   <li class="store">Keeps data</li>
   <li class="gate">Decides releases</li>
@@ -143,7 +154,7 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (READM
 </Steps>
 
 <Aside type="caution" title="The GPU steps have not run on Nebius yet">
-As of Oct 22, 2026, the teacher runs on Nebius Token Factory, but steps 2 and 6 to 8 (the student endpoint and the training job) have run only against mock models and fake HTTP transports in the tests: no student has been served from a Nebius GPU and no adapter trained in a Nebius job. The `nebius ai` commands in `deploy/` follow the CLI reference but have not run against a real account, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
+As of Oct 25, 2026, the teacher runs on Nebius Token Factory, but steps 2 and 6 to 8 (the student endpoint and the training job) have run only against mock models and fake HTTP transports in the tests: no student has been served from a Nebius GPU and no adapter trained in a Nebius job. The `nebius ai` commands in `deploy/` follow the CLI reference but have not run against a real account, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
 </Aside>
 
 ### What a request leaves behind
@@ -335,7 +346,7 @@ Estimates only. The demo VM: about $72.50 for Oct 29 to Dec 15, 2026, before liv
 
 ### Has any of this run on Nebius?
 
-The teacher has: it runs on Nebius Token Factory. The GPU side has not, as of Oct 22, 2026: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the text-to-SQL adapter was trained on a free Colab T4). Those paths are covered by offline tests with fake transports, and the first real run follows the day-1 checks.
+The teacher has: it runs on Nebius Token Factory. The GPU side has not, as of Oct 25, 2026: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the text-to-SQL and tool-calling adapters were trained on a free Colab T4 and a rented Modal T4). Those paths are covered by offline tests with fake transports, and the first real run follows the day-1 checks.
 
 ## Related
 

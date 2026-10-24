@@ -11,7 +11,7 @@ const COMMANDS: { title: string; why: string; cmd: string }[] = [
   { title: "Run the demo locally", why: "The mock gateway with this page at /judges.", cmd: "make demo" },
   { title: "Replay the reference simulation", why: "The story page's numbers come from this run.", cmd: "python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3" },
   { title: "Verify a bill of materials", why: "Fetch one from a gateway first (Certificate chapter).", cmd: "python -m ratchet.bom verify bom.json --public-key <published key>" },
-  { title: "Recompute the exam numbers", why: "Once raw.jsonl and results.json are published.", cmd: "python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json" },
+  { title: "Recompute the exam numbers", why: "The raw answers are in evidence/text2sql-exam2 (and round1, round2).", cmd: "python scripts/measure_adapter.py verify --raw evidence/text2sql-exam2/answers/raw_v2.jsonl --results evidence/text2sql-exam2/results/results_v2.json --golden evidence/text2sql-exam2/data/golden.jsonl --dbs evidence/text2sql-exam2/data/dbs.json" },
   { title: "Check every requirement maps to code and tests", why: "The traceability check CI runs.", cmd: "python scripts/reqtrace.py --check" },
 ];
 
@@ -22,7 +22,7 @@ export function CheckChapter() {
       title="Check it yourself"
       lead={
         <p>
-          Everything on this page can be checked from a fresh clone. Each command has a copy button. The full list, with the output to expect and
+          Most of what is on this page can be checked from a fresh clone, without a GPU or an API key. The live demo and Hugging Face links check themselves. Each command has a copy button. The full list, with the output to expect and
           what none of it proves, is{" "}
           <a
             href="https://docs.ratchet.dualmindlab.tech/reference/verify/"
@@ -68,7 +68,7 @@ export function SponsorsChapter() {
         { text: "A text-to-SQL adapter trained on a free Colab T4", status: statusOf("adapter-training") },
         { text: "Its exam result", status: statusOf("exam-result") },
         { text: "The adapter and its data on Hugging Face", status: statusOf("hf-publish") },
-        { text: "Serving it on a Nebius endpoint through the gateway", status: statusOf("gateway-live") },
+        { text: "Serving it on a Nebius endpoint through the gateway", status: statusOf("live-gateway-smoke") },
       ],
     },
     {
@@ -123,10 +123,10 @@ export function SponsorsChapter() {
 }
 
 const LIMITS = [
-  "The one real adapter is small and was trained on a free Colab T4, not on Nebius GPUs; its exam result is still being measured.",
-  "Every number in the demo and on the dashboard comes from mock models (simulation).",
-  "Nothing has run live on Nebius GPUs yet: not the gateway's live mode, the student endpoint or Night School's jobs.",
-  "Scout's real Tavily searches have not been run yet; the demo uses a mock research world.",
+  "The adapters are small (Nemotron 3 Nano 4B, LoRA) and were trained on a free Colab T4 and a rented Modal T4, not on Nebius GPUs. At a 95% precision bar the text-to-SQL student answers 1 of 86 questions on exam 1 and none on exam 2, so it does not replace the teacher.",
+  "Every number on the simulation demo and its dashboard comes from mock models (simulation). The live demo's numbers come from real Token Factory calls, and its teacher answers every request.",
+  "The gateway's live mode has run against Nebius Token Factory (a smoke run and the live demo). The student endpoint and Night School's jobs have not run on Nebius GPUs.",
+  "Scout's recorded live runs were all answered by the teacher; no trained student has served a Scout call. The Scout demo page runs on a mock research world unless the gateway is live.",
   "The ledger is a single SQLite file, written by one gateway process.",
   "The demo is shared: every visitor sees and changes the same simulated state.",
 ];

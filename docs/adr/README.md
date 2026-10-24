@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Each ADR records one significant decision: the context, what was decided, the consequences and the alternatives considered. Status values are Proposed, Accepted, Superseded and Deprecated.
+Each ADR records one significant decision: the context, what was decided, the consequences and the alternatives considered. Status values are Proposed, Accepted, Superseded and Deprecated; an Accepted ADR may carry an Amended or Update note that points to the later ADR.
 
 | # | Title | Status | Date |
 |---|---|---|---|
@@ -69,4 +69,6 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0140](0140-recorded-scout-run.md) | A recorded live Scout run, recorded by the operator and played back read-only at its real pace when live runs are refused or failing | Accepted | 2026-10-21 |
 | [0145](0145-train-on-the-served-prompt.md) | Train on the prompt the student is served, in a pinned training image | Accepted | 2026-10-21 |
 
-To add one, copy the format of an existing ADR, take the next number, and link it here.
+Numbers are not consecutive: parallel work lanes were given blocks of numbers (for example the 0020s and 0030s for evidence features, the 0040s for tasks and routing, the 0060s for operations, the 0080s for data governance, 0100 and up for the web app, the demo and measurement), so gaps are expected and numbers are never reused.
+
+To add one, copy the format of an existing ADR, take the next free number in your lane's block (or 0146 and up when there is no block), and link it here.

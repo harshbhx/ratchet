@@ -67,7 +67,7 @@ export const STATUS_TEXT: Record<RealStatus, { label: string; meaning: string }>
   real: { label: "Real", meaning: "Happened or runs as described, and you can check it" },
   measured: { label: "Measured", meaning: "A number measured on a real model or a live gateway" },
   simulation: { label: "Simulation", meaning: "Mock models; no real model was measured" },
-  pending: { label: "Pending", meaning: "Being measured now; no number yet" },
+  pending: { label: "Pending", meaning: "Planned or in progress; not available yet" },
   "not-run": { label: "Not run", meaning: "Built, but not yet run for real" },
 };
 

@@ -45,7 +45,7 @@ export function TryIt() {
           </p>
           <ol className="mt-7 grid gap-4 lg:grid-cols-3">
             <Step n="1" title="Click">
-              <p className="text-[14px] leading-relaxed text-ink-2">Run a simulated day, break a release on purpose, and watch the gate roll it back.</p>
+              <p className="text-[14px] leading-relaxed text-ink-2">Open the live demo to see a real teacher call, or the simulation to run a simulated day, break a release on purpose and watch the gate roll it back.</p>
               <div className="mt-auto flex flex-wrap gap-2.5 pt-2">
                 <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="lg">
                   <Play aria-hidden /> Open the live demo <ArrowUpRight aria-hidden />

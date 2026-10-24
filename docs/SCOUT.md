@@ -1,6 +1,6 @@
 # Scout: the multi-agent research demo
 
-Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two of its agents make many narrow, repetitive calls. Ratchet learns those calls and moves them from Nemotron 3 Ultra to the student. The other two agents make open-ended calls, which stay on Ultra.
+Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two of its agents make many narrow, repetitive calls. Ratchet learns those calls and moves them from Nemotron 3 Ultra to the student. The other two agents make open-ended calls, which stay on Ultra. In the simulation the student takes over most of the narrow calls. On the live demo no trained student is served yet, so every call is answered by Ultra; the three recorded live runs in `evidence/scout` show Scout working end to end, not savings.
 
 It exists to show Ratchet on real agent traffic: the case NVIDIA Research estimates covers 40–70% of LLM calls in agent systems ([arXiv 2506.02153](https://arxiv.org/html/2506.02153v1)).
 
@@ -27,9 +27,7 @@ It exists to show Ratchet on real agent traffic: the case NVIDIA Research estima
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/` | Landing page (`ratchet/web/landing.html`) |
-| GET | `/scout` | Scout UI (`ratchet/web/scout.html`) |
-| GET | `/dashboard` | Ratchet dashboard (`ratchet/dashboard.html`) |
+| GET | `/`, `/scout`, `/dashboard` | The React app (`ratchet/web/dist`, built from `web/`). The hand-written pages are served at `/lite`, `/lite/scout` and `/lite/dashboard`, and when there is no build |
 | GET | `/scout/examples` | `{"mode": "mock"\|"live", "examples": [str, ...], "free_text": bool}`. `free_text` is false in mock mode |
 | GET | `/scout/stream?q=<question>` | Server-Sent Events, one JSON object per `data:` line (below) |
 | POST | `/scout/run` | Body `{"question": str}`. Returns `{"events": [ ...same objects... ]}` once the run finishes |
@@ -122,7 +120,7 @@ How spend is counted:
 - Spend is added **per step**, from each step's `cost_usd` (which includes audit and shadow calls Ratchet made for it). A run that fails halfway still counts what its finished steps cost.
 - A run that is admitted counts against the hourly and daily run limits even if it fails.
 - The budget is checked when a run starts, not during it. A run that starts just under the cap can finish over it, so the real daily maximum is the cap plus the runs in progress at that moment (a few cents each).
-- In live mode the counters are kept in the ledger and restored at startup, so a restart, `update.sh` or a crash does not reset them (v0.5). Each admitted run writes a `scout_run` row to the `spend` table: `usd` stays 0 (the model calls are already in `requests.cost_usd`), and `detail` holds `{"judge", "llm_usd", "status"}`, updated after each model call and when the run ends (`done`, `error`, `search_unavailable`). A row still `admitted` (a process killed mid-run) counts its last recorded cost. Rows hold no IP, question, URL, error message or code. Counters reset at 00:00 UTC; a run counts against the day it started.
+- In live mode the counters are kept in the ledger and restored at startup, so a restart, `update.sh` or a crash does not reset them (v0.5). This holds where the ledger is on a volume (the Nebius VM kit). On the Cloudflare Containers demo the ledger is on the container's disk and a restart (after 30 idle minutes) resets the counters; the low defaults in `deploy/cloudflare-live/src/index.ts` and the Token Factory balance are the limit there. Each admitted run writes a `scout_run` row to the `spend` table: `usd` stays 0 (the model calls are already in `requests.cost_usd`), and `detail` holds `{"judge", "llm_usd", "status"}`, updated after each model call and when the run ends (`done`, `error`, `search_unavailable`). A row still `admitted` (a process killed mid-run) counts its last recorded cost. Rows hold no IP, question, URL, error message or code. Counters reset at 00:00 UTC; a run counts against the day it started.
 - The per-IP windows stay in memory, so no IP is stored; they reset on restart. On the first restart after upgrading, runs from earlier that day have no rows and are not counted, once.
 
 Mock mode has no budget and no daily run cap, writes no spend rows, but the per-IP rate limit applies, at 10x the live rate.

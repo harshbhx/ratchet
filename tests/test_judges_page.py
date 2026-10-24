@@ -91,7 +91,7 @@ def test_whats_real_keeps_the_seeded_facts():
     assert by_id["teacher-labels"]["status"] == "real" and by_id["adapter-training"]["status"] == "real"
     assert "not on Nebius GPUs" in by_id["adapter-training"]["evidence"]
     assert by_id["exam-result"]["status"] in ("pending", "measured")
-    assert by_id["gateway-live"]["status"] == "not-run" and by_id["scout-tavily"]["status"] == "not-run"
+    assert by_id["gateway-live"]["status"] == "not-run" and by_id["scout-tavily"]["status"] == "real"
     assert by_id["demo-numbers"]["status"] == "simulation"
 
 

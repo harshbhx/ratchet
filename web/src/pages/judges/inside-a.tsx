@@ -75,7 +75,7 @@ export function ArchitectureChapter() {
             <Node title="Ledger" sub="teacher answer, redacted, with its license" />
           </Lane>
           <Lane icon={Moon} title="By night: Night School">
-            <Node title="Train" sub="a new adapter on teacher answers only" />
+            <Node title="Train" sub="a new adapter on teacher answers and attested human labels" />
             <Arrow />
             <Node title="Golden gate" sub="held-out set it never trained on" />
             <Arrow />
@@ -314,7 +314,7 @@ export function ReleaseChapter() {
       title="Night School and the release gate"
       lead={
         <p>
-          Each night a new adapter trains from the base model on teacher answers only and is tested on the golden set it never saw. If it passes, it
+          Each night a new adapter trains from the base model on teacher answers and attested human labels, never the student's own, and is tested on the golden set it never saw. If it passes, it
           runs in shadow, then serves a canary at 10%, 50% and 100% with teacher audits at each stage. If audited precision slips, traffic goes back
           to the last good version on its own.
         </p>

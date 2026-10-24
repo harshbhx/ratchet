@@ -13,7 +13,7 @@ Three facts shape the method:
 
 - A live ledger's day is wall-clock time since its first request (`auto_day`), not a round, and `run_night` does not read the day. Rounds have to be keyed some other way.
 - Live mode audits little by default (`RATCHET_AUDIT_RATE` 0.05, `min_audits` 20). With a 10% canary and a 0.7 student share, the first canary stage needs about 7,398 requests for a 90% chance of 20 audits (`stats.binom_sf`); with `RATCHET_CANARY_AUDIT_RATE=0.5` (audit focusing, ADR 0025) it needs about 737.
-- The judges are Nebius and NVIDIA staff, and the past winners the submission cites were chosen for measured results, reproducibility among them.
+- The hackathon rules page could not be read when this was written (ADR 0120), so who judges and what they weigh is unverified; the submission cites past winners chosen for measured results, which is why every live number comes from one reproducible results file.
 
 ## Decision
 

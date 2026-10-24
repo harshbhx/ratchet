@@ -141,7 +141,7 @@ flowchart TB
 - **License-clean distillation**: distilling only from teachers whose licenses allow training on their outputs; closed models whose terms forbid it are refused in code. ([Licenses](/guides/licenses/))
 - **Live mode**: running against real Token Factory, a real student endpoint and real web search; every teacher call costs money. ([Host it on Nebius](/guides/host-on-nebius/))
 - **Live version**: the version that serves all student traffic after its canary passed; it is alerted on, never rolled back automatically. ([Release gate](/guides/release-gate/))
-- **Live-run harness**: `python -m ratchet.liverun`, which sends rounds of traffic through a live gateway under a spending cap and writes the results file every live number must come from; not run yet. ([Evidence](/guides/evidence/))
+- **Live-run harness**: `python -m ratchet.liverun`, which sends rounds of traffic through a live gateway under a spending cap and writes the results file every live number must come from; its smoke mode has run once (20 requests on Oct 23, about $0.01, 0 students and 0 audits, so no savings number), the measured `run` mode has not. ([Evidence](/guides/evidence/))
 - **LoRA**: Low-Rank Adaptation: training a small set of extra weights (an adapter) on top of a frozen base model, cheap to train and to swap. ([Night School](/guides/night-school/))
 
 ### M

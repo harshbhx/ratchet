@@ -30,3 +30,8 @@ The `model` field is also the field a client would use to pick an upstream model
 - Every OpenAI-compatible route (`/v1/*` and `/openai/*`, `gateway.API_PREFIXES`) runs or lists the paid cascade, so the demo VM's Caddy edge guard (`RATCHET_API_GUARD=guarded`) covers both prefixes; a test checks that every such route falls under a guarded path.
 - The structured-outputs item adds its json_schema auto task at rule 6 and is expected to share `RATCHET_MAX_AUTO_TASKS` and the `auto_task_cap` event; per-key task scopes (`RATCHET_KEY_LIMITS`) belong to the rate-limits item.
 - Strict mode refuses a client that sends a model id Ratchet does not know even when a header names the task: strict means every id outside Ratchet's namespace must exist. Inside it, `ratchet/<task>` names a task, and an unregistered one follows `RATCHET_UNKNOWN_TASKS` for chat completions and `GET /v1/models/{id}` alike.
+
+## Alternatives considered
+
+- **Read `model` as an upstream selector.** Rejected: a client string would choose a closed model (see Context).
+- **Task by header only.** Rejected: clients that set only a model name or an Azure deployment would stay in `default`.

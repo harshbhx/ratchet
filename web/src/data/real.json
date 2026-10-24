@@ -11,7 +11,7 @@
       "id": "teacher-labels",
       "claim": "A real teacher wrote the text-to-SQL training data",
       "status": "real",
-      "evidence": "Nemotron 3 Ultra on Nebius Token Factory wrote the databases, questions and SQL. Every SQL query ran in a sandbox and was kept only if it ran and returned rows. 821 training rows; 172 exam rows from held-out database domains.",
+      "evidence": "Nemotron 3 Ultra on Nebius Token Factory wrote the databases, questions and SQL. Every SQL query ran in a sandbox and was kept only if it ran and returned rows. 821 training rows; 172 exam rows on databases that are not in training (57 of them from two industries never trained on).",
       "check": {
         "label": "Read the generator: a query is kept only if it runs and returns rows",
         "href": "https://github.com/harshbhx/ratchet/blob/main/scripts/text2sql/gen_sql_data.py"
@@ -51,7 +51,7 @@
       "evidence": "Two exams of text-to-SQL questions on databases the models never saw: 172 written by the teacher and 200 on new industries written by a different model (Claude, for evaluation only, never training). An answer is right when running it returns the same rows as the stored reference query. Strict, exam 1 / exam 2: base 22 of 172 / 25 of 200, teacher 44 / 30, adapter round 1 (821 rows) 57 / 56, adapter round 2 (4,322 rows) 67 / 66. Every number is recomputed from the raw answers by one script. Round 2 beat round 1 on both exams, but the gain could partly be chance (p = 0.12 and 0.13); the adapter does not yet replace the teacher at a 95 percent precision target.",
       "check": {
         "label": "Recompute the numbers from the raw answers (evidence/text2sql-round1, text2sql-round2 and text2sql-exam2)",
-        "command": "python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json --golden golden.jsonl --dbs dbs.json"
+        "command": "python scripts/measure_adapter.py verify --raw evidence/text2sql-exam2/answers/raw_v2.jsonl --results evidence/text2sql-exam2/results/results_v2.json --golden evidence/text2sql-exam2/data/golden.jsonl --dbs evidence/text2sql-exam2/data/dbs.json"
       },
       "paths": [
         "scripts/measure_adapter.py"
@@ -60,7 +60,7 @@
       "facts": [
         {
           "label": "Exam 1",
-          "value": "172 rows written by the teacher; 40% from five industries never trained on"
+          "value": "172 rows written by the teacher; 57 (33%) from two industries never trained on"
         },
         {
           "label": "Exam 2",
@@ -218,13 +218,13 @@
     {
       "id": "scout-tavily",
       "claim": "Scout with real Tavily searches",
-      "status": "not-run",
-      "evidence": "Scout runs on a mock research world in the demo. Recorded live runs with real Tavily searches are planned.",
+      "status": "real",
+      "evidence": "Three recorded Scout runs on 23 and 24 Oct 2026: every model call went to Nemotron 3 Ultra on Nebius Token Factory and every search to Tavily, 18 to 20 model calls and 3 searches each, $0.022 to $0.028 a run. All were answered by the teacher (no trained student was serving), so they show Scout working end to end, not savings. The Scout page plays them back.",
       "check": {
-        "label": "How Scout is built",
-        "href": "https://github.com/harshbhx/ratchet/blob/main/docs/SCOUT.md"
+        "label": "Read the recorded runs",
+        "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/scout"
       },
-      "paths": ["docs/SCOUT.md", "ratchet/scout/credits.py"],
+      "paths": ["evidence/scout/README.md", "docs/SCOUT.md", "ratchet/scout/credits.py"],
       "date": "2026-10-23",
       "facts": [],
       "metrics": []

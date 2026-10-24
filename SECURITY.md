@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please do **not** open a public issue. Email **harshbhx@gmail.com** with:
+Please do **not** open a public issue. Use [GitHub's private advisory form](https://github.com/harshbhx/ratchet/security/advisories/new) or email **harshbhx@gmail.com** with:
 
 - what you found and how to reproduce it,
 - the impact you expect,

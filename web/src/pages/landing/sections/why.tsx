@@ -139,10 +139,10 @@ export function Why() {
         <Reveal className="max-w-3xl">
           <Eyebrow>Why it is different</Eyebrow>
           <H2 id="why-title" className="mt-5">
-            A router saves money. Ratchet also proves what it did.
+            A router saves money. Ratchet also keeps the evidence.
           </H2>
           <Lead className="mt-5 max-w-[64ch]">
-            Six things in the code that a cascade router or a distillation API does not do. Each card names the file that does it and the
+            Six things Ratchet's code does on top of a plain cascade router. Each card names the file that does it and the
             invariant that states it.
           </Lead>
         </Reveal>

@@ -8,7 +8,7 @@ import Summary from '../../../components/Summary.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 
-<Summary>The gateway serves about 80 routes; this page groups them by purpose, says which key each one needs, and shows the three calls most people make first.</Summary>
+<Summary>The gateway serves 85 routes; this page groups them by purpose, says which key each one needs, and shows the three calls most people make first.</Summary>
 
 The full schema of every route is in the generated [HTTP API reference](/api/http/). The long prose guide, with every field and error, is the [HTTP API guide](/reference/api/). This page is the map between them.
 
@@ -33,7 +33,7 @@ flowchart LR
   P["<b>Prove</b><br/>/ratchet/bom<br/>/ratchet/versions/id/bom,<br/>certificate, proof<br/>/ratchet/receipts"]
   O["<b>Observe</b><br/>/ratchet/stats, kpis, cost<br/>/ratchet/drift, teacher, replay<br/>/metrics, /healthz, /readyz"]
   D["<b>Operate</b><br/>/ratchet/admin/*<br/>/ratchet/tasks<br/>/ratchet/cost/endpoint<br/>/ratchet/teacher/ack"]
-  E["<b>Demo</b><br/>pages: / /dashboard /scout<br/>/scout/*<br/>/ratchet/demo/*, mock only"]
+  E["<b>Demo</b><br/>pages: / /dashboard /scout /judges<br/>/scout/*<br/>/ratchet/demo/*, mock only"]
   app --> S
   app --> P
   watch --> O
@@ -232,11 +232,12 @@ The Method and Path columns link to the generated reference for that operation.
 | GET | [`/`](/api/http/operations/landing__get/) | Public | The story page. |
 | GET | [`/dashboard`](/api/http/operations/dashboard_dashboard_get/) | Public | The dashboard page. |
 | GET | [`/scout`](/api/http/operations/scout_page_scout_get/) | Public | The Scout page. |
+| GET | [`/judges`](/api/http/operations/judges_page_judges_get/) | Public | The judges' console (React app only; without the build, a placeholder page with links to the others). |
 | GET | [`/lite`](/api/http/operations/lite_landing_lite_get/) | Public | The story page without a build step. |
 | GET | [`/lite/dashboard`](/api/http/operations/lite_dashboard_lite_dashboard_get/) | Public | The dashboard page without a build step. |
 | GET | [`/lite/scout`](/api/http/operations/lite_scout_lite_scout_get/) | Public | The Scout page without a build step. |
 
-Routes the schema leaves out: `/docs`, `/redoc` and `/openapi.json` (off in live mode), and the static files under `/assets/`.
+Routes the schema leaves out (listed in `docs-site/generated/routes.json`): `/docs`, `/docs/oauth2-redirect`, `/redoc` and `/openapi.json` (off in live mode unless `RATCHET_OPENAPI` is set), `/favicon.svg`, and the static files under `/assets/`.
 
 ## Three examples
 
@@ -250,7 +251,7 @@ In live mode, add `Authorization: Bearer $KEY` with one of your API keys.
 
 ### 1. A chat completion with a task
 
-`X-Ratchet-Task` says which task the request belongs to. Without it the request uses the `default` task (see [task selection](/reference/api/) for the other ways to name one).
+`X-Ratchet-Task` says which task the request belongs to. Without it the request uses the `default` task (see [task selection](/reference/api/#task-resolution) for the other ways to name one).
 
 ```bash
 curl -s localhost:8000/v1/chat/completions \
@@ -395,7 +396,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** The script at the top imports the gateway in mock mode, reads the settings registry, runs every command line tool with `--help` and reads the Makefile. It writes three committed data files. The site turns those files into the HTTP reference, the environment variable page and the command line page. This page and the guides are written by hand and link to the generated pages. After you change a route, a setting or a command, run `python docs-site/scripts/export-reference.py` and commit the result.
+**Reading this diagram.** The script at the top imports the gateway in mock mode, reads the settings registry, runs every command line tool with `--help` and reads the Makefile. It writes four committed data files: the OpenAPI schema, the environment variables, the command line tools and the routes the schema leaves out. The site turns those files into the HTTP reference, the environment variable page and the command line page. This page and the guides are written by hand and link to the generated pages. After you change a route, a setting or a command, run `python docs-site/scripts/export-reference.py` and commit the result.
 
 </figcaption>
 </figure>

@@ -345,7 +345,7 @@ python -m ratchet.live seal                                                    #
 **What it does not prove.** Receipts make edits after sealing detectable and tie the baseline to audited teacher bills. They cannot prove the costs written at request time: reconcile the summed teacher spend (`totals.teacher_cost_nusd` over the days) with the Token Factory bill for the same API key. The interval is a normal approximation, and heavier-tailed real bills may need more than 30 audits. The chain shows that a receipt was changed; it does not stop an operator from withholding one, so clients should keep the receipts they receive. Request ids are the ledger's global row ids, so a client can infer the gateway's total volume between two of its own requests.
 
 <Aside type="caution" title="Not run on live traffic yet">
-As of Oct 22, 2026, no adapter has been signed and no day has been sealed on a live gateway, and nothing has run on Nebius GPUs. Real teacher calls on Token Factory built the text-to-SQL data, but every BOM, certificate, proof, replay and receipt number quoted on this page comes from mock models (simulation). The formats, the signatures and the verifiers are tested offline.
+As of Oct 25, 2026, no adapter has been signed and no day has been sealed on a live gateway, and nothing has run on Nebius GPUs. Real teacher calls on Token Factory built the text-to-SQL data, but every BOM, certificate, proof, replay and receipt number quoted on this page comes from mock models (simulation). The formats, the signatures and the verifiers are tested offline.
 </Aside>
 
 ## For engineers
@@ -403,7 +403,7 @@ Not on the request path beyond logging a few values per request: no model call, 
 
 ### Has any of it run on real traffic?
 
-Not the signed documents on this page. As of Oct 22, 2026, the signed BOMs, proofs, certificates and receipts described here have been produced only by the mock gateway, the simulator and the tests. The one real-model measurement is the text-to-SQL adapter's exam, scored by a standalone script (see [Results](/guides/results/)). The live-run harness (`python -m ratchet.liverun`) is the planned way to produce the first real numbers through the gateway.
+Not the signed documents on this page. As of Oct 25, 2026, the signed BOMs, proofs, certificates and receipts described here have been produced only by the mock gateway, the simulator and the tests. The real-model measurements are the text-to-SQL and tool-calling adapters' exams, scored by standalone scripts (see [Results](/guides/results/)). The live-run harness (`python -m ratchet.liverun`) has run its smoke mode once (20 requests on Oct 23, about $0.01, 0 students and 0 audits, so no savings number); its measured `run` mode has not run.
 
 ## Related
 

@@ -26,4 +26,4 @@ so a visitor can watch a real run at its real pace without a model call or a sea
 python -c "import sys; from ratchet.scout.__main__ import main; sys.exit(main(['record', 'Your question', '--base-url', 'http://127.0.0.1:8000']))"
 ```
 
-(`python -m ratchet.scout record ...` does not reach the `record` branch yet: `main` only reads an argument list passed to it.)
+The shorter form works too: `python -m ratchet.scout record "Your question" --base-url http://127.0.0.1:8000`.

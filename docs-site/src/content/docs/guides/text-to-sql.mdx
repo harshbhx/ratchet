@@ -29,7 +29,7 @@ Anyone who gets the answer sheet can mark the exam again and must get the same s
 <Flow label="The pipeline">
   <FlowStep title="The teacher writes the data" tone="rented" meta="Ultra on Token Factory">Databases, business questions and SQL answers.</FlowStep>
   <FlowStep title="Every answer is run" meta="a read-only sandbox">Kept only if it runs and returns 1 to 100 rows.</FlowStep>
-  <FlowStep title="The student trains" tone="owned" meta="Nano 4B + LoRA">On the kept rows, on a free Colab T4.</FlowStep>
+  <FlowStep title="The student trains" tone="owned" meta="Nano 4B + LoRA">On the kept rows, on a T4 (free Colab for round 1, rented on Modal for round 2).</FlowStep>
   <FlowStep title="The exam" meta="unseen databases">Scored by running queries, on a CPU.</FlowStep>
 </Flow>
 
@@ -62,9 +62,9 @@ The honest question is "good enough at what, measured how?" This page and the [R
 
 3. **Every SQL is run.** The SQL goes into a sandbox on that database. It is kept only if it is one read-only `SELECT` (or `WITH`) that finishes inside 2 seconds and returns 1 to 100 rows. Duplicate questions on the same database are dropped. Everything else is counted as rejected and thrown away.
 
-4. **The exam is kept apart by database.** Training uses 25 industries. The exam uses whole databases that never appear in training: 60% come from industries that are in training (but a different, new database) and 40% from five industries that are never in training (airline operations, pharmacy inventory, ride sharing, construction projects, IoT sensor readings). The script stops if one database ends up on both sides.
+4. **The exam is kept apart by database.** Training uses 25 industries. The exam uses whole databases that never appear in training: about two thirds come from industries that are in training (but a different, new database) and 57 of the 172 questions (33%) from two industries that are never in training (airline operations and pharmacy inventory). The script stops if one database ends up on both sides.
 
-5. **The student is trained.** QLoRA on a free Colab T4: the Nano 4B base loaded in 4-bit, LoRA rank 16, fp16, two epochs, with the loss counted on the SQL only.
+5. **The student is trained.** QLoRA on a T4 (a free Colab T4 for round 1, a rented Modal T4 for round 2): the Nano 4B base loaded in 4-bit, LoRA rank 16, fp16, two epochs, with the loss counted on the SQL only.
 
 6. **The exam is answered, then scored on a CPU.** The base model alone and the base model with the adapter each answer every exam question, and the raw answers are saved. A separate step runs each student query and the teacher's query on the same database and compares the rows.
 
@@ -76,7 +76,7 @@ The honest question is "good enough at what, measured how?" This page and the [R
 
 <div class="rt-callout rt-callout--note">
 
-**Where it was trained.** On a free Colab T4, not on Nebius GPUs. Only the teacher ran on Nebius: real calls to Nemotron 3 Ultra on Token Factory built this data on Oct 22, 2026.
+**Where it was trained.** On a free Colab T4 (round 1) and a rented Modal T4 (round 2), never on Nebius GPUs. Only the teacher ran on Nebius: real calls to Nemotron 3 Ultra on Token Factory built this data on Oct 22, 2026.
 
 </div>
 
@@ -89,7 +89,7 @@ flowchart TB
   C -->|"yes"| S{{"Which database?"}}
   S -->|"training: 25 industries"| TR[("Training set")]
   S -->|"exam: new databases,<br/>5 more industries"| EX[("Exam set")]
-  TR --> L["Train the adapter<br/>QLoRA, free Colab T4"]
+  TR --> L["Train the adapter<br/>QLoRA, T4 (Colab or Modal)"]
   L --> M["Adapter answers<br/>every exam question"]
   EX --> M
   M --> R["Run student and teacher SQL<br/>on the same database,<br/>compare the rows"]
@@ -198,26 +198,29 @@ sequenceDiagram
 
 The numbers below are read from the run's `results.json` when the site is built. Nothing here is typed by hand.
 
+Round 1, the half of the exam that measures the confidence gate (86 of 172 questions). Round 2 and the second exam are below.
+
 <SqlResults />
 
 More on how to read them is on the [Results](/guides/results/) page, and the full chain of checks is on [Proof you can run](/guides/proof/).
 
 ## Reproduce it and check it
 
-Where the code lives: the data and training scripts are in the repository under [`scripts/text2sql/`](https://github.com/harshbhx/ratchet/tree/main/scripts/text2sql) (`gen_sql_data.py`, `train_t4.py`), and the scoring script with the SQL checks is published next to the adapter. They are tools you run by hand, not part of the gateway. The three commands that matter:
+Where the code lives: the data and training scripts are in the repository under [`scripts/text2sql/`](https://github.com/harshbhx/ratchet/tree/main/scripts/text2sql) (`gen_sql_data.py`, `train_t4.py`), and the scoring script with the SQL checks is `scripts/measure_adapter.py`. They are tools you run by hand, not part of the gateway. The three commands that matter:
 
 ```bash
 # 1. Build the data (needs a Token Factory key; the teacher is paid per token, capped by --max-usd)
 python scripts/text2sql/gen_sql_data.py --out out/sql --max-usd 3
 
-# 2. Train on a Colab T4 and answer the exam (GPU)
-#    train_t4.py trains the adapter, then runs: measure_adapter.py generate ...
+# 2. Train on a T4 (Colab or Modal) and answer the exam (GPU)
+#    train_t4.py trains the adapter, then runs: scripts/measure_adapter.py generate ...
 
 # 3. Score and verify (CPU only; this is the part anyone can rerun)
-python measure_adapter.py report --raw raw.jsonl --golden golden.jsonl --dbs dbs.json \
+python scripts/measure_adapter.py report --raw raw.jsonl --golden golden.jsonl --dbs dbs.json \
   --adapter ./adapter --out results.json
-python measure_adapter.py verify --raw raw.jsonl --results results.json \
+python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json \
   --golden golden.jsonl --dbs dbs.json
+# exact arguments for the published runs: evidence/text2sql-round2/README.md, "Check it yourself"
 ```
 
 `verify` prints `OK: every number in results.json was recomputed from raw.jsonl and matches`, or exits with a line starting `FAIL:` that says which file is wrong or which numbers differ. The report holds the SHA-256 of the raw answers, the exam, the exam databases and the adapter, so a swapped file is caught.
@@ -230,7 +233,7 @@ python measure_adapter.py verify --raw raw.jsonl --results results.json \
 - **"Matches the teacher" is not "is what the user meant".** The teacher is a model too and can be wrong. The score measures how well the student copies the teacher, on queries that run.
 - **Small slices mean little.** The split by difficulty or by industry has few questions per cell.
 - **The cost is an estimate.** Token counts are measured. Prices are inputs. No student endpoint was run, so no GPU-hour bill is included. See [Cost and savings](/guides/cost-and-savings/).
-- **The adapter was not trained on Nebius GPUs.** It was trained on a free Colab T4. The teacher ran on Nebius Token Factory. The training script is written to run unchanged as a Nebius Serverless Job, but it has not been run there.
+- **The adapter was not trained on Nebius GPUs.** Round 1 was trained on a free Colab T4 and round 2 on a rented Modal T4. The teacher ran on Nebius Token Factory. The training script is written to run unchanged as a Nebius Serverless Job, but it has not been run there.
 
 ## The license chain
 
@@ -245,7 +248,7 @@ python measure_adapter.py verify --raw raw.jsonl --results results.json \
 | What | Where |
 |---|---|
 | Data generation and sandbox | `gen_sql_data.py`: `build_db`, `run_select`, `make_db`, `HELD_OUT_DOMAINS`, the `teacher_manifest.json` it writes |
-| Training | `train_t4.py` (QLoRA, rank 16, fp16, 4-bit nf4, completion-only loss), run on a free Colab T4 |
+| Training | `train_t4.py` (QLoRA, rank 16, fp16, 4-bit nf4, completion-only loss), run on a T4 (free Colab for round 1, rented Modal for round 2) |
 | Scoring | `scripts/measure_adapter.py`: `report` runs each answer and the reference query on the same database and compares the rows; `verify` recomputes every number from the raw answers |
 | The second exam | `gen_exam2.py` (a different model writes databases, questions and reference queries; every query is run before it is kept), `teacher_selfcheck.py` (the teacher answers an exam) |
 | The numbers on the pages | `exam_numbers.py` scores the saved answers of both exams and writes the data the landing page, the judges' page and these docs read; a test fails when they drift |

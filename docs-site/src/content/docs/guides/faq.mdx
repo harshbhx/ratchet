@@ -52,8 +52,8 @@ flowchart LR
 </figcaption>
 </figure>
 
-<Aside type="caution" title="Status as of Oct 22, 2026">
-Nothing has run on Nebius GPUs yet. Teacher calls to Nemotron 3 Ultra on Token Factory are real (they built the text-to-SQL data on Oct 22, 2026), and the text-to-SQL adapter was trained on a free Colab T4. The full loop is complete and tested in simulation with mock models; live mode, the student endpoint, the training job and the demo VM kit are written and tested offline, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. Every number on this site is simulation, an estimate, or read from the text-to-SQL results file, and says which.
+<Aside type="caution" title="Status as of Oct 25, 2026">
+Nothing has run on Nebius GPUs yet. Teacher calls to Nemotron 3 Ultra on Token Factory are real (they built the text-to-SQL data on Oct 22, 2026), and the adapters (two text-to-SQL, one tool-calling) were trained on a free Colab T4 and a rented Modal T4, outside Night School. The full loop is complete and tested in simulation with mock models; live mode, the student endpoint, the training job and the demo VM kit are written and tested offline, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. Every number on this site is simulation, an estimate, or read from the text-to-SQL and tool-calling results files, and says which.
 </Aside>
 
 ## For everyone
@@ -86,13 +86,13 @@ Sometimes it will be, and Ratchet is built to keep that rare and visible:
 
 ### Does it work on real traffic yet?
 
-Not yet. As of Oct 22, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data), but the full loop has not served real traffic and no student has run on a Nebius GPU, so there are no live numbers. Live figures will come only from a published live-run results file. The one measured result is the text-to-SQL adapter's exam, on [Results](/guides/results/); everything else is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
+Not yet. As of Oct 25, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data), but the full loop has not served real traffic and no student has run on a Nebius GPU, so there are no live numbers. Live figures will come only from a published live-run results file. The measured results are the text-to-SQL and tool-calling adapters' exams, on [Results](/guides/results/); the only live run is a 20-request smoke run that measures no savings; everything else is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
 
 ### What does it cost?
 
 All of these are estimates or simulation, with their sources:
 
-- **The public demo VM**: about $72.50 for Oct 29 to Dec 15, 2026 (`cpu-e2`, prices as of Oct 20, 2026).
+- **A Nebius demo VM, if you run one** (the public demo is on Cloudflare today): about $72.50 for 48 days (`cpu-e2`, prices as of Oct 20, 2026).
 - **The teacher**: Ultra at $1 per million input tokens and $3 per million output tokens (list price, Oct 2026, unverified until the day-1 checks pass), roughly $1.30 per 1,000 teacher calls.
 - **The GPU endpoint**: about $32 for every full day it runs (an L40S at $1.35 a GPU-hour on [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; an estimate).
 - **In simulation** (mock models, seed 7, the reference run in `docs/TESTING.md`), day 10 cost $0.147 per 1,000 ticket requests against $1.093 if Ultra had answered all of them.
@@ -119,11 +119,11 @@ The story page at https://ratchet.dualmindlab.tech, then `/scout` (ask an exampl
 
 ### Is the demo live or simulated?
 
-Mock mode is simulation, and the pages label it so. The hosted demo is meant to run in live mode, calling the real teacher on Token Factory, and live mode stays unverified until the day-1 checks pass. It has no GPU: student calls go to the hosted, untuned Nano 30B <Who as="fallback" />, and every answer carries that badge. The story page's replay and savings figures are simulation. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
+Mock mode is simulation, and the pages label it so. The hosted demo is meant to run in live mode, calling the real teacher on Token Factory, and live mode stays unverified until the day-1 checks pass. It has no GPU and no trained student yet, so the teacher answers every request (README, Oct 2026). Once a version exists, student calls go to the hosted, untuned Nano 30B <Who as="fallback" /> and carry that badge. The story page's replay and savings figures are simulation. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Which numbers are real?
 
-Only the text-to-SQL adapter's results, read from its own results file on [Results](/guides/results/). None of the loop's numbers are live yet. Simulation numbers come from mock models and say "simulation" with their source; costs from the docs say "estimate" with their date. Live numbers will come only from a published, non-smoke live-run results file (`evidence/live/results.json`), which does not exist yet. [Evidence](/guides/evidence/)
+The text-to-SQL results (the headline) and the smaller tool-calling results, both read from their results files on [Results](/guides/results/); the 20-request live smoke run measures cost only and no savings. None of the loop's numbers are live yet. Simulation numbers come from mock models and say "simulation" with their source; costs from the docs say "estimate" with their date. Live numbers will come only from a published, non-smoke live-run results file (`evidence/live/results.json`), which does not exist yet. [Evidence](/guides/evidence/)
 
 ### Which NVIDIA models and Nebius services does it use?
 
@@ -135,7 +135,7 @@ Only the text-to-SQL adapter's results, read from its own results file on [Resul
 | Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` with a LoRA adapter, vLLM on a Serverless Endpoint |
 | Night School | Serverless Jobs on an L40S, with TRL and PEFT |
 | Datasets and adapters | An Object Storage bucket mounted in the job and the endpoint |
-| Public demo host | A Nebius AI Cloud CPU VM (`2vcpu-8gb`) |
+| Public demo host | Cloudflare Workers with Containers today; a Nebius CPU VM (`2vcpu-8gb`) is scripted and ready to run, not deployed |
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) |
 
 Token Factory did not offer fine-tuning or LoRA serving for Nemotron (Oct 2026), so the student is trained and served on Nebius AI Cloud. [Host it on Nebius](/guides/host-on-nebius/)
@@ -146,7 +146,7 @@ In live mode, every teacher call goes to Token Factory: cold starts, escalations
 
 ### Can I check the claims myself?
 
-Yes, offline. `make test` runs the 1,900 tests with no network and no GPU; `make sim` reproduces the reference simulation exactly; `python -m ratchet.bom verify` checks an adapter's signed BOM and its `NOTICE.md`; `python -m ratchet.stats check` recomputes a certificate from its signed counts; `python -m ratchet.proof heldout` checks that no golden example was trained on; `python -m ratchet.receipt verify` checks a savings receipt. [Evidence](/guides/evidence/)
+Yes, offline. `make test` runs the 1,922 tests with no network and no GPU; `make sim` reproduces the reference simulation exactly; `python -m ratchet.bom verify` checks an adapter's signed BOM and its `NOTICE.md`; `python -m ratchet.stats check` recomputes a certificate from its signed counts; `python -m ratchet.proof heldout` checks that no golden example was trained on; `python -m ratchet.receipt verify` checks a savings receipt. [Evidence](/guides/evidence/)
 
 ### Why does a Scout run say "search unavailable"?
 

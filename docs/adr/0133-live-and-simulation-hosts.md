@@ -1,6 +1,7 @@
 # ADR 0133: Live and simulation hosts
 
-Status: Accepted (2026-10-22)
+- Status: Accepted
+- Date: 2026-10-22
 
 ## Context
 

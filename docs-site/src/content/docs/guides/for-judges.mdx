@@ -15,15 +15,15 @@ import Stepper from '../../../components/ui/Stepper.astro';
 ## Where things are
 
 <PathGrid cols={2} label="The live demo and the code">
-  <PathCard title="The live site" href="https://ratchet.dualmindlab.tech" icon="spark" eyebrow="Start here" description="The story page: how Ratchet works, why it is license-clean and why releases are safe." />
-  <PathCard title="Scout" href="https://ratchet.dualmindlab.tech/scout" icon="search" tone="neutral" eyebrow="/scout" description="Five agents answer one research question; each call shows who answered it." />
-  <PathCard title="The dashboard" href="https://ratchet.dualmindlab.tech/dashboard" icon="chart" tone="neutral" eyebrow="/dashboard" description="Versions, releases, economics, and a redactor you can try." />
+  <PathCard title="Live demo" href="https://live.ratchet.dualmindlab.tech" icon="spark" eyebrow="Start here" description="Real Token Factory calls under spend limits. The teacher answers every request for now; no trained student is served yet." />
+  <PathCard title="Simulation" href="https://demo.ratchet.dualmindlab.tech" icon="chart" tone="neutral" eyebrow="Mock models" description="Run days, break a deploy and watch the rollback. Every number is simulation." />
+  <PathCard title="The story site" href="https://ratchet.dualmindlab.tech" icon="search" tone="neutral" eyebrow="Mock mode" description="How Ratchet works, why it is license-clean and why releases are safe, with Scout and the dashboard in mock mode." />
   <PathCard title="The code" href="https://github.com/harshbhx/ratchet" icon="repo" tone="neutral" eyebrow="Apache-2.0" description="The gateway, Night School, the release gate and the tests, on GitHub." />
 </PathGrid>
 
 These docs are at https://docs.ratchet.dualmindlab.tech.
 
-{/* TODO: add the Hugging Face model link here once the text-to-SQL adapter is published. */}
+Adapters and data on Hugging Face: [text-to-SQL adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql), [tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall), [exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), [recorded Scout runs](https://huggingface.co/spaces/harshbhx/ratchet-scout). Evidence folders in the repository: `evidence/live-smoke-2026-10-23`, `evidence/scout`, `evidence/text2sql-round2`, `evidence/text2sql-exam2`, `evidence/toolcall`.
 
 ## Try it in five steps
 
@@ -63,7 +63,7 @@ flowchart LR
 flowchart TB
   subgraph Real["Real"]
     direction LR
-    R1["Teacher calls on Token<br/>Factory, Scout search"] ~~~ R3["SQL adapter,<br/>free Colab T4"] ~~~ R4["Code and tests,<br/>no GPU needed"]
+    R1["Teacher calls on Token<br/>Factory, Scout search"] ~~~ R3["Adapters,<br/>T4 (Colab, Modal)"] ~~~ R4["Code and tests,<br/>no GPU needed"]
   end
   subgraph Sim["Simulation"]
     direction LR
@@ -97,13 +97,13 @@ flowchart TB
 
 <div class="rt-callout rt-callout--note">
 
-**Real, as of Oct 22, 2026.** Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The text-to-SQL adapter was trained on a free Colab T4, not on Nebius, and its results are read from its own results file. The code and its 1,900 tests run with no GPU. No live run of the full loop has been published yet, and live mode stays unverified until `scripts/day1_check.py` passes with a real key.
+**Real, as of Oct 25, 2026.** Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The adapters were trained on a free Colab T4 and a rented Modal T4, not on Nebius, and their results are read from their own results files. The code and its roughly 1,900 tests run with no GPU. The only live run on record is a 20-request smoke run (`evidence/live-smoke-2026-10-23`): the teacher answered everything, no student was served and nothing was audited, so it measures no savings. Live mode stays unverified until `scripts/day1_check.py` passes with a real key.
 
 </div>
 
 <div class="rt-callout rt-callout--sim">
 
-**Simulation.** The numbers on the story page come from mock models that show how the loop behaves, not how good a real model is. The student endpoint has not been served on a Nebius GPU, so on the live demo student calls go to a hosted, untuned Nano model, and the pages say so with a badge. Live savings numbers do not exist yet and are not shown.
+**Simulation.** The numbers on the story page come from mock models that show how the loop behaves, not how good a real model is. The student endpoint has not been served on a Nebius GPU, so on the live demo the teacher answers every request (no trained version exists on that ledger yet). With a trained version and no GPU endpoint, student calls would go to a hosted, untuned Nano model, and the pages would say so with a badge. Live savings numbers do not exist yet and are not shown.
 
 </div>
 
@@ -119,13 +119,14 @@ The Scout demo has a daily run cap. If it is used up you get a polite refusal; e
 
 ## Verify a result with one command
 
-Every adapter has a signed bill of materials. This recomputes its certificate from the signed counts:
+On the repository as cloned, these two commands recompute the published exam numbers from the saved answers:
 
 ```bash
-python -m ratchet.stats check bom.json --public-key <key>
+python scripts/text2sql/exam_numbers.py --check
+python scripts/toolcall_results.py --check
 ```
 
-To check only the signature and the data lineage use `python -m ratchet.bom verify bom.json --public-key <key>`. The [proof page](/guides/proof/) walks through both with real files.
+For a real signed bill of materials from your own gateway, `python -m ratchet.stats check bom.json --public-key <key>` recomputes its certificate from the signed counts, and `python -m ratchet.bom verify bom.json --public-key <key>` checks only the signature and the data lineage. No real BOM is published in the repository yet. The [proof page](/guides/proof/) walks through both with real files.
 
 To see the loop move without any keys, run the mock demo (simulation, about a minute):
 
@@ -149,8 +150,8 @@ On `/dashboard` there click **Run 1 day + night** a few times, then **Break next
 
 ## Honest limits
 
-<Aside type="caution" title="As of Oct 22, 2026">
-- The student endpoint has not been served on a Nebius GPU. The text-to-SQL adapter was trained on a free Colab T4.
+<Aside type="caution" title="As of Oct 25, 2026">
+- The student endpoint has not been served on a Nebius GPU. The adapters were trained on a free Colab T4 and a rented Modal T4.
 - Savings and precision figures on the story page, in the README and in most of these docs are **simulation**.
 - Precision means agreement with the teacher, not ground truth.
 - The redactor is pattern-based: names and street addresses are not caught yet.

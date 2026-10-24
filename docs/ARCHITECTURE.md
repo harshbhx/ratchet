@@ -2,9 +2,15 @@
 
 Ratchet is a gateway that sits between your app and a large "teacher" model. A small "student" model, NVIDIA's open Nano base with a LoRA adapter you own, answers each request first. If it is unsure, the request goes to the teacher. Every teacher answer is stored with its license, and every night a new student is trained on those answers and released through a series of safety gates.
 
-This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [PRD.md](PRD.md); the reasoning behind each choice is in the [ADRs](adr/README.md).
+This page describes the code in `ratchet/` as of v0.4.0 plus the unreleased work listed in [CLAUDE.md](../CLAUDE.md#current-status-oct-21-2026). Product context is in [PRD.md](PRD.md); the reasoning behind each choice is in the [ADRs](adr/README.md).
+
+Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.md); FR-, NFR- and INV- ids are requirement and invariant ids ([REQUIREMENTS.md](REQUIREMENTS.md)). A one-page overview is in [README.md](../README.md).
 
 ## 1. Components
+
+![Architecture: your app calls the gateway, a small student model answers first, a teacher answers when the student is unsure, answers are logged in a provenance ledger, Night School trains a new adapter from the ledger, and release gates decide whether it becomes the student.](img/architecture.svg)
+
+The picture shows the design. The diagram below names the files and services.
 
 ```
                          ┌──────────────────────────────── Nebius Token Factory ─────────┐
@@ -31,6 +37,8 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
           Night School driver: python -m ratchet.live night | tick   (ratchet/live.py, cron)
 ```
 
+Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested but have not been run on Nebius. The adapters behind the measured numbers in [evidence/](../evidence/) were trained on a free Colab T4 and a rented Modal T4, never on Nebius GPUs. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
+
 | Module | Responsibility |
 |---|---|
 | `ratchet/config.py` | `Settings` (read from environment variables) and the `Price` table |
@@ -51,7 +59,7 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/licenses.py` | Teacher license registry; refuses teachers that forbid distillation. `BUILTIN` (code) plus the open teachers of `RATCHET_TEACHER_LICENSES` (`install()` at startup: allowed licenses only, never a closed model family or router alias it recognises), and `BASE_MODELS`, the base models' licenses ([ADR 0090](adr/0090-licenses-travel-with-the-adapter.md)) |
 | `ratchet/redact.py` | `redact()`, `redact_messages()`: PII placeholders before examples are stored |
 | `ratchet/auth.py` | `KeyRing` (named gateway API keys, admin keys for management writes, read-only dashboard keys) and `bearer()` |
-| `ratchet/access.py` | Who may call each route ([ADR 0061](adr/0061-endpoint-access-levels.md)): one table of access levels (`route_access`: public, api, dashboard, bom, admin, mock; unknown routes count as dashboard) and the scrubbing of anonymous public reads (`pseudonyms`, `scrub_stats`, `scrub_task`, `scrub_detail`); standard library only |
+| `ratchet/access.py` | Who may call each route ([ADR 0061](adr/0061-endpoint-access-levels.md)): one table of access levels (`route_access`: public, api, dashboard, bom, metrics, admin, mock; unknown routes count as dashboard) and the scrubbing of anonymous public reads (`pseudonyms`, `scrub_stats`, `scrub_task`, `scrub_detail`); standard library only |
 | `ratchet/obs.py` | Request ids, W3C trace context and structured logs without content ([§12](#12-observability), [ADR 0062](adr/0062-request-ids-failures-logs-and-metrics.md)): `RequestContext` in the `request_ctx` context variable, `new_context`, `upstream_headers`, `log`, `upstream_failure`, `mirror_event`, the JSON and text formatters, `configure` |
 | `ratchet/metrics.py` | Prometheus metrics, standard library only: `Counter`, `Gauge`, `Histogram`, `Registry.render` (text format 0.0.4) and Ratchet's metrics with bounded labels (`client_label`) |
 | `ratchet/openai_compat.py` | `validate_chat_request()` (typed `ChatRequest`), `normalize_messages()`, `APIError` and OpenAI's error envelope; standard library only |
@@ -75,8 +83,10 @@ This page describes v0.2.0 as implemented in `ratchet/`. Product context is in [
 | `ratchet/scout/judge.py` | `JudgeAccess` (the judge code's digest and a derived cookie key) and `AttemptLimiter` |
 | `ratchet/scout/credits.py` | `CreditMeter` (monthly Tavily credits paced per UTC day, a judge share) and `MeteredSearch` |
 | `ratchet/scout/__main__.py` | CLI: `python -m ratchet.scout "<question>" --base-url <gateway>/v1` |
-| `ratchet/web/` | `landing.html` and `scout.html`: static pages, no build step |
+| `ratchet/web/` | `dist/` (the committed build of the React app in `web/`) and the hand-written fallback pages `landing.html` and `scout.html`, served at `/lite*` and when the build is missing |
 | `sim/` | Synthetic tickets, the mock research world (`research.py`), the generic mock world for every other request (`generic.py`: free text, schema instances, tool calls; [ADR 0041](adr/0041-generic-mock-world.md)), workloads (`world.py`), mock teacher/student for the offline simulation and tests |
+
+The table lists the main modules. Every module is listed in the repo map in [CLAUDE.md](../CLAUDE.md#repo-map).
 
 There are two runtime modes, chosen by `RATCHET_MODE`:
 
@@ -85,7 +95,7 @@ There are two runtime modes, chosen by `RATCHET_MODE`:
 
 ## 2. Request path
 
-`Ratchet.handle(messages, task, client, params, meta)` in `router.py`. Before it runs, the gateway checks the body size, the route's access level (`_access`, one dictionary lookup for `/v1/*`, whose level checks its own key; [ADR 0061](adr/0061-endpoint-access-levels.md)), the API key (when `RATCHET_API_KEYS` is set), checks the gateway's rate limits (the in-flight cap, the key's requests in flight and a minute; [§13](#13-spend-and-rate-limits)), validates and normalises the request (`openai_compat.py`), checks the task (the key's scope included), the key's daily quota and the US dollar budgets, in that order; it passes the key's name as `client` and the request's generation parameters as `params` (`providers.GenParams`). A request refused by any of these is not logged as a request and costs nothing (a 401, 413, 429 or 503 leaves a `failures` row, a 400 only a metric; [§12](#12-observability)):
+`Ratchet.handle(messages, task, client, params, meta)` in `router.py`. Before it runs, the gateway checks the body size, the route's access level (`_access`, one dictionary lookup for `/v1/*`, whose level checks its own key; [ADR 0061](adr/0061-endpoint-access-levels.md)), the API key (when `RATCHET_API_KEYS` is set), checks the gateway's rate limits (the in-flight cap, the key's requests in flight and a minute; [§17](#17-spend-and-rate-limits)), validates and normalises the request (`openai_compat.py`), checks the task (the key's scope included), the key's daily quota and the US dollar budgets, in that order; it passes the key's name as `client` and the request's generation parameters as `params` (`providers.GenParams`). A request refused by any of these is not logged as a request and costs nothing (a 401, 413, 429 or 503 leaves a `failures` row, a 400 only a metric; [§12](#12-observability)):
 
 ```mermaid
 sequenceDiagram
@@ -102,7 +112,7 @@ sequenceDiagram
         GW->>L: log_request(served_by=teacher)
         GW-->>App: chat.completion
     end
-    GW->>GW: pick version: canary with prob traffic_pct%, else live, else none (none while the student is turned off, §14)
+    GW->>GW: pick version: canary with prob traffic_pct%, else live, else none (none while the student is turned off, §18)
     alt a version was picked
         GW->>S: n=3 samples, temperature 0.7, logprobs
         GW->>GW: score() -> confidence
@@ -199,7 +209,7 @@ stateDiagram-v2
 - **Open.** `_sample` checks `allow()` before calling and raises `CircuitOpen` when the breaker is open. `handle` escalates to the teacher with `escalated=1`, `confidence` NULL and route `student_breaker`; nothing is billed for the student, and it is not another `student_error`. After `RATCHET_STUDENT_BREAKER_COOLDOWN_S` (30 s) exactly one request probes the endpoint; concurrent requests still see the breaker open. A failed probe doubles the wait, up to 300 s; a successful one closes the breaker and resets the wait. A probe that never reports back is presumed lost after the longer of the wait and the student call's own longest time (its pool, connect, write and read timeouts plus 5 s, 37 s by default), so a probe on a hanging endpoint is never replaced while it can still be running; a lost probe that reports while the breaker is still half-open decides as the probe would. Only a probe's own thread decides, so a late result from a call that began before the breaker opened is ignored.
 - **One breaker per failure domain.** Breakers are made on first use, keyed by role and endpoint: the provider's `base_url`, or its class when it has none (a resolver may build a new provider object per call, as the mock fleet does). Live and canary on one endpoint share the `student` breaker. Shadow calls use their own `shadow` breaker, so a bad staging adapter cannot open the breaker live traffic depends on; while it is open the shadow collects no evidence, as when its samples fail. Another endpoint in the same role gets `student-2`, and so on.
 - **Lost adapters.** vLLM forgets adapters loaded at runtime when the endpoint restarts, and answers 404 ``The model `student-v3` does not exist.`` A 404 that names the version's adapter becomes `AdapterMissing`: the request escalates (route `student_error`), the breaker records the endpoint as healthy, and `Ratchet.on_adapter_missing(version)` is called. In live mode with an endpoint that is `live.AdapterReloader.request`, which loads the adapter again on one daemon thread (`live.load_adapter`, path `RATCHET_ADAPTER_ROOT/<name>`), at most once per adapter per 60 s, and writes `adapter_reloaded` or `adapter_reload_failed`. `python -m ratchet.live reload` stays as the manual fallback.
-- **Events and health.** Transitions write `circuit` events (`student: closed->open after 5 failures (ReadTimeout)`, `student: open->half_open after 30 s; one probe`, `student: half_open->open for 60 s after a failed probe (...)`, `student: half_open->closed after a successful probe`), naming the failure's class and status, never its message. Once the wait is at 300 s, the repeated `open->half_open` / `half_open->open` pair is written only for the 1st, 10th, 100th and 1000th probe at that wait, so a long outage cannot push the release history out of the dashboard's last 40 events. `Ratchet.health()["breakers"]` has each breaker's `snapshot()`. No endpoint serves that snapshot yet, so the dashboard's Resilience panel reads each breaker's state from its latest `circuit` event (one probe behind at most, at the longest wait) and parses the wording above; `test_resilience_panel_contract` checks the panel's grammar against these events ([ADR 0100](adr/0100-dashboard-task-writes-and-derived-breaker-state.md)).
+- **Events and health.** Transitions write `circuit` events (`student: closed->open after 5 failures (ReadTimeout)`, `student: open->half_open after 30 s; one probe`, `student: half_open->open for 60 s after a failed probe (...)`, `student: half_open->closed after a successful probe`), naming the failure's class and status, never its message. Once the wait is at 300 s, the repeated `open->half_open` / `half_open->open` pair is written only for the 1st, 10th, 100th and 1000th probe at that wait, so a long outage cannot push the release history out of the dashboard's last 40 events. `Ratchet.health()["breakers"]` has each breaker's `snapshot()`. `/readyz` reports each breaker's state too, but it is a public readiness probe and not part of `/ratchet/stats`, so the dashboard's Resilience panel reads each breaker's state from its latest `circuit` event (one probe behind at most, at the longest wait) and parses the wording above; `test_resilience_panel_contract` checks the panel's grammar against these events ([ADR 0100](adr/0100-dashboard-task-writes-and-derived-breaker-state.md)).
 - **Cost on the hot path.** While a breaker is closed, `allow()` and a successful `record()` read attributes without taking a lock; the lookup is one dictionary read. Locks are taken only while failures are being counted or the breaker is open.
 
 The mock-only `POST /ratchet/demo/student-outage` takes the mock production endpoint down for 5 to 300 s, to show the breaker open and close again ([API.md](API.md#post-ratchetdemostudent-outageseconds60)).
@@ -370,7 +380,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `request_id` | TEXT | The gateway's id for the request (`req_` + 32 hex, `ratchet.request_id`; the completion id has the same digits), which feedback names it by; NULL for internal calls (Scout, the simulator) and in older rows. Indexed (FR-13.30) |
 | `end_user_secondary` | TEXT | The 16-hex HMAC of the second end-user identifier the request carried (`user` beside `safety_identifier`), in the same scope as `end_user`; a correction must name it too, so a no-train registration made with it applies. NULL with one identifier or none and in older rows; never exported; an erasure of the end user by either identifier clears both hashes. Indexed (FR-13.30) |
 | `store_opt_out` | TEXT | Why the request's teacher answers could not be stored: `global`, `task`, `key`, `request` or `end_user` (`privacy.OPT_OUTS`, broadest first); NULL when no opt-out applied and in older rows (FR-13.1) |
-| `request_id`, `client_request_id` | TEXT | The gateway's id for the request (`req_` and 32 hex digits, also `x-request-id`; index `requests_request_id`) and the client's own `X-Request-Id` or `X-Client-Request-Id` when it was well formed. NULL for internal calls (Scout, the simulator) and rows written before v0.5 ([§12](#12-observability)) |
+| `client_request_id` (with `request_id`, above) | TEXT | The gateway's id for the request (`req_` and 32 hex digits, also `x-request-id`; index `requests_request_id`) and the client's own `X-Request-Id` or `X-Client-Request-Id` when it was well formed. NULL for internal calls (Scout, the simulator) and rows written before v0.5 ([§12](#12-observability)) |
 | `wall_ms` | REAL | The whole cascade on the gateway's clock (`time.perf_counter`, from the start of `handle` or `teacher_only` to the ledger write), every model call included; `wall_ms - latency_ms` is Ratchet's own time. NULL in rows written before v0.5 ([§11](#11-hot-path-and-performance)) |
 | `retry_count` | INTEGER | The client SDK's attempt number (`x-stainless-retry-count`): 0 for a first attempt, an internal call, a client that does not send it, and rows written before v0.5 ([§14](#14-retries-and-idempotency)) |
 
@@ -427,7 +437,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 
 ### Evidence tables
 
-Created by `SCHEMA` for the evidence features, so later items change no migration ([ADR 0024](adr/0024-evidence-foundations.md)). `version_leaves` is written by committed training sets (FR-16.4, [ADR 0027](adr/0027-committed-training-sets.md)): `run_night` writes each new version's leaves once, right after `create_version`;the other tables yet. The drift monitor and the teacher watch write theirs; the others wait for their features.
+Created by `SCHEMA` for the evidence features, so later items change no migration ([ADR 0024](adr/0024-evidence-foundations.md)). `version_leaves` is written by committed training sets (FR-16.4, [ADR 0027](adr/0027-committed-training-sets.md)): `run_night` writes each new version's leaves once, right after `create_version`. The drift monitor, the teacher watch, the receipts, the Scout guard and erasure write the other tables; only the clean-room backfill (`backfill_jobs`, FR-16.8) is still waiting for its feature.
 
 | Table | Columns | Feature |
 |---|---|---|
@@ -446,7 +456,7 @@ New indexes on `requests`: (`student_version`, `audited`, `id`) for a version's 
 
 ### `admin_actions`, `runtime_flags`, `task_overrides`: manual changes
 
-`admin_actions`: `id`, `ts`, `actor` (`api:<admin key name>` or `cli:<OS user>`, never a key), `action` (`rollback`, `retire`, `promote`, `set_flag`, `pin_task`, `unpin_task`, `tick`), `target` (`v7`, a switch, a task, `gate`), `reason` (redacted), `before` and `after` (JSON: the target's state), `request_id` (the admin call's; NULL from the CLI). `runtime_flags`: `name` (primary key: `student_disabled`, `releases_frozen`, `training_paused`, `audit_rate`), `value`, `ts`, `actor`; a missing row is the default. `task_overrides`: `task` (primary key), `pinned`, `ts`, `actor`, `reason`. Written only through `ratchet/admin.py` ([§14](#14-admin-api-and-runtime-switches), [ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md)); new tables, so an old file gains them on open.
+`admin_actions`: `id`, `ts`, `actor` (`api:<admin key name>` or `cli:<OS user>`, never a key), `action` (`rollback`, `retire`, `promote`, `set_flag`, `pin_task`, `unpin_task`, `tick`), `target` (`v7`, a switch, a task, `gate`), `reason` (redacted), `before` and `after` (JSON: the target's state), `request_id` (the admin call's; NULL from the CLI). `runtime_flags`: `name` (primary key: `student_disabled`, `releases_frozen`, `training_paused`, `audit_rate`), `value`, `ts`, `actor`; a missing row is the default. `task_overrides`: `task` (primary key), `pinned`, `ts`, `actor`, `reason`. Written only through `ratchet/admin.py` ([§18](#18-admin-api-and-runtime-switches), [ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md)); new tables, so an old file gains them on open.
 
 ### `failures`: what failed, and what it spent
 
@@ -473,7 +483,7 @@ The `meta` table also holds `end_user_key` (the generated HMAC key, hex, when `R
 
 ### `events`: release log
 
-`id`, `ts`, `day`, `kind`, `detail`. The kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `live_retired`, `retired`, `rollback`, `inconclusive`, `alert`, `drift`, `teacher_drift`, `teacher_model_changed`, `teacher_watch`, `teacher_ack`, `warning`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `task_disabled`, `schema_repair_error`, `json_schema_fallback`, `auto_task_cap`, `auto_task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `integrity`, `sync_failed`, `no_train`, `no_train_unmatched`, `end_user_key`, `erase`, `purge`, `purge_failed`, `human_alert`, `import`, `receipt_skipped`, `sidecar_inline`, `sidecar_dropped`, `budget`, `admin` (every manual change, [§14](#14-admin-api-and-runtime-switches)), `conflict`, `fault` (demo only) and `warmup` (mock warm-up only). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
+`id`, `ts`, `day`, `kind`, `detail`. The main kinds written by the code are `trained`, `skip`, `rejected`, `shadow`, `canary`, `live`, `live_retired`, `retired`, `rollback`, `inconclusive`, `alert`, `drift`, `teacher_drift`, `teacher_model_changed`, `teacher_watch`, `teacher_ack`, `warning`, `student_error`, `audit_error`, `shadow_error`, `skip_example`, `circuit`, `adapter_reloaded`, `adapter_reload_failed`, `gateway_error`, `task_registered`, `task_changed`, `task_deleted`, `task_skipped`, `task_disabled`, `schema_repair_error`, `json_schema_fallback`, `auto_task_cap`, `auto_task_skipped`, `rescored`, `rescore_failed`, `endpoint`, `integrity`, `sync_failed`, `no_train`, `no_train_unmatched`, `end_user_key`, `erase`, `purge`, `purge_failed`, `human_alert`, `import`, `receipt_skipped`, `sidecar_inline`, `sidecar_dropped`, `budget`, `admin` (every manual change, [§18](#18-admin-api-and-runtime-switches)), `conflict`, `fault` (demo only), `warmup` (mock warm-up only), `erasure_honoured`, `judge`, `search_error`, `tavily_exhausted`, `unattributed`, `demo_reset` (mock demo only) and `liverun_start`, `liverun_round`, `liverun_stop` (the live-run harness). Their meanings are in [RUNBOOK.md](RUNBOOK.md#event-kinds).
 
 > Note on concurrency: every public `Ledger` method that writes, or that the request path and the release gate read, holds one re-entrant lock (`_locked`), because Scout's triage and reader agents call `Ratchet.handle` from several threads at once and all share one SQLite connection (`check_same_thread=False`). Stats and report queries (`_reads`) use a second, read-only connection with its own lock on a WAL file ([§11](#11-hot-path-and-performance)). This makes one gateway process safe; it does not make several processes safe, so run one uvicorn worker ([ADR 0006](adr/0006-sqlite-ledger-for-v0.md)).
 
@@ -510,14 +520,14 @@ Using the candidate's `eval` (calibrated on half of the golden set, measured on 
    - Default: reject if `precision < live.precision − 0.02` **or** `coverage < live.coverage − 0.02`.
    - With `paired_gate=1` and the candidate's `paired` record against this live version: reject only if more than `tolerance` of the rows are lost from coverage (`(b − c)/n`) with McNemar `p_cov < regression_alpha`, if more than `tolerance` of the rows are newly answered wrong (`(neg_flips − pos_flips)/n`) with `p_err < regression_alpha`, or if `max_nfr` < 1 and the negative flip rate's 95% Wilson lower bound is above it. Without such a record, the default rule.
 5. With `min_judge_pass` above 0 (`RATCHET_MIN_JUDGE_PASS`, FR-14.40, [free-text tasks](#free-text-tasks)), reject if the eval's `judge_pass_rate` is below it, or if no judge graded a free-text task the candidate would answer (`ReleaseGate.judge_problem`).
-5. Per task (`ReleaseGate.task_failures`, FR-14.1), for each per-task record with at least `min_task_test_n` (10) held-out rows that the candidate would answer: the task fails when its held-out precision (over the answers it would serve) is below its floor (`policy.min_precision`, else `min_precision`), or below the live version's precision on that task less `tolerance` (only where live answers the task under the same spec with as many rows): the global gate's point-estimate rule on the task's own rows. A task that answers none of its held-out rows fails too, since it has no precision to show. With the judge gate on, a free-text task with as many held-out rows fails when its own `judge_pass_rate` is below `min_judge_pass` or it was not judged (`ReleaseGate.judge_failures`). With `task_mode=reject` a failing task rejects the candidate. With `disable` (the default) it is disabled on the candidate: `Ledger.merge_task_eval` sets its threshold to 1.01 and `disabled` to the reason, and a `task_disabled` event is written. Either way, a candidate with per-task records is rejected when the share of its held-out rows it would still answer, each task at its own threshold and the failing ones off, is below `min_coverage`: a version that serves (almost) nothing would wait in shadow or canary forever, and no night trains meanwhile. With per-task calibration off only the critical tasks have records, and the eval's `other_tasks` (the other tasks' held-out rows and how many the global threshold serves) counts in that share too. A task with critical classes (FR-2.50, `ReleaseGate.critical_failure`) is checked first, whatever its row count: each class needs at least `min_task_test_n` held-out rows whose teacher reference is in it and a miss rate whose 95% Wilson upper bound is at most its `max_miss_rate`, else the task fails the same way (a record that did not measure the current classes fails too).
-6. Otherwise every version in `shadow` or `canary` is set to `retired` (event `retired`). Then:
+6. Per task (`ReleaseGate.task_failures`, FR-14.1), for each per-task record with at least `min_task_test_n` (10) held-out rows that the candidate would answer: the task fails when its held-out precision (over the answers it would serve) is below its floor (`policy.min_precision`, else `min_precision`), or below the live version's precision on that task less `tolerance` (only where live answers the task under the same spec with as many rows): the global gate's point-estimate rule on the task's own rows. A task that answers none of its held-out rows fails too, since it has no precision to show. With the judge gate on, a free-text task with as many held-out rows fails when its own `judge_pass_rate` is below `min_judge_pass` or it was not judged (`ReleaseGate.judge_failures`). With `task_mode=reject` a failing task rejects the candidate. With `disable` (the default) it is disabled on the candidate: `Ledger.merge_task_eval` sets its threshold to 1.01 and `disabled` to the reason, and a `task_disabled` event is written. Either way, a candidate with per-task records is rejected when the share of its held-out rows it would still answer, each task at its own threshold and the failing ones off, is below `min_coverage`: a version that serves (almost) nothing would wait in shadow or canary forever, and no night trains meanwhile. With per-task calibration off only the critical tasks have records, and the eval's `other_tasks` (the other tasks' held-out rows and how many the global threshold serves) counts in that share too. A task with critical classes (FR-2.50, `ReleaseGate.critical_failure`) is checked first, whatever its row count: each class needs at least `min_task_test_n` held-out rows whose teacher reference is in it and a miss rate whose 95% Wilson upper bound is at most its `max_miss_rate`, else the task fails the same way (a record that did not measure the current classes fails too).
+7. Otherwise every version in `shadow` or `canary` is set to `retired` (event `retired`). Then:
    - no live version → `canary` at 10% (event `canary`, "first student");
    - live version exists → `shadow` (event `shadow`; with the paired gate it appends `serves +c−b of n vs live vL (McNemar p=…); nf negative flips, pf positive flips`).
 
    Both events append `; certified >= 95% (lcb 96.4%, delta 0.05)` when the candidate's certificate holds (recomputed from its counts).
 
-In practice step 6's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists. With the defaults (no certified floor, no paired gate) this is v0.4's gate exactly. The whole of `admit` is one transaction (`Ledger.transaction`), and it acts only on a `candidate`: one an admin moved while it was being scored is left as it is, with a `conflict` event. While an operator holds releases (`releases_frozen`, or a runtime audit rate of 0), a cold-start candidate goes to `shadow` against the teacher instead of canary.
+In practice step 7's retire branch rarely runs, because `run_night` skips training while a shadow or canary exists. With the defaults (no certified floor, no paired gate) this is v0.4's gate exactly. The whole of `admit` is one transaction (`Ledger.transaction`), and it acts only on a `candidate`: one an admin moved while it was being scored is left as it is, with a `conflict` event. While an operator holds releases (`releases_frozen`, or a runtime audit rate of 0), a cold-start candidate goes to `shadow` against the teacher instead of canary.
 
 **Every move compares and sets** ([ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md), FR-12.9). The gate and the admin API move versions only with `Ledger.transition(vid, from_state, from_pct, to_state, to_pct, event)`, an `UPDATE ... WHERE id=? AND state=? AND traffic_pct=?` inside `BEGIN IMMEDIATE` that writes its event only when the row changed, and `Ledger.promote_live`, which makes a canary live and retires the live version the caller saw, both compared, in one transaction. A move into shadow or canary is refused while another version is in either. So the gateway's tick and the cron tick (two processes on one file) make each decision once, and at most one version is live and one in flight. `set_version` is for tests and migrations only.
 
@@ -546,7 +556,7 @@ Run from the request path (at most once per `RATCHET_TICK_INTERVAL_S`: 5 s in li
    - **Promotion,** on this stage's audits once there are `min_audits`: the point estimate ≥ floor, or with `promote_evidence=1` the e-value against "precision ≤ floor" over this stage reaching 1/`alpha_promote` (56 agreeing audits at a 0.92 floor). Then advance or promote as above; the event appends the evidence.
    - **Futility:** `max_stage_audits` (400) audits in this stage and no decision → `retired`, traffic back as on a rollback (event `inconclusive`). It counts audits, not time: a canary without audits holds.
    - else hold.
-4. **Teacher watch** (`_tick_watchers` → `check_teacher`, FR-16.7, FR-6.42, [ADR 0033](adr/0033-teacher-watch.md)): two indexed lookups when up to date, the epoch in `meta` and the `teacher_checks` rows added since the last tick (a primary-key range), added to running counts by ledger day. When the freeze rule's e-value (§6, [Teacher watch](#teacher-watch-ratchetteacher_watchpy)) reaches 1/`alpha_teacher` (100), `Ledger.teacher_freeze` sets `teacher_frozen` and writes one `teacher_drift` event, in one transaction that re-checks the epoch, so the gateway and the nightly job write it once. A new epoch (an ack, a model change) resets the counts. It decides no release; Night School reads the freeze.
+5. **Teacher watch** (`_tick_watchers` → `check_teacher`, FR-16.7, FR-6.42, [ADR 0033](adr/0033-teacher-watch.md)): two indexed lookups when up to date, the epoch in `meta` and the `teacher_checks` rows added since the last tick (a primary-key range), added to running counts by ledger day. When the freeze rule's e-value (§6, [Teacher watch](#teacher-watch-ratchetteacher_watchpy)) reaches 1/`alpha_teacher` (100), `Ledger.teacher_freeze` sets `teacher_frozen` and writes one `teacher_drift` event, in one transaction that re-checks the epoch, so the gateway and the nightly job write it once. A new epoch (an ack, a model change) resets the counts. It decides no release; Night School reads the freeze.
 
 ### Shadow reference and arbitration
 
@@ -624,7 +634,7 @@ FR-2.55, FR-14.40, [ADR 0054](adr/0054-free-text-similarity-and-a-judge-gate.md)
 
 1. Each per-task record says `precision_kind` (`proxy` with a similarity field, else `exact`).
 2. With a `judge` (`LiveEvaluator`: `RATCHET_JUDGE_MODEL` in JSON mode; `MockFleet.judge`: the stored truth), after calibration `cascade_eval` grades the held-out rows of free-text tasks (`Task.free_text`: no fields or a similarity field) whose answer the student would serve, at the threshold coverage is measured at (the task's own with per-task records, else the global one). The candidate is the scored answer from the samples already drawn, cleaned as served; no other student call is made. It writes `judge_n` and `judge_pass_rate` (None when nothing was served) to the eval and to each free-text task's record.
-3. The golden gate reads them only when `min_judge_pass` is above 0 ([golden gate](#golden-gate-releasegateadmitvid), steps 4 and 5).
+3. The golden gate reads them only when `min_judge_pass` is above 0 ([golden gate](#golden-gate-releasegateadmitvid), steps 5 and 6).
 
 The judge never runs on the request path. A task with a similarity field must set `policy.samples` to 2 or more, since one sample always agrees with itself.
 
@@ -828,6 +838,8 @@ Each metric is `{name, value, target, op, unit, met, detail}`, `met` `null` whil
 
 ## 9. Design decisions
 
+This table lists some of the decisions, not all of them. The full numbered index of ADRs is in [adr/README.md](adr/README.md).
+
 | ADR | Decision |
 |---|---|
 | [0001](adr/0001-open-teacher-only.md) | Only teachers whose license allows training on outputs |
@@ -947,7 +959,7 @@ How a request's optional teacher work leaves the request path without changing t
 
 **Shutdown.** The app's lifespan calls `Runtime.shutdown()` after the server stopped taking requests: `Ratchet.close(RATCHET_SIDECAR_DRAIN_S)` waits for the queue, then gives up on the rest. Those rows stay pending for good, which every statistic ignores, and one `sidecar_dropped` event counts them per version; a job already running finishes in its thread. After `close`, requests run their checks inline again. A demo reset closes the old cascade's sidecar without waiting. A crash loses the queued jobs the same way (their rows stay pending). `/ratchet/stats` `sidecar` reports the queue and, per routed version, what could not go through it; `/metrics` has `ratchet_sidecar_jobs_total`, `ratchet_sidecar_full_total`, `ratchet_sidecar_job_seconds` and the `ratchet_sidecar_jobs` gauge.
 
-## 13. Spend and rate limits
+## 17. Spend and rate limits
 
 What a key and the whole gateway may spend and send ([ADR 0063](adr/0063-spend-and-rate-limits.md), FR-12.2, FR-12.3). Three parts, each per process (one worker, ADR 0006) and keyed by key name, never the key (invariant 13):
 
@@ -959,7 +971,7 @@ What a key and the whole gateway may spend and send ([ADR 0063](adr/0063-spend-a
 
 **The gateway's budget.** Past `RATCHET_DAILY_BUDGET_USD`, `block` refuses every chat request; `student_only` sets `RequestMeta.student_only` on each `/v1` request (a per-request flag, so Scout and the simulator are never affected), and `handle` then serves a confident student answer with no audit (the random draw is still made) and no shadow, and raises `spend.BudgetExceeded` before any teacher call for an escalation, a cold start, a pinned or unregistered task or a request with `tools`. What the student's samples cost by then gets a `budget` failures row and counts against the key, as for any failed request. The gateway maps `BudgetExceeded` to 429 `gateway_budget_exceeded`.
 
-## 14. Admin API and runtime switches
+## 18. Admin API and runtime switches
 
 Manual interventions go through one module, `ratchet/admin.py` ([ADR 0064](adr/0064-admin-api-compare-and-set-and-audit-trail.md), FR-12.1), which the gateway's `/ratchet/admin/*` routes (admin key; `admin` prefix in `access.py`) and `python -m ratchet.admin` (on the ledger file, actor `cli:<OS user>`) share. Each function checks its reason and actor, checks the move against `MOVES` (canary → rolled back, retired, another share or live; live → retired; shadow → retired or canary; rejected, rolled back, retired or candidate → canary only with `force`; never a version without a golden eval), and writes the change (`transition` / `promote_live`, compare-and-set), an `admin_actions` row and an `admin` event in one `Ledger.transaction()`. A refused or stale move raises `AdminConflict` (409); a call that changes nothing writes nothing. A promotion's `load_adapter` (live mode) loads the LoRA adapter into vLLM after the checks and outside the transaction, so a slow endpoint never holds the ledger.
 
@@ -988,7 +1000,8 @@ Which answers a version's release statistics count ([ADR 0073](adr/0073-fallback
 **The ledger.** `OWN_STUDENT` and `OWN_SHADOW` (`student_model IS NULL OR student_model = (SELECT adapter_uri FROM versions WHERE id=?1)`) are part of `AUDIT_TALLY_SQL`, `AUDIT_PENDING_SQL` and `SHADOW_QUALITY_SQL`: the adapter is read once per query by primary key, and the requests indexes are searched as before. `stats_by_day` adds `fallback_served`.
 
 **What follows.** While the fallback serves, no version gets evidence: the canary and the shadow hold, the live alert stays quiet, and Night School skips while that release is in flight (INV-5). Rows from before v0.5 have no model and count as they did; the reference runs are unchanged.
-## Demo hosting: live and simulation
+
+## 19. Demo hosting: live and simulation
 
 The demo VM serves two gateways from one image behind one Caddy: the live one at the root domain, and `ratchet-sim` (mock mode, in-memory ledger, no keys, 1 vCPU and 1 GiB) at `sim.<domain>`. INV-8 stays in the app, so the live host answers every demo route 403 whatever Caddy does ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
 

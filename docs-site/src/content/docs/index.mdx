@@ -1,6 +1,6 @@
 ---
 title: Ratchet docs
-description: Ratchet is an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own, learning only from open teachers, with a gated nightly release.
+description: Ratchet is an OpenAI-compatible gateway that distills open teacher models into a small student. You end up with an adapter you own, learned only from open teachers, with a gated nightly release.
 template: splash
 editUrl: false
 tableOfContents: false
@@ -42,7 +42,7 @@ import Closing from '../../components/home/Closing.astro';
 
 <Section id="proof" index="01" eyebrow="Facts you can check" title="Built to be checked, not taken on trust" lead="Every tile is a fact you can check in the repository. Numbers from the simulator appear elsewhere in these docs, and each one is labelled Simulation.">
   <StatRow cols={3} label="Facts about Ratchet">
-    <Stat value={1900} label="tests in the suite" note="They run offline, with no network and no GPU." />
+    <Stat value={1922} label="tests in the suite" note="They run offline, with no network and no GPU." />
     <Stat value={95} suffix="%" label="held-out precision floor" note="A new adapter must reach it on golden rows it never trained on." tone="owned" />
     <Stat value="Open teachers only" label="license-clean, in code" note="A teacher's license must be on an allowlist; closed models are refused." />
     <Stat value="Signed" label="bill of materials per adapter" note="Ed25519-signed, from the exact training and golden rows, with each teacher and license." tone="owned" />
@@ -69,10 +69,10 @@ import Closing from '../../components/home/Closing.astro';
 <Section id="today" index="03" eyebrow="Honest status" title="What is real today" lead="What has run, what has not, and where the numbers come from.">
   <FadeContent distance={16}>
     <RealToday
-      asOf="Status as of Oct 22, 2026. The For judges guide keeps the full list."
+      asOf="Status as of Oct 25, 2026. The For judges guide keeps the full list."
       items={[
-        { status: 'done', title: 'Teacher calls on Nebius Token Factory built the text-to-SQL training data (22 Oct)', text: 'NVIDIA Nemotron 3 Ultra answered the questions whose SQL was checked on a database. The gateway’s own live mode and the day-1 checks have not been run yet.' },
-        { status: 'done', title: 'A text-to-SQL adapter, trained on a free Colab T4', text: 'A LoRA on Nemotron 3 Nano 4B, trained from teacher answers that were run on a database. See the <a href="/guides/results/">results</a>.' },
+        { status: 'done', title: 'Teacher calls on Nebius Token Factory (live demo, recorded Scout runs)', text: 'NVIDIA Nemotron 3 Ultra built the training data and answers every request on the live demo. A 20-request smoke run (23 Oct) and three recorded Scout runs are in the repository. They show the system working end to end and measure no savings.' },
+        { status: 'done', title: 'Text-to-SQL and tool-calling adapters, trained on rented T4 GPUs', text: 'LoRA adapters on Nemotron 3 Nano 4B, trained from Ultra answers on a free Colab T4 and a rented Modal T4. Scores on exams they never saw are on <a href="/guides/results/">Results</a>. SQL is the headline result; the tool-calling result is a second, smaller one.' },
         { status: 'next', title: 'The student on a Nebius GPU', text: 'The Serverless Endpoint and the nightly training job are written and tested against fakes. They have not run on a Nebius GPU yet.' },
         { status: 'sim', title: 'Day-by-day savings and releases', text: 'These curves come from mock models in the simulator, and every such number is labelled Simulation.' },
       ]}
@@ -128,9 +128,9 @@ import Closing from '../../components/home/Closing.astro';
     label="Ratchet links"
     items={[
       { label: 'Source on GitHub', href: 'https://github.com/harshbhx/ratchet', icon: 'repo' },
-      { label: 'Live site', href: 'https://ratchet.dualmindlab.tech', icon: 'spark' },
-      { label: 'Scout demo', href: 'https://ratchet.dualmindlab.tech/scout', icon: 'search' },
-      { label: 'Dashboard', href: 'https://ratchet.dualmindlab.tech/dashboard', icon: 'chart' },
+      { label: 'Live demo', href: 'https://live.ratchet.dualmindlab.tech', icon: 'spark' },
+      { label: 'Simulation', href: 'https://demo.ratchet.dualmindlab.tech', icon: 'chart' },
+      { label: 'Story site', href: 'https://ratchet.dualmindlab.tech', icon: 'file' },
       { label: 'Changelog', href: 'https://github.com/harshbhx/ratchet/blob/main/CHANGELOG.md', icon: 'file' },
       { label: 'License', href: 'https://github.com/harshbhx/ratchet/blob/main/LICENSE', icon: 'scale' },
     ]}
