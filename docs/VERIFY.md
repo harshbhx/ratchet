@@ -79,7 +79,7 @@ curl -s https://live.ratchet.dualmindlab.tech/v1/chat/completions \
 
 The reply carries a `ratchet` block. Expect `served_by: "teacher"`, the model `nvidia/Nemotron-3-Ultra-550b-a55b`, a small `cost_usd` (a fraction of a cent) and a `request_id`. It is a real call, so please keep it to a few. No trained student is served in the live demo yet, so the teacher answers every request.
 
-**The run on record:** `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` recomputes the client-side numbers of a recorded 20-request run from its 21 per-request records. Expected: `recomputed 11 client-side values and 1 rounds from 21 records`. Two recorded live Scout runs are in [`evidence/scout`](../evidence/scout), and you can replay them [in your browser](https://huggingface.co/spaces/harshbhx/ratchet-scout).
+**The run on record:** `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` recomputes the client-side numbers of a recorded 20-request run from its 21 per-request records. Expected: `recomputed 11 client-side values and 1 rounds from 21 records`. Three recorded live Scout runs are in [`evidence/scout`](../evidence/scout), and you can replay them [in your browser](https://huggingface.co/spaces/harshbhx/ratchet-scout).
 
 ## 6. The loop works, and a bad release is rolled back
 

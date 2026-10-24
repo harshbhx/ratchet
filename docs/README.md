@@ -49,7 +49,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Generated traceability matrix: every PRD requirement and invariant with its code, tests and how it is verified (`make trace`) |
 | [../evidence/text2sql-round1](../evidence/text2sql-round1), [round2](../evidence/text2sql-round2), [exam2](../evidence/text2sql-exam2) | The measured text-to-SQL results: data, exams, every answer, scores and the scripts that recompute them |
 | [../evidence/live-smoke-2026-10-23](../evidence/live-smoke-2026-10-23) | A real run through the live gateway: 20 requests to Token Factory, about $0.01, every record published |
-| [../evidence/scout](../evidence/scout) | Two recorded live Scout runs (real Token Factory and Tavily calls), replayed by the gateway |
+| [../evidence/scout](../evidence/scout) | Three recorded live Scout runs (real Token Factory and Tavily calls), replayed by the gateway |
 
 ## Business and research
 

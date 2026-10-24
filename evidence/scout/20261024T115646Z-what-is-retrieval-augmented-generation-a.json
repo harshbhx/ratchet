@@ -1,0 +1,610 @@
+{
+ "schema": "ratchet.scout-recording/v1",
+ "recorded_at": "2026-10-24T11:56:46Z",
+ "host": "live.ratchet.dualmindlab.tech",
+ "mode": "live",
+ "question": "What is retrieval-augmented generation and when does it help?",
+ "duration_ms": 14777,
+ "events": [
+  {
+   "type": "start",
+   "run_id": "99ed71e4",
+   "question": "What is retrieval-augmented generation and when does it help?",
+   "mode": "live",
+   "t_ms": 0
+  },
+  {
+   "type": "step",
+   "agent": "planner",
+   "task": "research-plan",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000599,
+   "baseline_usd": 0.000599,
+   "latency_ms": 1267.2,
+   "detail": {
+    "queries": [
+     "retrieval-augmented generation definition overview",
+     "when does retrieval-augmented generation help benefits use cases",
+     "retrieval-augmented generation survey paper authoritative source"
+    ]
+   },
+   "t_ms": 1266
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 1344.3,
+   "detail": {
+    "query": "retrieval-augmented generation definition overview",
+    "results": [
+     {
+      "id": 1,
+      "title": "Retrieval-augmented generation - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+      "snippet": "Retrieval-augmented generation (RAG) is a technique that enables large language models (LLMs) to retrieve and incorporate new information from external data sources. With RAG, LLMs first refer to a specified set of documents, then respond to user queries. These documents supplement information from the LLM's pre-existing training data. This allows LLMs to use domain-specific and/or updated information that is not available in the training data. For example, this enables LLM-based chatbots to [.."
+     },
+     {
+      "id": 2,
+      "title": "What Is Retrieval-Augmented Generation aka RAG | NVIDIA Blogs",
+      "url": "https://blogs.nvidia.com/blog/what-is-retrieval-augmented-generation",
+      "snippet": "Retrieval-augmented generation is a technique for enhancing the accuracy and reliability of generative AI models with information fetched from specific and relevant data sources. In other words, it fills a gap in how LLMs work. Under the hood, LLMs are neural networks, typically measured by how many parameters they contain. An LLM’s parameters essentially represent the general patterns of how humans use words to form sentences. [...] country_code Skip to content # What Is Retrieval-Augmented Gen"
+     },
+     {
+      "id": 3,
+      "title": "What is retrieval-augmented generation (RAG)? · GitHub",
+      "url": "https://github.com/resources/articles/software-development-with-retrieval-augmentation-generation-rag",
+      "snippet": "## What is RAG? Retrieval-augmented generation, or RAG, is a hybrid technique in generative AI in which large language models (LLMs) are enhanced by connecting them to external data sources. Instead of relying solely on the internal training data of the AI model, RAG systems retrieve relevant information from a knowledge base and use it to generate more accurate, context-aware responses. [...] ### What is RAG? Retrieval-augmented generation (RAG) is a method in generative AI that combines large "
+     },
+     {
+      "id": 4,
+      "title": "What is Retrieval Augmented Generation (RAG)? | Databricks",
+      "url": "https://www.databricks.com/blog/what-is-retrieval-augmented-generation",
+      "snippet": "Retrieval augmented generation (RAG) is a hybrid AI framework that bolsters large language models (LLMs) by combining them with external, up-to-date data sources. Instead of relying solely on static training data, RAG retrieves relevant documents at query time and feeds them into the model as context. By incorporating new and context-aware data, AI can generate more accurate, current and domain-specific responses. [...] | Retrieval augmented generation (RAG) | Combining an LLM with external know"
+     }
+    ]
+   },
+   "t_ms": 2613
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 1136.9,
+   "detail": {
+    "query": "when does retrieval-augmented generation help benefits use cases",
+    "results": [
+     {
+      "id": 5,
+      "title": "Why and when to use RAG - AI Discussions - DeepLearning.AI",
+      "url": "https://community.deeplearning.ai/t/why-and-when-to-use-rag/682599",
+      "snippet": "In such cases, Retrieval-Augmented Generation (RAG) can be particularly useful. RAG enhances the LLM’s performance by retrieving relevant information from a specific dataset or external sources and integrating this information into the response. This approach allows the LLM to offer more accurate and contextually relevant answers for specialized or current topics. [...] Your understanding is correct regarding why Retrieval-Augmented Generation (RAG) is used. RAG combines LLMs with retrieval syst"
+     },
+     {
+      "id": 6,
+      "title": "5 key features and benefits of retrieval augmented generation (RAG) | The Microsoft Cloud Blog",
+      "url": "https://www.microsoft.com/en-us/microsoft-cloud/blog/2025/02/13/5-key-features-and-benefits-of-retrieval-augmented-generation-rag",
+      "snippet": "Benefit: By leveraging contextual information, RAG enables AI systems to generate responses that are tailored to the specific needs and preferences of users. RAG also enables organizations to maintain data privacy, versus retraining a model owned by a separate entity, allowing data to remain where it lives. This is beneficial in scenarios such as legal advice or technical support. [...] Benefit: RAG boosts trust levels and significantly improves the accuracy and reliability of AI-generated conte"
+     },
+     {
+      "id": 7,
+      "title": "What is RAG (Retrieval Augmented Generation)? | IBM",
+      "url": "https://www.ibm.com/think/topics/retrieval-augmented-generation",
+      "snippet": "RAG empowers organizations to avoid high retraining costs when adapting generative AI models to domain-specific use cases. Enterprises can use RAG to complete gaps in a machine learning model’s knowledge base so it can provide better answers. The primary benefits of RAG include: Cost-efficient AI implementation and AI scaling Access to current domain-specific data Lower risk of AI hallucinations Increased user trust Expanded use cases [...] Retrieval augmented generation, or RAG, is an architect"
+     },
+     {
+      "id": 8,
+      "title": "5 benefits of retrieval-augmented generation (RAG)",
+      "url": "https://www.merge.dev/blog/rag-benefits",
+      "snippet": "Using RAG, you can feed your model data from sources that extend well beyond the model’s initial training—from your internal knowledge database to specific websites, like Wikipedia. As a result, your model can access more reliable information during the generation process and produce output that’s more likely to be accurate and useful. We’ll further explore why RAG can help your model—regardless of which you use—provide more accurate outputs and break down its other benefits. [...] These feature"
+     }
+    ]
+   },
+   "t_ms": 3747
+  },
+  {
+   "type": "step",
+   "agent": "searcher",
+   "task": null,
+   "served_by": "tool",
+   "model": "tavily",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0,
+   "baseline_usd": 0.0,
+   "latency_ms": 1589.9,
+   "detail": {
+    "query": "retrieval-augmented generation survey paper authoritative source",
+    "results": [
+     {
+      "id": 9,
+      "title": "[2312.10997] Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "url": "https://arxiv.org/abs/2312.10997",
+      "snippet": "archive # Computer Science > Computation and Language # Title:Retrieval-Augmented Generation for Large Language Models: A Survey | | | --- | | Comments: | Ongoing Work | | Subjects: | Computation and Language (cs.CL); Artificial Intelligence (cs.AI) | | Cite as: | arXiv:2312.10997 [cs.CL] | | | (or arXiv:2312.10997v5 [cs.CL] for this version) | | | Focus to learn more arXiv-issued DOI via DataCite | ## Submission history ## Access Paper: ### Current browse context:"
+     },
+     {
+      "id": 10,
+      "title": "Retrieval-Augmented Generation for AI-Generated Content: A Survey | Data Science and Engineering | Springer Nature Link",
+      "url": "https://link.springer.com/article/10.1007/s41019-025-00335-5",
+      "snippet": "Yan S-Q, Gu J-C, Zhu Y, Ling Z-H (2024) Corrective retrieval augmented generation. arXiv:2401.15884 Huang W, Lapata M, Vougiouklis P et al (2023) Retrieval augmented generation with rich answer encoding. In: IJCNLP-AACL Wang H, Huang W, Deng Y et al (2024) Unims-rag: a unified multi-source retrieval-augmented generation for personalized dialogue systems. arXiv:2401.13256 [...] Zhang K, Li G, Li J et al (2023) Toolcoder: teach code generation models to use API search tools. arXiv:2305.04032 Liu S"
+     },
+     {
+      "id": 11,
+      "title": "awesome-generative-ai-guide/research_updates/rag_research_table.md at main · aishwaryanr/awesome-generative-ai-guide · GitHub",
+      "url": "https://github.com/aishwaryanr/awesome-generative-ai-guide/blob/main/research_updates/rag_research_table.md",
+      "snippet": "| Retrieval-Augmented Generation for Large Language Models: A Survey | This survey delves into Retrieval-Augmented Generation as a solution to challenges faced by Large Language Models, including hallucination and outdated knowledge. RAG integrates external databases to enhance accuracy and credibility, particularly for knowledge-intensive tasks, and enables continuous knowledge updates. The paper reviews the evolution of RAG paradigms, covering Naive RAG, Advanced RAG, and Modular RAG, while [."
+     }
+    ]
+   },
+   "t_ms": 5341
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000765,
+   "baseline_usd": 0.000765,
+   "latency_ms": 1125.2,
+   "detail": {
+    "id": 6,
+    "url": "https://www.microsoft.com/en-us/microsoft-cloud/blog/2025/02/13/5-key-features-and-benefits-of-retrieval-augmented-generation-rag",
+    "title": "5 key features and benefits of retrieval augmented generation (RAG) | The Microsoft Cloud Blog",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The Microsoft blog post explains RAG benefits and specific scenarios where it helps, such as legal advice and technical support."
+   },
+   "t_ms": 6503
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000855,
+   "baseline_usd": 0.000855,
+   "latency_ms": 1147.2,
+   "detail": {
+    "id": 1,
+    "url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+    "title": "Retrieval-augmented generation - Wikipedia",
+    "relevant": true,
+    "source_type": "docs",
+    "reason": "Wikipedia article defines retrieval-augmented generation and explains its use for domain-specific or updated information."
+   },
+   "t_ms": 6503
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000857,
+   "baseline_usd": 0.000857,
+   "latency_ms": 1205.8,
+   "detail": {
+    "id": 2,
+    "url": "https://blogs.nvidia.com/blog/what-is-retrieval-augmented-generation",
+    "title": "What Is Retrieval-Augmented Generation aka RAG | NVIDIA Blogs",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The NVIDIA blog post defines retrieval-augmented generation and describes how it improves accuracy and reliability of generative AI models."
+   },
+   "t_ms": 6547
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.00081,
+   "baseline_usd": 0.00081,
+   "latency_ms": 1357.5,
+   "detail": {
+    "id": 4,
+    "url": "https://www.databricks.com/blog/what-is-retrieval-augmented-generation",
+    "title": "What is Retrieval Augmented Generation (RAG)? | Databricks",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The article defines RAG and explains when it helps by combining LLMs with external data for accurate, current responses."
+   },
+   "t_ms": 6702
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000822,
+   "baseline_usd": 0.000822,
+   "latency_ms": 1550.1,
+   "detail": {
+    "id": 3,
+    "url": "https://github.com/resources/articles/software-development-with-retrieval-augmentation-generation-rag",
+    "title": "What is retrieval-augmented generation (RAG)? · GitHub",
+    "relevant": true,
+    "source_type": "docs",
+    "reason": "The GitHub article directly explains retrieval-augmented generation and its benefits."
+   },
+   "t_ms": 6891
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000848,
+   "baseline_usd": 0.000848,
+   "latency_ms": 1723.9,
+   "detail": {
+    "id": 5,
+    "url": "https://community.deeplearning.ai/t/why-and-when-to-use-rag/682599",
+    "title": "Why and when to use RAG - AI Discussions - DeepLearning.AI",
+    "relevant": true,
+    "source_type": "forum",
+    "reason": "The snippet defines retrieval-augmented generation and explains it helps for specialized or current topics by retrieving external information."
+   },
+   "t_ms": 7072
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000831,
+   "baseline_usd": 0.000831,
+   "latency_ms": 845.2,
+   "detail": {
+    "id": 8,
+    "url": "https://www.merge.dev/blog/rag-benefits",
+    "title": "5 benefits of retrieval-augmented generation (RAG)",
+    "relevant": true,
+    "source_type": "blog",
+    "reason": "The blog post explains retrieval-augmented generation and its benefits, directly addressing the question."
+   },
+   "t_ms": 7335
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000915,
+   "baseline_usd": 0.000915,
+   "latency_ms": 836.3,
+   "detail": {
+    "id": 10,
+    "url": "https://link.springer.com/article/10.1007/s41019-025-00335-5",
+    "title": "Retrieval-Augmented Generation for AI-Generated Content: A Survey | Data Science and Engineering | Springer Nature Link",
+    "relevant": true,
+    "source_type": "paper",
+    "reason": "This is a survey paper on retrieval-augmented generation, which likely defines the concept and discusses when it is beneficial."
+   },
+   "t_ms": 7544
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.00072,
+   "baseline_usd": 0.00072,
+   "latency_ms": 1000.5,
+   "detail": {
+    "id": 9,
+    "url": "https://arxiv.org/abs/2312.10997",
+    "title": "[2312.10997] Retrieval-Augmented Generation for Large Language Models: A Survey",
+    "relevant": true,
+    "source_type": "paper",
+    "reason": "This is a survey paper specifically about retrieval-augmented generation for LLMs, directly addressing the question."
+   },
+   "t_ms": 7554
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000963,
+   "baseline_usd": 0.000963,
+   "latency_ms": 1161.5,
+   "detail": {
+    "id": 7,
+    "url": "https://www.ibm.com/think/topics/retrieval-augmented-generation",
+    "title": "What is RAG (Retrieval Augmented Generation)? | IBM",
+    "relevant": true,
+    "source_type": "docs",
+    "reason": "Directly defines RAG and explains its benefits and use cases."
+   },
+   "t_ms": 7635
+  },
+  {
+   "type": "step",
+   "agent": "triage",
+   "task": "source-triage",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0016,
+   "baseline_usd": 0.0016,
+   "latency_ms": 1537.2,
+   "detail": {
+    "id": 11,
+    "url": "https://github.com/aishwaryanr/awesome-generative-ai-guide/blob/main/research_updates/rag_research_table.md",
+    "title": "awesome-generative-ai-guide/research_updates/rag_research_table.md at main · aishwaryanr/awesome-generative-ai-guide · GitHub",
+    "relevant": true,
+    "source_type": "paper",
+    "reason": "The survey paper directly explains RAG, its purpose, and when it helps (knowledge-intensive tasks, hallucination, outdated knowledge)."
+   },
+   "t_ms": 8435
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.000768,
+   "baseline_usd": 0.000768,
+   "latency_ms": 983.0,
+   "detail": {
+    "id": 5,
+    "url": "https://community.deeplearning.ai/t/why-and-when-to-use-rag/682599",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "Retrieval-Augmented Generation (RAG) combines a large language model with a retrieval system to fetch relevant information from a specific dataset or external sources and incorporate it into the model's response, improving accuracy and contextual relevance for specialized or rapidly changing topics, especially when the knowledge base is too large for the context window or requires continuous updates."
+   },
+   "t_ms": 9428
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001073,
+   "baseline_usd": 0.001073,
+   "latency_ms": 998.6,
+   "detail": {
+    "id": 1,
+    "url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "Retrieval-augmented generation (RAG) is a technique that lets large language models retrieve and incorporate external documents at inference time, supplementing their training data so they can use updated or domain-specific information without retraining."
+   },
+   "t_ms": 9442
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001286,
+   "baseline_usd": 0.001286,
+   "latency_ms": 1214.0,
+   "detail": {
+    "id": 3,
+    "url": "https://github.com/resources/articles/software-development-with-retrieval-augmentation-generation-rag",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "Retrieval-augmented generation (RAG) is a hybrid technique that enhances large language models by retrieving relevant documents from external knowledge bases to generate more accurate, context-aware responses, and it helps when up-to-date factual accuracy is needed, reducing hallucinations."
+   },
+   "t_ms": 9652
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001518,
+   "baseline_usd": 0.001518,
+   "latency_ms": 1370.9,
+   "detail": {
+    "id": 4,
+    "url": "https://www.databricks.com/blog/what-is-retrieval-augmented-generation",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "RAG is a hybrid AI framework that enhances LLMs by retrieving relevant, up-to-date documents from external sources (e.g., vector databases) at query time and feeding them as context, enabling more accurate, current, and domain-specific responses."
+   },
+   "t_ms": 9810
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.001573,
+   "baseline_usd": 0.001573,
+   "latency_ms": 1430.1,
+   "detail": {
+    "id": 2,
+    "url": "https://blogs.nvidia.com/blog/what-is-retrieval-augmented-generation",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "Retrieval-augmented generation (RAG) is a technique that enhances the accuracy and reliability of generative AI models by retrieving relevant information from specific data sources, using embeddings and a vector database for precise query retrieval."
+   },
+   "t_ms": 9875
+  },
+  {
+   "type": "step",
+   "agent": "reader",
+   "task": "page-read",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.003313,
+   "baseline_usd": 0.003313,
+   "latency_ms": 2911.0,
+   "detail": {
+    "id": 6,
+    "url": "https://www.microsoft.com/en-us/microsoft-cloud/blog/2025/02/13/5-key-features-and-benefits-of-retrieval-augmented-generation-rag",
+    "answers_question": true,
+    "fact_type": "definition",
+    "key_fact": "RAG leverages contextual information to generate tailored responses, maintains data privacy by keeping data in place, and improves accuracy and trust in high-stakes domains like legal, healthcare, finance, and customer support."
+   },
+   "t_ms": 11353
+  },
+  {
+   "type": "step",
+   "agent": "writer",
+   "task": "research-write",
+   "served_by": "teacher",
+   "model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+   "confidence": null,
+   "escalated": false,
+   "cost_usd": 0.0024,
+   "baseline_usd": 0.0024,
+   "latency_ms": 3416.8,
+   "detail": {
+    "answer": "Retrieval-augmented generation (RAG) is a hybrid technique that enhances large language models by retrieving relevant documents from external knowledge bases at inference time to generate more accurate, context-aware responses [1,3,4]. It helps when up-to-date factual accuracy is needed, reducing hallucinations, especially for specialized or rapidly changing topics, or when the knowledge base is too large for the context window or requires continuous updates [3,5]. RAG also improves accuracy and trust in high-stakes domains like legal, healthcare, finance, and customer support while maintaining data privacy [6].",
+    "citations": [
+     {
+      "n": 1,
+      "title": "Retrieval-augmented generation - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation"
+     },
+     {
+      "n": 3,
+      "title": "What is retrieval-augmented generation (RAG)? · GitHub",
+      "url": "https://github.com/resources/articles/software-development-with-retrieval-augmentation-generation-rag"
+     },
+     {
+      "n": 4,
+      "title": "What is Retrieval Augmented Generation (RAG)? | Databricks",
+      "url": "https://www.databricks.com/blog/what-is-retrieval-augmented-generation"
+     },
+     {
+      "n": 5,
+      "title": "Why and when to use RAG - AI Discussions - DeepLearning.AI",
+      "url": "https://community.deeplearning.ai/t/why-and-when-to-use-rag/682599"
+     },
+     {
+      "n": 6,
+      "title": "5 key features and benefits of retrieval augmented generation (RAG) | The Microsoft Cloud Blog",
+      "url": "https://www.microsoft.com/en-us/microsoft-cloud/blog/2025/02/13/5-key-features-and-benefits-of-retrieval-augmented-generation-rag"
+     }
+    ],
+    "search_unavailable": false
+   },
+   "t_ms": 14773
+  },
+  {
+   "type": "done",
+   "run_id": "99ed71e4",
+   "answer": "Retrieval-augmented generation (RAG) is a hybrid technique that enhances large language models by retrieving relevant documents from external knowledge bases at inference time to generate more accurate, context-aware responses [1,3,4]. It helps when up-to-date factual accuracy is needed, reducing hallucinations, especially for specialized or rapidly changing topics, or when the knowledge base is too large for the context window or requires continuous updates [3,5]. RAG also improves accuracy and trust in high-stakes domains like legal, healthcare, finance, and customer support while maintaining data privacy [6].",
+   "citations": [
+    {
+     "n": 1,
+     "title": "Retrieval-augmented generation - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation"
+    },
+    {
+     "n": 3,
+     "title": "What is retrieval-augmented generation (RAG)? · GitHub",
+     "url": "https://github.com/resources/articles/software-development-with-retrieval-augmentation-generation-rag"
+    },
+    {
+     "n": 4,
+     "title": "What is Retrieval Augmented Generation (RAG)? | Databricks",
+     "url": "https://www.databricks.com/blog/what-is-retrieval-augmented-generation"
+    },
+    {
+     "n": 5,
+     "title": "Why and when to use RAG - AI Discussions - DeepLearning.AI",
+     "url": "https://community.deeplearning.ai/t/why-and-when-to-use-rag/682599"
+    },
+    {
+     "n": 6,
+     "title": "5 key features and benefits of retrieval augmented generation (RAG) | The Microsoft Cloud Blog",
+     "url": "https://www.microsoft.com/en-us/microsoft-cloud/blog/2025/02/13/5-key-features-and-benefits-of-retrieval-augmented-generation-rag"
+    }
+   ],
+   "totals": {
+    "calls": 22,
+    "llm_calls": 19,
+    "student_calls": 0,
+    "teacher_calls": 19,
+    "cost_usd": 0.022516,
+    "baseline_usd": 0.022516,
+    "savings_pct": 0.0,
+    "wall_ms": 14779.5
+   },
+   "search": {
+    "available": true,
+    "partial": false,
+    "reason": null
+   },
+   "t_ms": 14777
+  }
+ ],
+ "totals": {
+  "calls": 22,
+  "llm_calls": 19,
+  "student_calls": 0,
+  "teacher_calls": 19,
+  "cost_usd": 0.022516,
+  "baseline_usd": 0.022516,
+  "savings_pct": 0.0,
+  "wall_ms": 14779.5
+ }
+}
