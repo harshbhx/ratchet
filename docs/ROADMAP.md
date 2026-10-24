@@ -45,17 +45,17 @@ Built package by package. Every item gets offline tests and an adversarial revie
 
 ## Milestone 1: hackathon submission (Oct 19–29, 2026)
 
-> Stage One of judging is pass/fail on the submission requirements, and one of them is a runtime call to Token Factory. Mock mode makes none, so the public demo must run in live mode during judging (Dec 1–15). Details in [HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md#stage-one-passfail-readiness).
+> Stage One of judging is pass/fail on the submission requirements, and one of them is a runtime call to Token Factory. Mock mode makes none, so the public demo must run in live mode during judging (Dec 1–15).
 
 | Dates | Work | Exit criteria |
 |---|---|---|
-| Oct 19–20 | Day-1 checks ([DAY1.md](DAY1.md)): Token Factory model IDs, logprobs, JSON mode; Nano 4B LoRA on a Serverless Job; vLLM endpoint with LoRA; Serverless pricing | `scripts/day1_check.py` passes, or config updated; one adapter trained and served, or fallback chosen |
+| Oct 19–20 | Day-1 checks (`scripts/day1_check.py`): Token Factory model IDs, logprobs, JSON mode; Nano 4B LoRA on a Serverless Job; vLLM endpoint with LoRA; Serverless pricing | `scripts/day1_check.py` passes, or config updated; one adapter trained and served, or fallback chosen |
 | Oct 21–22 | Live cascade: gateway in live mode against Token Factory teacher and the student endpoint | Real requests served by both paths; ledger shows real costs |
 | Oct 23–24 | Live Night School: dataset → Serverless Job → hot-load adapter → golden eval → release gate | At least one version trained and evaluated live |
 | Oct 25 | Live traffic run: synthetic tickets through the real teacher for several "nights" (`make live-run`, [RUNBOOK](RUNBOOK.md#live-measurement-run)) | At least 3 versions; real cost and precision numbers |
 | Oct 26–27 | Public demo on the Nebius VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)): live at the root domain (**live mode** is required for Stage One) with live Scout, Tavily and the budget guard and the Token Factory fallback student, and the simulation at `sim.<domain>` | Both hosts load logged-out over HTTPS and the live strip shows a Token Factory call; `/`, `/scout`, `/dashboard` load; live Token Factory and Tavily calls succeed; stays up when the student endpoint is stopped; credits cover the demo until Dec 15 |
-| Oct 28 | README with live numbers, feedback section, video recorded ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) | Video under 3 minutes on YouTube (public) |
-| Oct 29 | Submit on Devpost ([HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md)) | Every checklist item ticked |
+| Oct 28 | README with live numbers, feedback section, video recorded | Video under 3 minutes on YouTube (public) |
+| Oct 29 | Submit on Devpost | Every checklist item ticked |
 | Dec 1–15 | Judging | Demo URL live the whole window (VM runs Oct 29 – Dec 15) |
 
 ## Milestone 2: hardening (Nov–Dec 2026)

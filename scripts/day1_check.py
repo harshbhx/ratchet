@@ -155,7 +155,7 @@ MODULES_NOTE = (
 OUTCOMES = ("skipped", "ok", "warn", "fail")  # from best to worst
 TAGS = {"skipped": "[skip]", "ok": "[ok]", "warn": "[warn]", "fail": "[FAIL]"}
 TEACHER_SUMMARY = "Some checks failed: update ratchet/config.py before building on them."
-SUMMARY = "Some checks failed: see the [FAIL] lines; docs/DAY1.md says what to do for each."
+SUMMARY = "Some checks failed: see the [FAIL] lines; each [FAIL] line says what to do."
 
 
 # ---------- shared helpers ----------
@@ -491,7 +491,7 @@ def _load_hint(status: int | None, message: str) -> str:
         return "vLLM refused a module train.py trained: the message lists the modules it expected and received"
     if "max_lora_rank" in low:
         return "train with --rank at most the endpoint's --max-lora-rank"
-    return "see docs/DAY1.md row 6"
+    return "see the adapter-load check above"
 
 
 def student_load(st: _Student) -> bool:
@@ -672,7 +672,7 @@ def student_missing_adapter(st: _Student) -> None:
             st,
             "fail",
             f"adapter_missing: HTTP {record.get('http')} {record.get('message', '')}: after an endpoint restart every "
-            "request would go to the teacher and the adapter would never reload: see DAY1 row 6",
+            "request would go to the teacher and the adapter would never reload: see the adapter-load check",
         )
         return
     record.update(http=200, router_reloads=False)
@@ -768,7 +768,7 @@ def check_tavily(c: httpx.Client, report: Report, s: Any, query: str) -> bool:
             text = e.response.text
         sec.update(status=status, error=f"HTTPStatusError {status}", message=report.scrub(text or ""), latency_ms=_ms(t0))
         report.outcome("tavily", "fail")
-        report.line("fail", f"tavily: HTTP {status} {text or ''} ({TAVILY_HINTS.get(status, 'see docs/DAY1.md')})")
+        report.line("fail", f"tavily: HTTP {status} {text or ''} ({TAVILY_HINTS.get(status, 'see the Tavily docs')})")
         return False
     except httpx.HTTPError as e:
         sec.update(latency_ms=_ms(t0), **failure(e, report))

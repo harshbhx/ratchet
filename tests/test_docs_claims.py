@@ -26,9 +26,7 @@ CLAIM_FILES = (
     "docs/PRD.md",
     "docs/COMPETITIVE_ANALYSIS.md",
     "docs/BUSINESS.md",
-    "docs/HACKATHON_SUBMISSION.md",
     "docs/GLOSSARY.md",
-    "docs/DEMO_SCRIPT.md",
     "docs/ARCHITECTURE.md",
     "ratchet/web/landing.html",
     "ratchet/dashboard.html",
@@ -228,7 +226,7 @@ def test_unsourced_competitor_claims_are_gone():
     stay out of every page that compares Ratchet with competitors."""
     found = {
         rel: hits
-        for rel in ("README.md", "docs/COMPETITIVE_ANALYSIS.md", "docs/BUSINESS.md", "docs/HACKATHON_SUBMISSION.md")
+        for rel in ("README.md", "docs/COMPETITIVE_ANALYSIS.md", "docs/BUSINESS.md")
         if (hits := _hits(_read(rel), UNSOURCED))
     }
     assert found == {}
@@ -413,7 +411,6 @@ def test_nebius_facts_are_worded_as_documented():
 
     row = next(line for line in _read("docs/PRD.md").splitlines() if line.startswith("| Nebius Serverless Endpoints |"))
     assert "not billed for compute or its own storage; a mounted Object Storage bucket still is" in row
-    assert '"currently in beta and available on request"' in _read("docs/HACKATHON_SUBMISSION.md")
 
 
 @pytest.mark.req("NFR-70")

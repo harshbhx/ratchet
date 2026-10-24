@@ -39,7 +39,6 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | Hosting the public demo on one Nebius CPU VM: setup, mock to live, costs, monitoring, backups, security, teardown |
 | [RUNBOOK.md](RUNBOOK.md) | Daily checks, event meanings, manual rollback and promotion, incident playbooks, backups |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Security and privacy: assets, trust boundaries, threats, mitigations present vs planned |
-| [DAY1.md](DAY1.md) | The checks to run before relying on live mode: the risky Nebius and Token Factory pieces, with fallbacks |
 
 ## Check the evidence
 
@@ -57,20 +56,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 |---|---|
 | [BUSINESS.md](BUSINESS.md) | Business model, pricing, go-to-market, sizing |
 | [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) | Who else does distillation, routing and gateways, and where Ratchet differs, with dated sources |
-| [RESEARCH_SUMMARY.md](RESEARCH_SUMMARY.md) | Market, competitor and feasibility research, with sources |
 | [ROADMAP.md](ROADMAP.md) | What ships when, from the hackathon to Ratchet Cloud |
-
-## Hackathon
-
-| Doc | What it covers |
-|---|---|
-| [DEVPOST_FINAL.md](DEVPOST_FINAL.md) | The Devpost text as of 24 Oct 2026: it says only what ran. Where it differs from the older planning notes below, it is right |
-| [HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md) | The older Devpost planning notes for the Nebius x NVIDIA Global AI Hackathon |
-| [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | The 3-minute demo video, shot by shot |
-
-## Working notes
-
-[lanes/](lanes/) holds the invariants and deviations each build lane proposed before it merged (`c-invariants.md`, `f2-invariants.md` and so on). They are history; the numbered invariants in [../CLAUDE.md](../CLAUDE.md) are the current rules.
 
 ## Images
 

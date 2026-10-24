@@ -25,7 +25,7 @@ Unsloth cannot join a TRL 1.16.0 image: its release of Oct 19, 2026 (2026.10.7) 
 6. **Versions travel with the adapter.** `train.py` writes `versions.json` (Python, torch's CUDA version and every pinned package) beside the adapter before training starts, and the chat-template arguments into `ratchet_manifest.json`. They are not copied into the signed BOM: `bom.EXTRA_KEYS` has no section for them, and a stored BOM is never rewritten (INV-14).
 7. **LoRA targets wait for the day-1 probe.** `--targets` keeps the Mamba projections by default (`TARGETS_WITH_MAMBA`), the set the runtime-LoRA probe must test; `TARGETS_ATTENTION_MLP` is the one-line fallback if vLLM refuses them.
 
-The versions are candidates read from PyPI and download.pytorch.org on Oct 21, 2026. The Oct 22 smoke job (DAY1 row 4) confirms them, or its `versions.json` replaces them in both files together.
+The versions are candidates read from PyPI and download.pytorch.org on Oct 21, 2026. The Oct 22 smoke job (the 200-row smoke job, `bash deploy/train_job.sh test`) confirms them, or its `versions.json` replaces them in both files together.
 
 ## Consequences
 

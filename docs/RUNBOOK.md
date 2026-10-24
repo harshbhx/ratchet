@@ -626,7 +626,7 @@ The gateway, the simulator or `python -m ratchet.live` stops with `ValueError: R
 
 **Before you start:**
 
-- The [day-1 checks](DAY1.md) passed, and `make live-smoke` ran once (cents).
+- The day-1 checks (`python scripts/day1_check.py`) passed, and `make live-smoke` ran once (cents).
 - The student endpoint is up and recorded: `bash deploy/student_endpoint.sh start` (or `python -m ratchet.cost endpoint up`). Without an open `student_endpoint` interval the harness refuses, because the GPU-hours view would miss the endpoint.
 - The harness has its own key: `liverun:<key>` in the gateway's `RATCHET_API_KEYS`, and `export RATCHET_LIVERUN_KEY=<key>` in the harness's shell only. Optionally `export NEBIUS_API_KEY_LIVERUN=<a second Token Factory key>` for the arms, so a runaway run cannot drain the demo's key. Once the per-key spend limits land (lane D), add `RATCHET_KEY_LIMITS='liverun:daily_usd=<cap>'` as a server-side backstop.
 - The gateway runs the planned gate profile: `RATCHET_SEQUENTIAL=1` and `RATCHET_CANARY_AUDIT_RATE=0.5` in its `.env`, then restart it. `run` refuses without them (the plan's stage table shows why: at the default rates a 10% canary stage alone needs about 7,400 requests). `--gate-profile as-set` measures other settings on purpose.
@@ -678,7 +678,7 @@ Rate limits (429 `rate_limit_exceeded`, 503 `overloaded`) wait `Retry-After` (at
 
 1. `report <run dir> --publish` copies `results.json` and `requests.ndjson.gz` to `evidence/live/` and the Markdown to `docs/LIVE_RESULTS.md`. It refuses a smoke run, and a stopped run without `--allow-partial`.
 2. `python -m ratchet.liverun verify evidence/live` exits 0 (it recomputes every client-side value from the records; ledger-side values are snapshots and it says which).
-3. Fill each `[LIVE NUMBER]` in `docs/HACKATHON_SUBMISSION.md` and the demo script from `evidence/live/results.json`, using the placeholder map in `docs/LIVE_RESULTS.md`, with the `<!-- claim:live.* -->` anchor right after each number.
+3. Take each live number for the README and the submission text from `evidence/live/results.json`, using the placeholder map in `docs/LIVE_RESULTS.md`, with the `<!-- claim:live.* -->` anchor right after each number.
 4. Move the PRD statuses that wait on live evidence (NFR-1, FR-8.1, FR-8.2, FR-8.4, SM-1 to SM-5) in that same commit, and only there.
 5. Stop the endpoint (`bash deploy/student_endpoint.sh stop`, which records the uptime) and resume the cron nights.
 

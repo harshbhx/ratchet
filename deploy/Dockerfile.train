@@ -2,7 +2,7 @@
 # Mamba kernels Nemotron-H's layers run on. Every package is pinned to an exact version, and deploy/train-versions.txt
 # lists the same pins: the pip steps after torch read it as constraints, so the two files disagreeing, or a dependency
 # that would move a pinned package, fails the build (tests/test_nightschool.py checks the two offline). The versions
-# are candidates read on Oct 21, 2026; the Oct 22 smoke job (docs/DAY1.md row 4) confirms them, or its versions.json
+# are candidates read on Oct 21, 2026; the Oct 22 smoke job (the 200-row smoke job, `bash deploy/train_job.sh test`) confirms them, or its versions.json
 # replaces them here and in the list together. Unsloth is not installed: its release of Oct 19, 2026 requires
 # trl<=1.15.0 (ADR 0145). Build from the repository root: docker build -f deploy/Dockerfile.train .
 FROM nvidia/cuda:12.8.0-devel-ubuntu24.04

@@ -133,8 +133,7 @@
         "command": "make day1"
       },
       "paths": [
-        "scripts/day1_check.py",
-        "docs/DAY1.md"
+        "scripts/day1_check.py"
       ],
       "date": "2026-10-24",
       "facts": [],

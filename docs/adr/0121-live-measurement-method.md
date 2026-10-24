@@ -5,7 +5,7 @@
 
 ## Context
 
-PRD §8.2 asks for a live run on Token Factory and Nebius AI Cloud with real numbers in the README and the video, and for the real Nebius bill (failed jobs included) next to the cost report's break-even line. The ROADMAP's Oct 25 row asks for at least 3 versions trained on live traffic with real cost and precision numbers. NFR-1's p50 target is `untested (live)`. `docs/HACKATHON_SUBMISSION.md` holds 9 `[LIVE NUMBER]` values and `docs/DEMO_SCRIPT.md` 3 more, and nothing in the repository could produce them reproducibly: `sim.simulate` runs mock models in process, and `python -m ratchet.live` has `night`, `tick`, `reload` and `seal` only.
+PRD §8.2 asks for a live run on Token Factory and Nebius AI Cloud with real numbers in the README and the video, and for the real Nebius bill (failed jobs included) next to the cost report's break-even line. The ROADMAP's Oct 25 row asks for at least 3 versions trained on live traffic with real cost and precision numbers. NFR-1's p50 target is `untested (live)`. The submission text held 9 `[LIVE NUMBER]` values and the demo script 3 more, and nothing in the repository could produce them reproducibly: `sim.simulate` runs mock models in process, and `python -m ratchet.live` has `night`, `tick`, `reload` and `seal` only.
 
 The "before" side of every saving was an estimate too. The router prices a student-served request's all-Ultra baseline as the student's own tokens plus `RATCHET_TEACHER_REASONING_TOKENS` (300) per choice; nobody had measured what Ultra would have spent on those requests.
 
