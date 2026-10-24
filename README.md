@@ -88,6 +88,10 @@ A small Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $23 (ab
 
 ### Tool calling (round 3, a second result)
 
+<p align="center">
+  <img src="docs/img/toolcall-results.svg" alt="Strict tool-calling scores on a hard exam and a BFCL exam: untrained model, tool-calling adapter and teacher, with the 95% range and exact counts" width="100%">
+</p>
+
 A tool-calling adapter on Nemotron 3 Nano 4B (2,940 training rows, about $2.33 in all), scored strictly on two exams it never saw. This is a measured result on real models (24 Oct 2026); the text-to-SQL result above stays the headline.
 
 | | Hard exam (150) | BFCL exam (300) |

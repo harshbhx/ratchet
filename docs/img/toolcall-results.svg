@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 410" width="960" height="410" role="img" aria-label="Strict tool-calling scores for the untrained model, the tool-calling adapter and the teacher on a hard exam and a BFCL exam, with the 95% range">
+<title>Tool-calling results: strict scores with the 95% range on two exams</title>
+<style>text{font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif}.h{fill:#f8fafc;font-size:17px;font-weight:600}.s{fill:#94a3b8;font-size:12.5px}.t{fill:#cbd5e1;font-size:12px}.t2{fill:#94a3b8;font-size:11px}.v{fill:#f8fafc;font-size:13px;font-weight:600}.g{stroke:#1e293b;stroke-width:1}.w{stroke:#e2e8f0;stroke-width:1.5}.n{fill:#94a3b8;font-size:12px}</style>
+<rect width="960" height="410" rx="16" fill="#0b1220"/>
+<text x="70" y="62" class="h">Hard exam</text>
+<text x="70" y="82" class="s">150 questions, 20 tools never seen in training</text>
+<line x1="70" x2="450" y1="316.0" y2="316.0" class="g"/>
+<text x="62" y="320.0" class="t" text-anchor="end">0%</text>
+<line x1="70" x2="450" y1="261.0" y2="261.0" class="g"/>
+<text x="62" y="265.0" class="t" text-anchor="end">25%</text>
+<line x1="70" x2="450" y1="206.0" y2="206.0" class="g"/>
+<text x="62" y="210.0" class="t" text-anchor="end">50%</text>
+<line x1="70" x2="450" y1="151.0" y2="151.0" class="g"/>
+<text x="62" y="155.0" class="t" text-anchor="end">75%</text>
+<line x1="70" x2="450" y1="96.0" y2="96.0" class="g"/>
+<text x="62" y="100.0" class="t" text-anchor="end">100%</text>
+<rect x="97.9" y="178.1" width="70.9" height="137.9" rx="5" fill="#94a3b8"/>
+<line x1="133.3" x2="133.3" y1="195.7" y2="162.0" class="w"/>
+<line x1="127.3" x2="139.3" y1="195.7" y2="195.7" class="w"/>
+<line x1="127.3" x2="139.3" y1="162.0" y2="162.0" class="w"/>
+<text x="133.3" y="154.0" class="v" text-anchor="middle">62.7%</text>
+<text x="133.3" y="338" class="t" text-anchor="middle">Untrained</text>
+<text x="133.3" y="354" class="t2" text-anchor="middle">94/150</text>
+<rect x="224.5" y="116.5" width="70.9" height="199.5" rx="5" fill="#2563eb"/>
+<line x1="260.0" x2="260.0" y1="129.1" y2="108.4" class="w"/>
+<line x1="254.0" x2="266.0" y1="129.1" y2="129.1" class="w"/>
+<line x1="254.0" x2="266.0" y1="108.4" y2="108.4" class="w"/>
+<text x="260.0" y="100.4" class="v" text-anchor="middle">90.7%</text>
+<text x="260.0" y="338" class="t" text-anchor="middle">Adapter</text>
+<text x="260.0" y="354" class="t2" text-anchor="middle">136/150</text>
+<rect x="351.2" y="115.1" width="70.9" height="200.9" rx="5" fill="#f97316"/>
+<line x1="386.7" x2="386.7" y1="127.4" y2="107.3" class="w"/>
+<line x1="380.7" x2="392.7" y1="127.4" y2="127.4" class="w"/>
+<line x1="380.7" x2="392.7" y1="107.3" y2="107.3" class="w"/>
+<text x="386.7" y="99.3" class="v" text-anchor="middle">91.3%</text>
+<text x="386.7" y="338" class="t" text-anchor="middle">Teacher (Ultra)</text>
+<text x="386.7" y="354" class="t2" text-anchor="middle">137/150</text>
+<text x="540" y="62" class="h">BFCL exam</text>
+<text x="540" y="82" class="s">300 questions from the Berkeley Function Calling Leaderboard</text>
+<line x1="540" x2="920" y1="316.0" y2="316.0" class="g"/>
+<text x="532" y="320.0" class="t" text-anchor="end">0%</text>
+<line x1="540" x2="920" y1="261.0" y2="261.0" class="g"/>
+<text x="532" y="265.0" class="t" text-anchor="end">25%</text>
+<line x1="540" x2="920" y1="206.0" y2="206.0" class="g"/>
+<text x="532" y="210.0" class="t" text-anchor="end">50%</text>
+<line x1="540" x2="920" y1="151.0" y2="151.0" class="g"/>
+<text x="532" y="155.0" class="t" text-anchor="end">75%</text>
+<line x1="540" x2="920" y1="96.0" y2="96.0" class="g"/>
+<text x="532" y="100.0" class="t" text-anchor="end">100%</text>
+<rect x="567.9" y="145.9" width="70.9" height="170.1" rx="5" fill="#94a3b8"/>
+<line x1="603.3" x2="603.3" y1="157.0" y2="136.2" class="w"/>
+<line x1="597.3" x2="609.3" y1="157.0" y2="157.0" class="w"/>
+<line x1="597.3" x2="609.3" y1="136.2" y2="136.2" class="w"/>
+<text x="603.3" y="128.2" class="v" text-anchor="middle">77.3%</text>
+<text x="603.3" y="338" class="t" text-anchor="middle">Untrained</text>
+<text x="603.3" y="354" class="t2" text-anchor="middle">232/300</text>
+<rect x="694.5" y="139.3" width="70.9" height="176.7" rx="5" fill="#2563eb"/>
+<line x1="730.0" x2="730.0" y1="150.0" y2="130.2" class="w"/>
+<line x1="724.0" x2="736.0" y1="150.0" y2="150.0" class="w"/>
+<line x1="724.0" x2="736.0" y1="130.2" y2="130.2" class="w"/>
+<text x="730.0" y="122.2" class="v" text-anchor="middle">80.3%</text>
+<text x="730.0" y="338" class="t" text-anchor="middle">Adapter</text>
+<text x="730.0" y="354" class="t2" text-anchor="middle">241/300</text>
+<rect x="821.2" y="121.7" width="70.9" height="194.3" rx="5" fill="#f97316"/>
+<line x1="856.7" x2="856.7" y1="130.7" y2="114.7" class="w"/>
+<line x1="850.7" x2="862.7" y1="130.7" y2="130.7" class="w"/>
+<line x1="850.7" x2="862.7" y1="114.7" y2="114.7" class="w"/>
+<text x="856.7" y="106.7" class="v" text-anchor="middle">88.3%</text>
+<text x="856.7" y="338" class="t" text-anchor="middle">Teacher (Ultra)</text>
+<text x="856.7" y="354" class="t2" text-anchor="middle">265/300</text>
+<text x="480.0" y="376" class="n" text-anchor="middle">Tool calling: the adapter against the untrained model and the teacher, with the 95% range. Measured on real models, 2026-10-24.</text>
+<text x="480.0" y="396" class="n" text-anchor="middle">Strict scoring, one decoder setting, rented Modal T4, synthetic training data.</text>
+</svg>

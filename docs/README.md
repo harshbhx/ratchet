@@ -62,7 +62,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 ## Images
 
-`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models). `img/results.svg` is the README's results chart, drawn from the exam data by `scripts/readme_results_svg.py`. `img/anim/` holds the README's animations.
+`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models). `img/toolcall-results.svg` (the tool-calling chart, drawn by `scripts/toolcall_results_svg.py` from `evidence/toolcall/results.json`; `--check` compares only), `img/results.svg` is the README's results chart, drawn from the exam data by `scripts/readme_results_svg.py`. `img/anim/` holds the README's animations.
 
 ## Repo-level files
 

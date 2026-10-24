@@ -97,6 +97,12 @@ def test_pending_when_there_are_no_results(tmp_path):
 def test_the_real_repository_state_passes_the_check():
     """True before the numbers exist (pending) and after (every number recomputes)."""
     assert tc.main(["--check"]) == 0
+    # the committed chart is a fresh render of results.json (the SQL chart's --check pattern); nothing to draw before the numbers exist
+    if (ROOT / "evidence" / "toolcall" / "results.json").exists():
+        svg = importlib.util.spec_from_file_location("toolcall_results_svg", ROOT / "scripts" / "toolcall_results_svg.py")
+        mod = importlib.util.module_from_spec(svg)
+        svg.loader.exec_module(mod)
+        assert mod.OUT.read_text(encoding="utf-8") == mod.build(), "run python scripts/toolcall_results_svg.py"
 
 
 def test_collect_check_render_round_trip(strong, capsys):
