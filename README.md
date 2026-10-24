@@ -125,6 +125,14 @@ Your bill falls as your own model takes over, and Ratchet tells you when a GPU w
 
 <p align="center">
   <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/architecture-dark.png">
+    <img src="docs/img/architecture-light.png" alt="Architecture: your app calls the gateway, a small student model answers first, a teacher answers when the student is unsure, answers are logged in a provenance ledger, Night School trains a new adapter from the ledger, and release gates decide whether it becomes the student." width="100%">
+  </picture>
+  <br><sub>The design, in one picture. <a href="docs/ARCHITECTURE.md">Architecture</a> has the details.</sub>
+</p>
+
+<p align="center">
+  <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-how-it-works-dark.gif">
     <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-how-it-works-light.gif">
     <img src="docs/img/anim/ratchet-how-it-works-dark.gif" alt="A system diagram, animated over 15 steps: a request enters the gateway, the student answers or escalates to the teacher, the answer is logged, Night School trains and tests a new adapter, the release gate promotes it, and the next similar request is served by the student" width="100%">

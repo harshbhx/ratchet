@@ -8,6 +8,10 @@ Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.m
 
 ## 1. Components
 
+![Architecture: your app calls the gateway, a small student model answers first, a teacher answers when the student is unsure, answers are logged in a provenance ledger, Night School trains a new adapter from the ledger, and release gates decide whether it becomes the student.](img/architecture.svg)
+
+The picture shows the design. The diagram below names the files and services.
+
 ```
                          ┌──────────────────────────────── Nebius Token Factory ─────────┐
                          │  Teacher: nvidia/Nemotron-3-Ultra-550b-a55b                   │

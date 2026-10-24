@@ -42,6 +42,17 @@ Three clocks run the place: one ticks for every order, one every few minutes to 
 
 ## How it really works
 
+The design in one picture. It shows the intended flow; the adapters so far were trained by hand on rented T4 GPUs, and teacher calls run on Nebius Token Factory.
+
+<figure>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="/img/architecture-dark.png" />
+    <img src="/img/architecture-light.png" alt="Architecture: your app calls the gateway, a small student model answers first, a teacher answers when the student is unsure, answers are logged in a provenance ledger, Night School trains a new adapter from the ledger, and release gates decide whether it becomes the student." width="1600" height="900" loading="lazy" style="width:100%;height:auto" />
+  </picture>
+</figure>
+
+The detailed diagram, with the services each piece runs on:
+
 <figure class="rt-diagram">
 
 ```mermaid
