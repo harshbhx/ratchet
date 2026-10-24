@@ -17,18 +17,58 @@
   <img alt="NVIDIA Nemotron" src="https://img.shields.io/badge/NVIDIA-Nemotron-76b900">
 </p>
 
-# Ratchet
+<p align="center">
+  <b>License-clean distillation on open models.</b><br>
+  An OpenAI-compatible gateway: a small student model answers first, a teacher answers when the student is unsure,<br>
+  and every night the student learns from the teacher's answers and ships only if it passes a statistical gate.
+</p>
 
-**License-clean distillation on open models.**
+<p align="center">
+  <a href="https://live.ratchet.dualmindlab.tech"><b>Live demo</b></a> &nbsp;·&nbsp;
+  <a href="https://demo.ratchet.dualmindlab.tech">Simulation</a> &nbsp;·&nbsp;
+  <a href="https://ratchet.dualmindlab.tech">The story</a> &nbsp;·&nbsp;
+  <a href="https://ratchet.dualmindlab.tech/judges">For judges</a> &nbsp;·&nbsp;
+  <a href="https://ratchet-docs.pages.dev">Docs</a> &nbsp;·&nbsp;
+  <a href="https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql">Adapter</a>
+</p>
 
-An OpenAI-compatible gateway: a small student model answers first, a teacher answers when the student is unsure, and every night the student learns from the teacher's answers and ships only if it passes a statistical gate.
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <b>The problem</b><br>
+      Renting a frontier model for every request costs money for ever. And a small model cannot simply be trained on GPT or Claude answers: their terms forbid it.
+    </td>
+    <td width="33%" valign="top">
+      <b>The idea</b><br>
+      A small model answers first. A teacher whose license allows distillation answers the rest and teaches the small one every night. A statistical gate decides what ships.
+    </td>
+    <td width="33%" valign="top">
+      <b>The proof</b><br>
+      2.6 to 3.0 times the untrained model on two exams, for about $23. Real models, and every score recomputes from the saved answers.
+    </td>
+  </tr>
+</table>
 
-| Try it | |
+> [!IMPORTANT]
+> **What is real.** The exam scores are measured on real models (adapters trained on rented T4 GPUs, not on Nebius GPUs, on synthetic data). Everything from `sim/` is a labelled simulation with mock models. The live demo makes real Token Factory calls, and the teacher answers every request for now. [Details](#status-honestly) and [limitations](#limitations).
+
+## Contents
+
+| | |
 |---|---|
-| **Live demo** (real Token Factory calls, every answer by the teacher for now) | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech) |
-| **Simulation** (mock models: run days, break a deploy, watch the rollback) | [demo.ratchet.dualmindlab.tech](https://demo.ratchet.dualmindlab.tech) |
-| **The story, results and judges' page** | [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech) |
-| **On your machine, no keys** | [Quick start](#quick-start) |
+| **Start** | [Try it](#try-it) · [Real results](#real-results) · [How it works](#how-it-works) · [Watch it work](#watch-it-work) · [Quick start](#quick-start) |
+| **Check it** | [For judges](#for-judges-a-five-minute-path) · [Status, honestly](#status-honestly) · [Limitations](#limitations) |
+| **Why** | [Why license-clean](#why-license-clean) · [NVIDIA and Nebius](#how-it-uses-nvidia-and-nebius) · [Scout](#scout-ratchet-on-agent-traffic) · [Why not a router](#why-not-a-router-or-a-distillation-api) |
+| **Background** | [NVIDIA lineage](#nvidia-lineage) · [Prior art](#prior-art-and-what-is-new) · [Documentation](#documentation) · [Repo map](#repo-map) · [License](#license) |
+
+## Try it
+
+| | | |
+|---|---|---|
+| **Live demo** | Real Token Factory calls under spend limits. The teacher answers every request for now. | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech) |
+| **Simulation** | Mock models: run days, break a deploy, watch the rollback. | [demo.ratchet.dualmindlab.tech](https://demo.ratchet.dualmindlab.tech) |
+| **The story** | How it works, the results, and the judges' page. | [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech) |
+| **Your machine** | No keys, no GPU. | [Quick start](#quick-start) |
 
 ## Real results
 
@@ -83,12 +123,22 @@ flowchart LR
     class live good
 ```
 
+## Watch it work
+
 | The story page | Scout | The dashboard |
 |---|---|---|
 | ![Ratchet: the story page](docs/img/landing.jpg) | ![Scout run (simulation)](docs/img/scout.jpg) | ![Dashboard (simulation)](docs/img/dashboard.jpg) |
 | `/` the story, with a replay of the reference simulation | `/scout` the multi-agent demo | `/dashboard` savings, releases, trust |
 
 The screenshots show the simulation (mock models, labelled as such on every page). The gateway serves the React app in [web/](web/CLAUDE.md); the original no-build pages stay at `/lite`, `/lite/scout` and `/lite/dashboard`.
+
+<!--
+  GIFS COMING: replace each screenshot above with a recording, same file names under docs/img/anim/:
+    story.gif      the story page scrolling through the cascade and the replay
+    scout.gif      a Scout run, every call tagged with who answered it
+    dashboard.gif  a simulated day, a bad deploy, and the automatic rollback
+  Use the same pattern as the banner: a <picture> with a dark and a light <source>, and the screenshot as the fallback <img>.
+-->
 
 ## Quick start
 
@@ -128,20 +178,24 @@ print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage
 
 **Live mode** (real Token Factory calls): set `NEBIUS_API_KEY` and `RATCHET_API_KEYS`, then `RATCHET_MODE=live uvicorn ratchet.gateway:app --port 8000`. The full setup (student endpoint, nightly jobs, measuring a run) is in [docs/LIVE_MODE.md](docs/LIVE_MODE.md); every setting is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
+## For judges: a five-minute path
+
+| Check | Where | Status |
+|---|---|---|
+| Open source with a license | [`LICENSE`](LICENSE), Apache-2.0 for the code | Real |
+| A working demo that calls Token Factory | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech): send a request, read the `ratchet` block in the reply | Real |
+| A real run on record | [`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23) (20 real requests, about $0.01) and two recorded Scout runs in [`evidence/scout`](evidence/scout) | Real |
+| Results that recompute | [Real results](#real-results), the data on [Hugging Face](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), `python scripts/text2sql/exam_numbers.py --check` | Measured |
+| The loop, end to end | [Simulation](https://demo.ratchet.dualmindlab.tech) or `make demo` | Simulation |
+| Everything on one page | [ratchet.dualmindlab.tech/judges](https://ratchet.dualmindlab.tech/judges) | |
+
 ## Status, honestly
 
-- **Simulation numbers are mock.** Every figure from `python -m sim.simulate` comes from mock models and is labelled simulation. It shows how the loop behaves, not real model quality.
-- **Measured on real models:** the exam scores above, from two adapters trained on rented T4 GPUs. Nothing has run on Nebius GPUs yet: the Serverless Job and Endpoint scripts are written and tested offline, but not run (no compute credit).
-- **The live demo calls Token Factory for real,** under spend limits, and the teacher answers every request: no trained student is served on a GPU yet, so a trained version's calls would go to a hosted, untuned Nano model (see [Limitations](#limitations)).
-- **Recorded live Scout runs** are in [evidence/scout](evidence/scout): real Token Factory and Tavily calls, every model call answered by the teacher.
-
-## More
-
-| | |
-|---|---|
-| [Features in depth](docs/FEATURES.md) | the reference simulation, economics, the safety rules, certificates, proofs of what an adapter was trained on, ledger replay, savings receipts, privacy |
-| [Live mode](docs/LIVE_MODE.md) | the student endpoint, nightly jobs, measuring a live run |
-| [Documentation index](docs/README.md) | PRD, architecture, API, configuration, runbook, threat model, ADRs |
+> [!NOTE]
+> - **Simulation numbers are mock.** Every figure from `python -m sim.simulate` comes from mock models and is labelled simulation. It shows how the loop behaves, not real model quality.
+> - **Measured on real models:** the exam scores above, from two adapters trained on rented T4 GPUs (a free Colab T4 and a Modal T4). Nothing has run on Nebius GPUs yet: the Serverless Job and Endpoint scripts are written and tested offline, but not run (no compute credit).
+> - **The live demo calls Token Factory for real,** under spend limits, and the teacher answers every request: no trained student is served on a GPU yet, so a trained version's calls would go to a hosted, untuned Nano model (see [Limitations](#limitations)).
+> - **Recorded live Scout runs** are in [evidence/scout](evidence/scout): real Token Factory and Tavily calls, every model call answered by the teacher.
 
 ## Why "license-clean"
 
@@ -165,23 +219,6 @@ In its own words, OpenMDW-1.1 "does not impose any restrictions or obligations w
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) | Search tool for the Scout demo only |
 
 Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the student is trained and served on Nebius AI Cloud.
-
-## NVIDIA lineage
-
-NVIDIA Research's paper "Small Language Models are the Future of Agentic AI" ([arXiv 2506.02153](https://arxiv.org/abs/2506.02153), v3, Sep 22, 2026) estimates that about 40%, 60% and 70% of the LLM queries in three open agent systems could be handled by specialized small models, and gives a six-step conversion algorithm. S1, S2, S5 and S6 run automatically. S3 (task clustering) is manual: the caller or operator names each task. S4 (SLM selection) is manual: one base model.
-
-| Step in the paper | In Ratchet | Automatic? |
-|---|---|---|
-| S1 "Secure usage data collection" | The gateway logs every request's metadata (task, route, confidence, cost); request text is kept only in training examples, redacted by default, and API keys only by name | Yes |
-| S2 "Data curation and filtering" | PII redaction before storage; only complete teacher answers that are valid under the task's spec are kept | Yes |
-| S3 "Task clustering" | Not clustered: the caller names each request's task (`X-Ratchet-Task` or `metadata.ratchet_task`) and the operator may give a task a typed field spec in the task registry; statistics are kept per task | No: manual, tasks are named, not clustered |
-| S4 "SLM selection" | One base, Nemotron 3 Nano 4B, chosen by hand for size, license and serving cost; Ratchet does not compare bases | No: manual, one base model |
-| S5 "Specialized SLM fine-tuning" | A LoRA fine-tune each night on a Nebius Serverless Job, from teacher answers only | Yes |
-| S6 "Iteration and refinement" | Night School every night, gated by a held-out golden set (with an exact precision certificate in each signed BOM), shadow, canary and automatic rollback | Yes |
-
-NVIDIA's [Data Flywheel Blueprint](https://developer.nvidia.com/blog/build-efficient-ai-agents-through-model-distillation-with-nvidias-data-flywheel-blueprint) (blog Jun 11, 2025) also distils production traffic into smaller models, but its README says "Promotion to production—as well as any deeper evaluation or dataset curation—remains a human decision" and "Think of the Flywheel as a flashlight, not an autopilot" ([repo](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), marked deprecated in Apr 2026; read Oct 21, 2026). Ratchet is the autopilot, with statistical brakes: it makes the promotion decision with statistics on held-out rows and audited traffic, and writes each decision and its numbers to the release log.
-
-The student's base has its own NVIDIA lineage: Nemotron 3 Nano 4B "has been compressed from NVIDIA-Nemotron-Nano-9B-v2 using the Nemotron Elastic framework", released Mar 16, 2026 ([model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16), read Oct 21, 2026).
 
 ## Scout: Ratchet on agent traffic
 
@@ -209,17 +246,6 @@ Pinned tasks always go to the teacher and are never stored as training data. The
 
 The YC Summer 2026 teams Understudy and Experiential Labs, as cited in the [competitive analysis](docs/COMPETITIVE_ANALYSIS.md) (not re-checked here), sit between the columns: both say the customer owns the model, and neither page we found documents shadow, canary and automatic rollback.
 
-
-## Prior art and what is new
-
-We did not invent the pieces. Ratchet puts them in one loop that runs by itself. Sources and dates are in [docs/COMPETITIVE_ANALYSIS.md](docs/COMPETITIVE_ANALYSIS.md).
-
-- **Table stakes:** an OpenAI-compatible gateway, routing, API keys and quotas ([LiteLLM](https://github.com/BerriAI/litellm), [Portkey](https://portkey.ai), [OpenRouter](https://openrouter.ai)).
-- **Distillation services:** [OpenPipe](https://coreweave.com/news/coreweave-to-acquire-openpipe-leader-in-reinforcement-learning) (CoreWeave announced the acquisition Sep 3, 2025), [AWS Bedrock Model Distillation](https://aws.amazon.com/bedrock/model-distillation), [OpenAI distillation](https://openai.com/index/api-model-distillation/) ("Active existing customers will no longer be able to create new fine-tuning jobs" on Jan 6, 2027, [deprecations](https://developers.openai.com/api/docs/deprecations), read Oct 21, 2026), [Inference.net](https://inference.net/blog/introducing-inference-platform/) (a managed training loop whose new models are "staged for final review and deployment", Apr 14, 2026) and the YC Summer 2026 teams Understudy and Experiential Labs. Each turns traffic into a fine-tune; none we found records each example's teacher license at capture, releases automatically behind a statistical gate, and reports when the small model loses money.
-- **Known ideas:** LLM cascades ([FrugalGPT](https://arxiv.org/abs/2305.05176), 2023) and cascades that distil the large model into the small one as traffic arrives ([Cache & Distil](https://arxiv.org/abs/2310.13561), ACL Findings 2024; [Online Cascade Learning](https://arxiv.org/abs/2402.04513), ICML 2024); distillation from production logs ([NVIDIA's Data Flywheel Blueprint](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), 2025). License-aware teacher choice at request time: OpenRouter's [`enforce_distillable_text`](https://openrouter.ai/docs/guides/evaluate-and-optimize/distillation) restricts routing to models that allow distillation, with license data "on a best-effort basis", and NVIDIA's [license-compliant distillation tutorial](https://developer.nvidia.com/blog/how-to-build-license-compliant-synthetic-data-pipelines-for-ai-model-distillation/) (Feb 5, 2026) builds on it. Escalation with a provable agreement guarantee ([Trust or Escalate](https://arxiv.org/abs/2407.18370), ICLR 2025) and sequential tests for canary deploys ([Netflix](https://arxiv.org/abs/2205.14762), 2022).
-- **New in Ratchet, together:** a per-request escalation, a nightly retrain and a gated release (golden gate, shadow, canary, rollback) in one loop; an exact Clopper–Pearson certificate in each signed BOM and an opt-in anytime-valid canary, both recomputable from their counts; each example's teacher and license recorded when it is captured and signed into every adapter's BOM; savings reported by GPU-hours actually paid, with the break-even volume and a recommendation; committed training sets ([PRD FR-16.4](docs/PRD.md#616-verifiable-evidence)): each BOM signs Merkle roots over the exact training and golden examples, with proofs of what an adapter was and was not trained on. On Nemotron and Nebius.
-
-
 ## Limitations
 
 What breaks first:
@@ -234,17 +260,49 @@ What breaks first:
 - **Simulation numbers come from mock models.** They show how the loop behaves, not real model quality. As of Oct 21, 2026, Ratchet has not run on Nebius yet.
 - **Token Factory's Terms of Service §5(f)** ("competing service") is broad. We asked Nebius support about it in writing on Oct 19, 2026; until the answer is final, treat the question as open. Not legal advice.
 
+## NVIDIA lineage
 
-## How the repo was built
+<details>
+<summary>The paper's six steps, and what Ratchet automates</summary>
 
-The git history starts on Oct 19, 2026; every change since then is a dated commit. No third-party source files are copied into the repository: outside code comes in only as the dependencies declared in `pyproject.toml` and `web/package.json`, and the model weights are downloaded, never committed. These files are generated rather than written by hand, and the command that regenerates each is in the repo:
+NVIDIA Research's paper "Small Language Models are the Future of Agentic AI" ([arXiv 2506.02153](https://arxiv.org/abs/2506.02153), v3, Sep 22, 2026) estimates that about 40%, 60% and 70% of the LLM queries in three open agent systems could be handled by specialized small models, and gives a six-step conversion algorithm. S1, S2, S5 and S6 run automatically. S3 (task clustering) is manual: the caller or operator names each task. S4 (SLM selection) is manual: one base model.
 
-- `ratchet/web/dist/`: the build of `web/` (`make web`).
-- `docs/REQUIREMENTS.md`: the requirements matrix (`python scripts/reqtrace.py`).
-- `tests/fixtures/sim_reference_seed7.json` and `tests/fixtures/reference.json`: the pinned reference runs (`python scripts/regen_sim_reference.py`, `python scripts/reference_check.py --write`).
-- `web/package-lock.json`: npm's lock file.
-- `docs/img/*.jpg`: screenshots of the pages in mock mode (simulation).
+| Step in the paper | In Ratchet | Automatic? |
+|---|---|---|
+| S1 "Secure usage data collection" | The gateway logs every request's metadata (task, route, confidence, cost); request text is kept only in training examples, redacted by default, and API keys only by name | Yes |
+| S2 "Data curation and filtering" | PII redaction before storage; only complete teacher answers that are valid under the task's spec are kept | Yes |
+| S3 "Task clustering" | Not clustered: the caller names each request's task (`X-Ratchet-Task` or `metadata.ratchet_task`) and the operator may give a task a typed field spec in the task registry; statistics are kept per task | No: manual, tasks are named, not clustered |
+| S4 "SLM selection" | One base, Nemotron 3 Nano 4B, chosen by hand for size, license and serving cost; Ratchet does not compare bases | No: manual, one base model |
+| S5 "Specialized SLM fine-tuning" | A LoRA fine-tune each night on a Nebius Serverless Job, from teacher answers only | Yes |
+| S6 "Iteration and refinement" | Night School every night, gated by a held-out golden set (with an exact precision certificate in each signed BOM), shadow, canary and automatic rollback | Yes |
 
+NVIDIA's [Data Flywheel Blueprint](https://developer.nvidia.com/blog/build-efficient-ai-agents-through-model-distillation-with-nvidias-data-flywheel-blueprint) (blog Jun 11, 2025) also distils production traffic into smaller models, but its README says "Promotion to production—as well as any deeper evaluation or dataset curation—remains a human decision" and "Think of the Flywheel as a flashlight, not an autopilot" ([repo](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), marked deprecated in Apr 2026; read Oct 21, 2026). Ratchet is the autopilot, with statistical brakes: it makes the promotion decision with statistics on held-out rows and audited traffic, and writes each decision and its numbers to the release log.
+
+The student's base has its own NVIDIA lineage: Nemotron 3 Nano 4B "has been compressed from NVIDIA-Nemotron-Nano-9B-v2 using the Nemotron Elastic framework", released Mar 16, 2026 ([model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16), read Oct 21, 2026).
+
+</details>
+
+## Prior art and what is new
+
+<details>
+<summary>What we did not invent, and what is new in putting it together</summary>
+
+We did not invent the pieces. Ratchet puts them in one loop that runs by itself. Sources and dates are in [docs/COMPETITIVE_ANALYSIS.md](docs/COMPETITIVE_ANALYSIS.md).
+
+- **Table stakes:** an OpenAI-compatible gateway, routing, API keys and quotas ([LiteLLM](https://github.com/BerriAI/litellm), [Portkey](https://portkey.ai), [OpenRouter](https://openrouter.ai)).
+- **Distillation services:** [OpenPipe](https://coreweave.com/news/coreweave-to-acquire-openpipe-leader-in-reinforcement-learning) (CoreWeave announced the acquisition Sep 3, 2025), [AWS Bedrock Model Distillation](https://aws.amazon.com/bedrock/model-distillation), [OpenAI distillation](https://openai.com/index/api-model-distillation/) ("Active existing customers will no longer be able to create new fine-tuning jobs" on Jan 6, 2027, [deprecations](https://developers.openai.com/api/docs/deprecations), read Oct 21, 2026), [Inference.net](https://inference.net/blog/introducing-inference-platform/) (a managed training loop whose new models are "staged for final review and deployment", Apr 14, 2026) and the YC Summer 2026 teams Understudy and Experiential Labs. Each turns traffic into a fine-tune; none we found records each example's teacher license at capture, releases automatically behind a statistical gate, and reports when the small model loses money.
+- **Known ideas:** LLM cascades ([FrugalGPT](https://arxiv.org/abs/2305.05176), 2023) and cascades that distil the large model into the small one as traffic arrives ([Cache & Distil](https://arxiv.org/abs/2310.13561), ACL Findings 2024; [Online Cascade Learning](https://arxiv.org/abs/2402.04513), ICML 2024); distillation from production logs ([NVIDIA's Data Flywheel Blueprint](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), 2025). License-aware teacher choice at request time: OpenRouter's [`enforce_distillable_text`](https://openrouter.ai/docs/guides/evaluate-and-optimize/distillation) restricts routing to models that allow distillation, with license data "on a best-effort basis", and NVIDIA's [license-compliant distillation tutorial](https://developer.nvidia.com/blog/how-to-build-license-compliant-synthetic-data-pipelines-for-ai-model-distillation/) (Feb 5, 2026) builds on it. Escalation with a provable agreement guarantee ([Trust or Escalate](https://arxiv.org/abs/2407.18370), ICLR 2025) and sequential tests for canary deploys ([Netflix](https://arxiv.org/abs/2205.14762), 2022).
+- **New in Ratchet, together:** a per-request escalation, a nightly retrain and a gated release (golden gate, shadow, canary, rollback) in one loop; an exact Clopper–Pearson certificate in each signed BOM and an opt-in anytime-valid canary, both recomputable from their counts; each example's teacher and license recorded when it is captured and signed into every adapter's BOM; savings reported by GPU-hours actually paid, with the break-even volume and a recommendation; committed training sets ([PRD FR-16.4](docs/PRD.md#616-verifiable-evidence)): each BOM signs Merkle roots over the exact training and golden examples, with proofs of what an adapter was and was not trained on. On Nemotron and Nebius.
+
+</details>
+
+## Go deeper
+
+| | |
+|---|---|
+| [Features in depth](docs/FEATURES.md) | the reference simulation, economics, the safety rules, certificates, proofs of what an adapter was trained on, ledger replay, savings receipts, privacy |
+| [Live mode](docs/LIVE_MODE.md) | the student endpoint, nightly jobs, measuring a live run |
+| [Documentation index](docs/README.md) | PRD, architecture, API, configuration, runbook, threat model, ADRs |
 
 ## Documentation
 
@@ -259,8 +317,25 @@ Start at [docs/README.md](docs/README.md). Highlights:
 
 Working with Claude? Read [CLAUDE.md](CLAUDE.md). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## How the repo was built
+
+<details>
+<summary>What is generated, and how to regenerate it</summary>
+
+The git history starts on Oct 19, 2026; every change since then is a dated commit. No third-party source files are copied into the repository: outside code comes in only as the dependencies declared in `pyproject.toml` and `web/package.json`, and the model weights are downloaded, never committed. These files are generated rather than written by hand, and the command that regenerates each is in the repo:
+
+- `ratchet/web/dist/`: the build of `web/` (`make web`).
+- `docs/REQUIREMENTS.md`: the requirements matrix (`python scripts/reqtrace.py`).
+- `tests/fixtures/sim_reference_seed7.json` and `tests/fixtures/reference.json`: the pinned reference runs (`python scripts/regen_sim_reference.py`, `python scripts/reference_check.py --write`).
+- `web/package-lock.json`: npm's lock file.
+- `docs/img/*.jpg`: screenshots of the pages in mock mode (simulation).
+
+</details>
 
 ## Repo map
+
+<details>
+<summary>Where each part lives</summary>
 
 ```
 ratchet/gateway.py      OpenAI-compatible API (keys, quotas, streaming), pages, demo controls, Scout endpoints
@@ -295,6 +370,7 @@ sim/                    synthetic tickets + mock models for demos and tests
 sim/research.py         mock research world for Scout (8 questions, simulated search results)
 ```
 
+</details>
 
 ## License
 
