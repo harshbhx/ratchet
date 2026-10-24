@@ -6,7 +6,7 @@ import { SiteFooter } from "./site-footer";
 import { useStats } from "@/lib/hooks";
 
 const TITLES: Record<string, string> = {
-  "/": "Ratchet: own the model your traffic trains",
+  "/": "Ratchet: own the adapter your traffic trains",
   "/scout": "Scout · Ratchet",
   "/dashboard": "Dashboard · Ratchet",
 };
