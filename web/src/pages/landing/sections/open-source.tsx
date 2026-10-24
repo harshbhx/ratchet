@@ -25,7 +25,7 @@ pytest -q`;
 
 /** What the test suite is: the count `pytest --collect-only` prints (tests/CLAUDE.md), run offline, no GPU. */
 const PROOF = [
-  { value: "1,922", label: "tests, offline", sub: "no network, no GPU, no API key" },
+  { value: "1,934", label: "tests, offline", sub: "no network, no GPU, no API key" },
   { value: "26", label: "invariants", sub: "numbered in CLAUDE.md, traced to tests in CI" },
   { value: "Apache‑2.0", label: "the code", sub: "model weights keep their own licenses" },
 ];

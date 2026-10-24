@@ -11,6 +11,7 @@ import { Integrate } from "./sections/integrate";
 import { Lifecycle } from "./sections/lifecycle";
 import { Learn } from "./sections/learn";
 import { LiveStrip } from "./sections/live-strip";
+import { RunOnNebius } from "./sections/nebius";
 import { OpenSource } from "./sections/open-source";
 import { RealRun } from "./sections/real-run";
 import { WhatsIn } from "./sections/whats-in";
@@ -52,6 +53,7 @@ export default function LandingPage() {
         <Scout />
         <Stack />
         <Integrate />
+        <RunOnNebius />
         <OpenSource />
       </div>
     </WhoProvider>

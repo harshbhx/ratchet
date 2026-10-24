@@ -1,4 +1,4 @@
-import { ArrowUpRight, BookOpen, Code, Film, MonitorPlay } from "lucide-react";
+import { ArrowUpRight, BookOpen, Code, Film, MonitorPlay, Server } from "lucide-react";
 import { RealBadge } from "@/components/ui/real-badge";
 import { entryById, type RealStatus } from "@/lib/real-model";
 import { Chapter, Command, Ext, Panel } from "./ui";
@@ -136,6 +136,12 @@ export function LimitsChapter() {
     { href: REAL.links.repo, label: "GitHub repository", icon: Code },
     { href: REAL.links.docs, label: "Documentation", icon: BookOpen },
     { href: REAL.links.demo, label: "The demo", icon: MonitorPlay },
+    // The one-command Nebius path (deploy/nebius/nebius.sh): scripted and tested offline, never run on a real account.
+    {
+      href: `${REAL.links.docs.replace(/\/?$/, "/")}reference/where-it-runs/`,
+      label: "Run on Nebius: scripted, not yet run",
+      icon: Server,
+    },
   ];
   return (
     <Chapter id="limits" title="Honest limits, and where to go next">

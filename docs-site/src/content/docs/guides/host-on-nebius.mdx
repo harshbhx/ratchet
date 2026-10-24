@@ -15,6 +15,16 @@ import FadeContent from '../../../components/ui/FadeContent.astro';
 
 <Summary>Ratchet's Nebius deploy kit runs it on one small CPU VM that does no model inference, calls its teacher, judge and hosted fallback on Token Factory, and rents an L40S GPU only while you serve or train the student, so GPU money is spent only when you decide to spend it.</Summary>
 
+<Aside type="tip" title="One command, and a map of where everything runs">
+Everything below is wrapped in one script. `make nebius-plan` prints every command and changes nothing; `deploy/nebius/nebius.sh up --yes` (with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`) creates the CPU VM, adds the GPU student endpoint only with `--with-student`, wires the VM's `.env` and runs a smoke check, and `down` stops the endpoint first and then deletes the VM. It is scripted and tested offline, **not yet run on a real Nebius account**. The commands, the flags and the costs (estimates) are in [Where everything runs](/reference/where-it-runs/#one-command-to-host-it-all-on-nebius), which also says what runs where today.
+
+```bash
+make nebius-plan
+RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-up YES=1 ARGS="--with-student"
+RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-down YES=1
+```
+</Aside>
+
 <Eli10>
 
 Think of the whole restaurant as a set of rented rooms.
@@ -29,7 +39,7 @@ Think of the whole restaurant as a set of rented rooms.
 </Eli10>
 
 <Aside type="caution" title="The GPU side has not run on Nebius yet">
-The teacher runs on Nebius Token Factory. As of Oct 25, 2026 the GPU parts have not: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the adapters were trained on a free Colab T4 and a rented Modal T4). The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command, so every call they make is unverified until it runs. Run every script with `DRY_RUN=1` first.
+The teacher runs on Nebius Token Factory. As of Oct 25, 2026 the GPU parts have not: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the adapters were trained on a free Colab T4 and a rented Modal T4). The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command, so every call they make is unverified until it runs. Run every script with `DRY_RUN=1` first (the one-command script above does that by default).
 </Aside>
 
 ## How it really works
@@ -443,9 +453,9 @@ On Dec 16, or whenever judging ends. Deleting the VM does **not** delete its boo
 scp ubuntu@<ip>:/var/backups/ratchet/*.db.gz ./ratchet-backups/
 
 VM_ID=$(nebius compute instance get-by-name --parent-id $NEBIUS_PROJECT_ID --name ratchet-demo --format json | jq -r .metadata.id)
-nebius compute instance delete $VM_ID
+nebius compute instance delete --id $VM_ID
 nebius compute disk list --parent-id $NEBIUS_PROJECT_ID     # find ratchet-demo-boot (verify the flags on day 1)
-nebius compute disk delete <disk ID>
+nebius compute disk delete --id <disk ID>
 ```
 
 Then remove the DNS record and stop the student endpoint if it still runs. The bucket keeps billing for what it stores until you remove it, so export the adapters you want to keep first (`python -m ratchet.live export --version N --out DIR`). Rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY`, `RATCHET_ADMIN_TOKEN`, `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS` and `RATCHET_DASHBOARD_KEYS`, and revoke any GitHub token used for cloning. Keep `RATCHET_BOM_SIGNING_KEY` (or at least its public key) if old BOMs should stay verifiable.

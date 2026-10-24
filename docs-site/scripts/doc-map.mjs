@@ -37,6 +37,7 @@ export const PUBLIC_DOCS = [
   ['TESTING.md', 'Testing'],
   ['THREAT_MODEL.md', 'Threat model'],
   ['VERIFY.md', 'Verify: the commands'],
+  ['WHERE_IT_RUNS.md', 'Where everything runs'],
 ];
 
 /** The public docs that exist, as POSIX paths relative to docs/, sorted. */

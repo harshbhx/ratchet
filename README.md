@@ -11,6 +11,7 @@
   <a href="https://live.ratchet.dualmindlab.tech"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-Token%20Factory-1f6feb"></a>
   <a href="https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql"><img alt="Adapter on Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-adapter-FFD21E"></a>
   <a href="https://docs.ratchet.dualmindlab.tech"><img alt="Docs" src="https://img.shields.io/badge/docs-guides-64748b"></a>
+  <a href="docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius"><img alt="Run on Nebius (scripted, not yet run on a real account)" src="docs/img/run-on-nebius.svg"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="https://github.com/harshbhx/ratchet/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/harshbhx/ratchet/ci.yml?branch=main&label=CI"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776AB">
@@ -56,7 +57,7 @@
 
 | | |
 |---|---|
-| **Start** | [Try it](#try-it) · [Real results](#real-results) · [How it works](#how-it-works) · [Watch it work](#watch-it-work) · [Quick start](#quick-start) · [Run it on Nebius](#run-it-on-nebius-and-where-else-to-host-it) |
+| **Start** | [Try it](#try-it) · [Real results](#real-results) · [How it works](#how-it-works) · [Watch it work](#watch-it-work) · [Quick start](#quick-start) · [Run it on Nebius](#run-it-on-nebius-and-where-else-to-host-it) · [Where everything runs](docs/WHERE_IT_RUNS.md) |
 | **Check it** | [For judges](#for-judges-a-five-minute-path) · [Status, honestly](#status-honestly) · [Limitations](#limitations) |
 | **Why** | [Why license-clean](#why-license-clean) · [NVIDIA and Nebius](#how-it-uses-nvidia-and-nebius) · [Scout](#scout-ratchet-on-agent-traffic) · [Why not a router](#why-not-a-router-or-a-distillation-api) |
 | **Background** | [NVIDIA lineage](#nvidia-lineage) · [Prior art](#prior-art-and-what-is-new) · [Go deeper](#go-deeper) · [Documentation](#documentation) · [How the repo was built](#how-the-repo-was-built) · [Repo map](#repo-map) · [License](#license) |
@@ -199,7 +200,7 @@ curl -s localhost:8000/v1/chat/completions -H "Content-Type: application/json" \
 | I want to | Run |
 |---|---|
 | See the whole loop, with a bad deploy rolled back | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` |
-| Run the tests (1922 tests, no network, no GPU) | `make test` |
+| Run the tests (1934 tests, no network, no GPU) | `make test` |
 | Run Scout as an outside client | `python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1` |
 | Use the Docker image (mock mode) | `make docker && docker run -p 8000:8000 ratchet-gateway` |
 | Rebuild the web UI (Node 22) | `make web` |
@@ -223,10 +224,30 @@ print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage
 
 The gateway does no inference, so it runs anywhere a container does. The student and the nightly training are what need a GPU.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/where-it-runs-dark.png">
+    <img src="docs/img/where-it-runs-light.png" alt="Where everything runs. Real today: your laptop, rented T4 GPUs for adapter training, Cloudflare for the live and simulation demos and the docs, Nebius Token Factory for the teacher. Scripted and tested offline, not yet run on a real account: a Nebius CPU VM, a Serverless Endpoint for the student, a Serverless Job for Night School and a bucket." width="100%">
+  </picture>
+  <br><sub>What runs where, today and as designed. <a href="docs/WHERE_IT_RUNS.md">Where everything runs</a> has the table.</sub>
+</p>
+
+<a href="docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius"><img alt="Run on Nebius" src="docs/img/run-on-nebius.svg"></a>
+
+**Host it on Nebius, three commands.** Scripted and tested offline against a fake CLI; **not yet run on a real Nebius account**.
+
+```bash
+make nebius-plan                                            # prints every command, changes nothing
+RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-up YES=1   # a CPU VM with the gateway; add ARGS="--with-student" for the GPU student endpoint
+RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-down YES=1 # stops the endpoint, deletes the VM
+```
+
+The gateway and router are plain CPU software: today they run on Cloudflare's CPU containers for the public demos and on a laptop in mock mode. Only training and the student endpoint use a GPU. Costs (estimates), flags and what each step does: [Where everything runs](docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius).
+
 | Where | How | State |
 |---|---|---|
-| **Nebius AI Cloud** (the student and Night School) | `bash deploy/student_endpoint.sh create` makes a Serverless Endpoint (vLLM with runtime LoRA loading), and `python -m ratchet.live night` runs the nightly Serverless Job. Add `DRY_RUN=1` to print the commands first. Steps: [docs/LIVE_MODE.md](docs/LIVE_MODE.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). | Scripted and tested offline against a fake `nebius` CLI; not run on a Nebius account yet. Nebius has no one-click "Deploy" button that we could find (Oct 2026): it deploys with its CLI and these scripts. |
-| **Nebius AI Cloud** (the demo host) | One CPU VM with Docker Compose and Caddy: [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md) | Scripted and tested offline; not run on a Nebius account yet (an alternative to Cloudflare) |
+| **Nebius AI Cloud** (the student and Night School) | `bash deploy/student_endpoint.sh create` makes a Serverless Endpoint (vLLM with runtime LoRA loading), and `python -m ratchet.live night` runs the nightly Serverless Job. Add `DRY_RUN=1` to print the commands first. Steps: [docs/LIVE_MODE.md](docs/LIVE_MODE.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). | Scripted and tested offline against a fake `nebius` CLI; not run on a Nebius account yet. Nebius has no one-click "Deploy" button that we could find (Oct 2026): it deploys with its CLI, and `deploy/nebius/nebius.sh` runs these scripts in order with one command. |
+| **Nebius AI Cloud** (the demo host) | One CPU VM with Docker Compose and Caddy: `make nebius-plan`, then [docs/WHERE_IT_RUNS.md](docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius) and [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md) | Scripted and tested offline; not run on a Nebius account yet (an alternative to Cloudflare) |
 | **Cloudflare** | Workers with Containers, deployed by a manual workflow: `deploy/cloudflare-live` (live demo) and `deploy/cloudflare` (simulation) | Running: [live demo](https://live.ratchet.dualmindlab.tech), [simulation](https://demo.ratchet.dualmindlab.tech) |
 | **Hugging Face** | A static Space that replays the recorded Scout runs, and a dataset with the recordings | Published: [Space](https://huggingface.co/spaces/harshbhx/ratchet-scout), [dataset](https://huggingface.co/datasets/harshbhx/ratchet-scout-runs) |
 | **Any container host** | `make docker && docker run -p 8000:8000 ratchet-gateway` (mock mode; add the live settings from [Quick start](#quick-start)) | Works |
@@ -367,7 +388,7 @@ Start at [docs/README.md](docs/README.md). Highlights:
 
 - [PRD](docs/PRD.md): problem, users, requirements, metrics, release plan
 - [Architecture](docs/ARCHITECTURE.md), [API](docs/API.md), [Configuration](docs/CONFIGURATION.md), [Scout](docs/SCOUT.md)
-- [Deployment on Nebius](docs/DEPLOYMENT.md), [Demo VM on Nebius](docs/DEPLOY_NEBIUS_VM.md), [Runbook](docs/RUNBOOK.md), [Threat model](docs/THREAT_MODEL.md)
+- [Where everything runs](docs/WHERE_IT_RUNS.md), [Deployment on Nebius](docs/DEPLOYMENT.md), [Demo VM on Nebius](docs/DEPLOY_NEBIUS_VM.md), [Runbook](docs/RUNBOOK.md), [Threat model](docs/THREAT_MODEL.md)
 - [Testing and simulation](docs/TESTING.md), [Architecture decisions](docs/adr/README.md)
 - [Business](docs/BUSINESS.md), [Competitive analysis](docs/COMPETITIVE_ANALYSIS.md), [Roadmap](docs/ROADMAP.md)
 

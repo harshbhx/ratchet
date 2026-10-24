@@ -1,4 +1,4 @@
-"""Render docs/img/architecture.svg to the PNG exports with resvg and the real Inter font.
+"""Render docs/img/architecture.svg and docs/img/where-it-runs.svg to the PNG exports with resvg and the real Inter font.
 
 Usage: python scripts/render_architecture.py --tools DIR [--fonts DIR]
 DIR holds node_modules/@resvg/resvg-js (npm install @resvg/resvg-js there, outside the repo).
@@ -81,6 +81,8 @@ def main() -> None:
             (dark, "architecture-dark.png", 1600),
             (devpost(dark), "architecture-devpost-1200x800.png", 1200),
         ]
+        where = (IMG / "where-it-runs.svg").read_text(encoding="utf-8")
+        jobs += [(themed(where, False), "where-it-runs-light.png", 1600), (themed(where, True), "where-it-runs-dark.png", 1600)]
         for i, (svg, name, width) in enumerate(jobs):
             (tmp / f"{i}.svg").write_text(svg, encoding="utf-8")
             cmd = [
