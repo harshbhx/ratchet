@@ -1,8 +1,10 @@
 # Hosting the public demo on a Nebius CPU VM
 
-This guide puts the Ratchet demo on one small Nebius AI Cloud virtual machine, so judges can use it from **Oct 29 to Dec 15, 2026**. The VM runs three containers: the live Ratchet gateway, a second gateway in mock mode for the simulation, and [Caddy](https://caddyserver.com/), which gets HTTPS certificates automatically. The live gateway is at your domain (the URL for Stage One); the simulation, where judges can run days, break a deploy and watch the rollback for free, is at `sim.<your domain>` ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
+> **Where the public demo runs today:** the live gateway (live.ratchet.dualmindlab.tech) and the simulation (demo.ratchet.dualmindlab.tech) run on Cloudflare Workers with Containers, see [deploy/cloudflare-live/README.md](../deploy/cloudflare-live/README.md). The Nebius CPU VM kit below is the alternative host: it is written and tested offline but has not been run on a Nebius account. Where this guide says a restart never resets the Scout caps, that holds where the ledger is on a volume (this kit); on the Cloudflare Containers demo the ledger is on the container's disk and a restart resets the day's counters.
 
-Files: [`deploy/vm/`](../deploy/vm/). Facts about Nebius below were checked on docs.nebius.com and nebius.com on **Oct 20, 2026**. Anything marked **verify on day 1** has not been run against a real account yet.
+This guide puts the Ratchet demo on one small Nebius AI Cloud virtual machine, so judges can use it from **Oct 29 to Dec 15, 2026** if you choose this host. The VM runs three containers: the live Ratchet gateway, a second gateway in mock mode for the simulation, and [Caddy](https://caddyserver.com/), which gets HTTPS certificates automatically. The live gateway is at your domain (the URL for Stage One); the simulation, where judges can run days, break a deploy and watch the rollback for free, is at `sim.<your domain>` ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
+
+Files: [`deploy/vm/`](../deploy/vm/). Facts about Nebius below were checked on docs.nebius.com and nebius.com on **Oct 20, 2026** (items dated Oct 21 and 22 were re-checked then). Anything marked **verify on day 1** has not been run against a real account yet.
 
 ## Why a CPU VM
 
@@ -70,16 +72,16 @@ Optional settings: `RATCHET_VM_NAME`, `RATCHET_VM_PRESET` (for example `4vcpu-16
 ### 2. Pick the web address
 
 - **Fastest: sslip.io.** If you do not set `RATCHET_DOMAIN`, first boot sets it to `<public-ip>.sslip.io`, for example `203.0.113.7.sslip.io`. That name resolves to the IP, so Caddy gets a real certificate without any DNS work. The VM finds its public IP by asking `api.ipify.org` (verify on day 1).
-- **Your own name:** add a DNS **A record**, for example `ratchet.dualmindlab.tech → <public IP>`, wait until `dig +short ratchet.dualmindlab.tech` returns the IP, then on the VM:
+- **Your own name:** add a DNS **A record**, for example `gateway.example.com → <public IP>`, wait until `dig +short gateway.example.com` returns the IP, then on the VM:
 
   ```bash
   cd /opt/ratchet/deploy/vm
-  sudo -u ratchet sed -i 's|^RATCHET_DOMAIN=.*|RATCHET_DOMAIN=ratchet.dualmindlab.tech|' .env
+  sudo -u ratchet sed -i 's|^RATCHET_DOMAIN=.*|RATCHET_DOMAIN=gateway.example.com|' .env
   sudo -u ratchet docker compose up -d
   ```
 
   Set the DNS record **before** switching. Caddy retries failed certificate requests, but repeated failures can hit Let's Encrypt rate limits.
-- **The simulation's name** is `sim.<RATCHET_DOMAIN>` unless you set `RATCHET_SIM_DOMAIN`. With sslip.io it resolves by itself (`sim.203.0.113.7.sslip.io` resolves to 203.0.113.7, checked Oct 21, 2026). With your own domain, add a second A record (or a wildcard `*.ratchet.dualmindlab.tech`) for `sim.<name>` too, before `docker compose up -d`. The first certificate for it is verify-on-day-1. `RATCHET_SIM=off` in `.env` drops the host (then add an empty `RATCHET_SIM_URL=`).
+- **The simulation's name** is `sim.<RATCHET_DOMAIN>` unless you set `RATCHET_SIM_DOMAIN`. With sslip.io it resolves by itself (`sim.203.0.113.7.sslip.io` resolves to 203.0.113.7, checked Oct 21, 2026). With your own domain, add a second A record (or a wildcard `*.gateway.example.com`) for `sim.<name>` too, before `docker compose up -d`. The first certificate for it is verify-on-day-1. `RATCHET_SIM=off` in `.env` drops the host (then add an empty `RATCHET_SIM_URL=`).
 
 ### 3. Edit `.env`
 
@@ -140,7 +142,7 @@ Live mode spends real money on every Scout run and every `/v1/chat/completions` 
    ```
 
    - Credit math: Tavily's free plan gives **1,000 credits a month**, and a basic search costs 1 credit ([Tavily credits](https://docs.tavily.com/documentation/api-credits), checked Oct 20, 2026). The Nebius Builders Program may offer more (unverified; set the real number). Scout makes up to 3 searches a run.
-   - The judges' credits default to `floor(1000 × 7 / 22) = 318`. In a calendar-month cycle that leaves `floor(682 / 15) = 45` public credits a day on Dec 1, which is 15 public runs of 3 searches; leftovers roll forward. The judges' budget defaults to their share of `RATCHET_SCOUT_DAILY_BUDGET_USD` (7/22 of $0.50 is $0.15).
+   - The judges' credits default to `floor(1000 × 7 / 22) = 318`. In a calendar-month cycle that leaves `floor(682 / 15) = 45` public credits a day on Dec 1, which is 15 public runs of 3 searches; leftovers roll forward. The judges' budget defaults to their share of `RATCHET_SCOUT_DAILY_BUDGET_USD` (7/22 of $0.50 is about $0.16).
    - Tavily does not document its monthly reset day (unverified): set `RATCHET_TAVILY_CYCLE_DAY` to the day the Tavily dashboard shows.
    - When the public's credits for the day are used up, public runs still run, without web search and labelled "search unavailable": the planner has already called Token Factory, and the writer answers without sources. Judge runs keep searching from their reserve.
 4. Check, then apply: `sudo -u ratchet docker compose run --rm --no-deps -T ratchet python -m ratchet.config check` lists every problem with `.env` at once (exit 2: the gateway would not start; it also warns that `RATCHET_MOCK_WARMUP_DAYS` does nothing in live mode, so remove that line), then `sudo -u ratchet docker compose up -d` (or `update.sh`, which runs the same check first) and `curl -s https://<domain>/readyz` should say `ready`. The ledger now lives in the `ratchet-data` volume at `/data/ratchet.db` and survives restarts and rebuilds.
@@ -215,7 +217,6 @@ curl -s https://<domain>/scout/status                 # live mode: spend today v
 
 - `/scout/status` keeps today's runs and spend across `update.sh`: the counters are restored from the ledger. `search.available` false, a `search_error` event or a `tavily_exhausted` event: see [RUNBOOK.md](RUNBOOK.md#tavily-credits-running-low-or-search-unavailable).
 - One gateway process per ledger: the compose file pins `--workers 1`. Detection of a second process (`gateway_lease`, NFR-60) waits for the leases table; until then see [RUNBOOK.md](RUNBOOK.md#two-gateway-processes-on-one-ledger).
-
 - The live page's strip "Last Token Factory call" and the dashboard header read `/ratchet/stats` `upstream`: the newest real call per role, with its model id, latency and age, never content. An old age means no traffic since ([RUNBOOK.md](RUNBOOK.md#reading-the-last-call-strip)).
 - The ratchet and ratchet-sim containers have a Docker health check on `/healthz` every 30 seconds (public, so it keeps working when `RATCHET_API_KEYS` protects `/v1/*`). Both containers restart automatically (`restart: unless-stopped`), also after a VM reboot.
 - Container logs rotate at 10 MB × 5 files each.
@@ -285,7 +286,7 @@ sudo -u ratchet docker compose start ratchet
   - Using the API yourself while guarded: `curl -H "X-Ratchet-Admin-Token: $TOKEN" https://<domain>/v1/models`, or pass `default_headers={"X-Ratchet-Admin-Token": TOKEN}` to the OpenAI SDK.
 - **The mock demo is shared.** It lives on the simulation host (`sim.<domain>`), and all visitors see and change the same simulated state: one visitor's Reset affects everyone. That is acceptable for a demo, and it costs nothing. The simulation limits itself: `RATCHET_DEMO_RPM` demo actions a minute per client IP (429), a reset after `RATCHET_DEMO_MAX_DAYS` simulated days or `RATCHET_DEMO_MAX_REQUESTS` requests or `RATCHET_DEMO_IDLE_RESET_S` seconds idle (compose sets 30 a minute, 30 days, 200,000 requests, 2 h), and its container is capped at 1 vCPU and 1 GiB. It holds no key, no admin or judge code and no volume; mock admin writes (task registration, capped at 50) are open there and an automatic reset clears them.
 - **Budget guard limits.** It caps Scout's daily spend, runs per day and runs per IP. It does not cover `/v1/chat/completions` (hence API keys or the edge guard), and it does not stop someone with many IP addresses from using up the public share early; the judges' reserve is held back from them. The budget is checked when a run starts, so the worst case is the daily cap plus the runs already in progress when it is reached (a few cents each).
-- **Judge code.** Never put `RATCHET_SCOUT_JUDGE_CODE` on the public project page, in the video or in a URL. Judges type it into the Scout page, which sends it once in a POST body; the session then lives in an `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Rotating the code ends every session ([THREAT_MODEL.md](THREAT_MODEL.md) T24).
+- **Judge code.** Never put `RATCHET_SCOUT_JUDGE_CODE` on the public project page, in the video or in a URL. Judges type it into the Scout page, which sends it once in a POST body; the session then lives in an `HttpOnly`, `SameSite=Strict`, `Secure` cookie. Rotating the code ends every session ([THREAT_MODEL.md](THREAT_MODEL.md) T31).
 - **Access logs.** Caddy logs request headers and redacts only Cookie, Set-Cookie, Authorization and Proxy-Authorization, so the Caddyfile's log filter deletes `X-Ratchet-Admin-Token` (guarded mode). Check it once on the VM with `docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile`. Scout questions stay in both access logs (`/scout/stream?q=`): they are public demo questions.
 - **Real client IPs.** Caddy replaces any client-sent `X-Forwarded-For` with the real address, and uvicorn runs with `--proxy-headers`, so the per-IP limit sees real IPs.
 - **After judging:** rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY`, `RATCHET_ADMIN_TOKEN`, `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS` and `RATCHET_DASHBOARD_KEYS`, and revoke any GitHub token used for cloning. Keep `RATCHET_BOM_SIGNING_KEY` (or its public key) if you want old BOMs to stay verifiable.
@@ -325,7 +326,6 @@ Verify on day 1:
 - The judge cookie through Caddy over HTTPS: `POST /scout/judge` from the Scout page, then `/scout/status` shows `"session": true` (FR-10.21).
 - `caddy validate` with the log filter for `X-Ratchet-Admin-Token`.
 - The simulation host's certificate on the first try, and the fit of both gateways in the VM's memory and CPU under load ([the measurement](RUNBOOK.md#simulation-host)).
-
 - `nebius compute disk list --parent-id ...` in the teardown.
 - Public IP detection from inside the VM (`api.ipify.org`), used only for the sslip.io default.
 - Let's Encrypt issuing for `*.sslip.io` names on the first try (a `sim.` prefix resolves: `sim.203.0.113.7.sslip.io` gave 203.0.113.7 through dns.google and Cloudflare DNS, Oct 21, 2026).

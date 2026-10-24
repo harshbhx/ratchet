@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Owner | Harsh Bhanushali (DualMind Labs) |
-| Status | v0.4.0 built (hackathon MVP, Scout demo, React web app, demo VM kit, privacy and security hardening); live Nebius run pending |
-| Last updated | 2026-10-20 |
+| Status | v0.4.0 tagged; v0.5 in progress (backend features Done, see §6 and [REQUIREMENTS.md](REQUIREMENTS.md)). Measured so far: text-to-SQL and tool-calling exams on adapters trained on rented T4s (§8.3); a live demo on Token Factory where the teacher answers every request. Not run: Nebius Serverless Jobs and Endpoints, and the full live measurement run |
+| Last updated | 2026-10-25 |
 | Related | [Requirements matrix](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Roadmap](ROADMAP.md) |
 
 ## 1. Overview
@@ -25,6 +25,8 @@ The bill falls as the student takes over, and Ratchet reports when a GPU endpoin
 ## 2. Problem
 
 ### 2.1 What hurts
+
+Third-party figures in this section carry the link they came from; they were opened during research in Oct 2026 and not all re-read on 2026-10-25, so re-check before relying on one.
 
 - Companies rent frontier models for tasks a small model could handle. Many requests are narrow and repetitive: classification, extraction, ticket triage, sub-steps inside agents.
 - Inference spend is large and growing. Enterprise generative AI spend reached $37B in 2025, 3.2x the year before, with $12.5B on model APIs ([Menlo Ventures](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/)). Gartner puts inference at 55% ($23.3B) of AI-optimized cloud spend in 2026 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2026-08-10-gartner-forecasts-worldwide-artificial-intelligence-optimized-iaas-spending-to-grow-96-percent-in-2026)).
@@ -52,10 +54,10 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 |---|---|
 | G1 | Cut inference cost for narrow, high-volume tasks without users noticing a quality drop |
 | G2 | Make distillation automatic: no manual dataset curation, training runs, or deploys |
-| G3 | Make every release safe: nothing reaches users unless it beats or matches what is live |
+| G3 | Make every release safe: no version reaches users unless it passes the golden gate (within 2 points of what is live on the same golden rows), shadow and canary |
 | G4 | Make training data license-clean and provable (provenance ledger, model bill of materials) |
 | G5 | Give the customer ownership of the trained LoRA adapter and its signed training lineage (the base model stays under its own license) |
-| G6 | Run end to end on open models and Nebius infrastructure (Token Factory + AI Cloud) |
+| G6 | Run end to end on open models and Nebius infrastructure (Token Factory + AI Cloud). A goal: so far the teacher runs on Token Factory and the measured adapters were trained on rented T4s outside Nebius (§8.3) |
 | G7 | Win or place in the Nebius x NVIDIA Global AI Hackathon (Best Apps and Agents track) |
 
 ### 3.2 Non-goals (v0.1)
@@ -326,7 +328,7 @@ Each requirement's Status is one of these forms, checked by `python scripts/reqt
 | FR-11.32 | Demo watchdog, host side (`python3 -m ratchet.watch tick`, cron every 2 minutes, standard library only): restarts the gateway container after `RATCHET_WATCH_FAILURES` (3) failed liveness checks or failed ledger checks in a row, with a start grace, a cooldown, an hourly cap, a pause and an update lock; never for a teacher or student failure (`/readyz`'s other checks are not read) and never starts a stopped container; alerts through a signed JSON webhook it builds itself (`RATCHET_ALERT_WEBHOOK_URL`, HMAC `X-Ratchet-Signature`), one per failing check, repeated every `RATCHET_WATCH_REALERT_S`, once on recovery; `status`, `pause`, `resume`, `test-alert` ([ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md)) | Done (v0.5), untested (on Nebius) |
 | FR-11.33 | Hourly live probe (`python3 -m ratchet.watch probe`): one 16-token completion through the public URL with a dedicated `watchdog` key on the operator-pinned task `watchdog-probe` (never stored, INV-10; refused before any call unless the task is pinned, unstored and the key's alone), classified by the gateway's error code and the upstream status in its message, not by HTTP status (the gateway maps the teacher's 401, 402 and 403 to 502s); a failure alerts naming the code and status without claiming a cause (which status exhausted Token Factory credit returns is unverified); a content-free flag in the ledger's `meta` (`state`, `since`, `checked`, `search`; `failing` only for a teacher- or gateway-side failure, `stale` after `RATCHET_WATCH_FLAG_MAX_AGE_S`) is served as `live_check` by `/scout/status` | Done (v0.5), untested (on Nebius) |
 | FR-11.34 | Updates that can be undone and a check from outside: `update.sh` takes a lock, backs up the ledger (`RATCHET_BACKUP_TAG=pre-update`), tags the running image `ratchet-gateway:previous`, and on an unhealthy, wrong-mode or probe-failing new version puts the checkout and image back (`--skip-backup`, `--no-rollback`, `--no-probe`, `DRY_RUN=1`); Token Factory not answering never rolls back; the ledger is restored (`restore.sh`, which moves the old file and its WAL aside) only when the old image cannot open it; `scripts/demo_check.py https://<domain>` checks the pages, `/healthz` mode, `/readyz`, `/scout/status`, an optional key and an optional live completion | Done (v0.5), untested (on Nebius) |
-| FR-11.30 | Live and simulation side by side on the demo VM: a second, mock-mode gateway (`ratchet-sim`, in-memory ledger, 4-day warm-up, its own environment with no keys or tokens, capped at 1 vCPU and 1 GiB) at its own HTTPS host (`RATCHET_SIM_DOMAIN`, default `sim.<domain>`; `RATCHET_SIM=on`). The demo controls are open only there; the live host keeps INV-8 in the app and the edge guard. A header switch links the two (`RATCHET_LIVE_URL`, `RATCHET_SIM_URL`, `/ratchet/stats` `links`). The shared simulation limits demo actions per client IP and resets itself after a number of simulated days or requests, or an idle time (`RATCHET_DEMO_*`, `demo`, `demo_reset` events); `update.sh` checks both hosts and that the simulation is mock | Done (v0.5), untested (on Nebius) |
+| FR-11.30 | Live and simulation side by side on the demo host (Cloudflare Containers, or the VM kit): a second, mock-mode gateway (`ratchet-sim`, in-memory ledger, 4-day warm-up, its own environment with no keys or tokens, capped at 1 vCPU and 1 GiB) at its own HTTPS host (`RATCHET_SIM_DOMAIN`, default `sim.<domain>`; `RATCHET_SIM=on`). The demo controls are open only there; the live host keeps INV-8 in the app and the edge guard. A header switch links the two (`RATCHET_LIVE_URL`, `RATCHET_SIM_URL`, `/ratchet/stats` `links`). The shared simulation limits demo actions per client IP and resets itself after a number of simulated days or requests, or an idle time (`RATCHET_DEMO_*`, `demo`, `demo_reset` events); `update.sh` checks both hosts and that the simulation is mock | Done (v0.5), untested (on Nebius) |
 | FR-11.31 | A content-free record of the last real upstream call per role (teacher, fallback teacher, student, Tavily) in live mode: role, host label, requested and reported model id, ok or the exception class with the HTTP status, a fixed reason, latency and age, and the last success; never prompt or answer text, URLs, keys, headers or error messages. It is in `/ratchet/stats` `upstream` under the dashboard's access and scrubbing rules, and shown on the landing page's live strip and the dashboard header; nothing is recorded in mock mode | Done (v0.5), untested (live) |
 
 ### 6.12 Operations
@@ -413,7 +415,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | NFR-9 | Licensing | Code under Apache-2.0. Model licenses (OpenMDW-1.1, NVIDIA Nemotron Open Model License) travel with any distributed adapter: the teachers' and the base model's licenses in each adapter's signed BOM and in a NOTICE.md next to its weights (FR-3.50, FR-3.51, FR-3.52). | Done (v0.5) |
 | NFR-10 | Traceability | Every requirement in this PRD and every invariant in CLAUDE.md maps to the code that implements it and the tests that prove it, in the generated [REQUIREMENTS.md](REQUIREMENTS.md). CI fails on a status outside the grammar above, a done requirement without a test or a recorded exception, a test that cites an unknown or replaced id, or a stale matrix. | Done (v0.5) |
 | NFR-11 | Cost honesty | Every savings figure names its cost model. Alongside the per-token view, Ratchet reports savings by GPU-hours actually paid for the student endpoint and training, including negative savings below break-even, and labels list prices as unverified until the day-1 checks pass (`RATCHET_PRICES_VERIFIED`). | Partial: the cost report, the `cost` block and `totals.cost_model` in `/ratchet/stats`, the simulator's GPU-hour line and the savings receipts (`cost_views`, FR-15.5) name their cost model (v0.5); the `ratchet` block of a chat completion, Scout's run totals and the simulator's main savings line still give per-token figures without saying so |
-| NFR-70 | Claim honesty | Public copy (README, PRD, competitive analysis, business plan, Devpost draft, glossary, demo script, the lite pages, `web/index.html`, every `web/src` page and the package description) claims only what is true: the customer owns a Nemotron adapter (LoRA on NVIDIA's open Nano base) and its signed training lineage, never the base model or its weights, and the base keeps NVIDIA's license; savings are never promised below break-even; the README states which of NVIDIA's six LLM-to-SLM steps run automatically (S1, S2, S5, S6) and which are manual (task clustering, model selection); Nebius product facts are worded as Nebius's docs word them (what a stopped endpoint is billed for); competitors and prior art carry a source and a date, a competitor is described in its source's words, and claims nobody could source are removed; the README names its prior art, its limitations (Scout's unchecked free-text fact included), the NVIDIA lineage it builds on and how the repo was built, quotes the teacher's license exactly, and never calls a feature the PRD marks Done "not built yet". Checked offline by `tests/test_docs_claims.py`. | Done (v0.5) |
+| NFR-70 | Claim honesty | Public copy (README, PRD, competitive analysis, business plan, glossary, the lite pages, `web/index.html`, every `web/src` page and the package description) claims only what is true: the customer owns a Nemotron adapter (LoRA on NVIDIA's open Nano base) and its signed training lineage, never the base model or its weights, and the base keeps NVIDIA's license; savings are never promised below break-even; the README states which of NVIDIA's six LLM-to-SLM steps run automatically (S1, S2, S5, S6) and which are manual (task clustering, model selection); Nebius product facts are worded as Nebius's docs word them (what a stopped endpoint is billed for); competitors and prior art carry a source and a date, a competitor is described in its source's words, and claims nobody could source are removed; the README names its prior art, its limitations (Scout's unchecked free-text fact included), the NVIDIA lineage it builds on and how the repo was built, quotes the teacher's license exactly, and never calls a feature the PRD marks Done "not built yet". Checked offline by `tests/test_docs_claims.py`. | Done (v0.5) |
 | NFR-71 | Recordings are content-safe and free | A Scout recording holds the operator's question, the run's events with their offsets, the host name and the totals, never a header, an API key or a judge code; the gateway never writes one and never stores a visitor's question (INV-12, INV-13); serving one costs nothing and cannot be refused by the guard; a file is served only when its id matches the pattern, it stays inside the directory, it is at most 2 MB and its schema parses | Done (v0.5) |
 | NFR-60 | Single writer | In live mode one gateway process serves a ledger: a `gateway` lease with a heartbeat, taken at app startup; a second process warns and writes an event (default) or refuses to start (`RATCHET_GATEWAY_LEASE=exclusive`) | Planned |
 | NFR-67 | Simulation isolation | The simulation host cannot spend or leak anything live: its container is mock by its own environment (no `env_file`, no Nebius, Tavily, student, signing, API, admin, dashboard or judge secret, and never the live signing key), has no volume and no published port, and is capped at 1 vCPU and 1 GiB so a visitor hammering it cannot starve the live gateway; `update.sh` fails when it answers `/healthz` in any mode but mock. That both gateways fit in 2 vCPU / 8 GB under judging load is unverified | Done (v0.5), untested (on Nebius) |
@@ -440,7 +442,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 **Simulation results (mock models, not real model quality):** with seed 7, 2,000 tickets a day over 10 days, a product launch on day 5, and a corrupted deploy of v3:
 
 - The student answered 98% of requests by day 3.
-- Savings were 85–87% at steady state and 69% over the whole run, including the cold start.
+- Savings were 85–87% on the quiet days (3, 4, 9 and 10), 84.5% over days 8 to 10 (SM-1) and 69% over the whole run, including the cold start.
 - Audited precision ranged from 92% to 100%.
 - The corrupted v3 was rolled back at 41.2% audited precision.
 - Drift raised escalations to 14% on day 5; they were back to 2% by day 9.
@@ -452,11 +454,37 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | Metric | Target |
 |---|---|
 | Submission complete by Oct 29, 2026 | Yes |
-| Live run on Token Factory + Nebius AI Cloud with real numbers in README and video | Yes |
+| Live run on Token Factory with real numbers in README and video (training on rented T4s, not Nebius AI Cloud) | Target Yes; status: smoke run only (`evidence/live-smoke-2026-10-23`), measured run not done |
 | Demo URL live through Dec 15, 2026 | Yes |
 | Stage One (pass/fail) met: the hosted demo runs in live mode during judging, with runtime Token Factory and Tavily calls | Yes |
-| Real Nebius bill reported (total, failed jobs included) next to the cost report's break-even line | Yes |
+| Real Nebius bill reported (total, failed jobs included) next to the cost report's break-even line | Target Yes; status: not done |
 | Placement | Track win or top 3 |
+
+### 8.3 Measured results (real models, not simulation)
+
+Adapters were trained on a free Colab T4 and a rented Modal T4, never on Nebius GPUs; the training data is synthetic; labels come from Nemotron 3 Ultra (OpenMDW-1.1); Claude outputs were used only to write and check exams, never as training data. The files are in `evidence/`; every score recomputes from the saved answers ([VERIFY.md](VERIFY.md)). Scores are strict row matches.
+
+**Text-to-SQL (the headline).**
+
+| Exam | Untrained Nano 4B | Ultra | Adapter, round 1 | Adapter, round 2 |
+|---|---|---|---|---|
+| Exam 1 (172 questions) | 12.8% | 25.6% | 33.1% | 39.0% |
+| Exam 2 (200 questions, written by a different model) | 12.5% | 15.0% | 28.0% | 33.0% |
+
+The adapter scores above Ultra on this prompt, but Ultra's low score is mostly output shape (`evidence/text2sql-exam2/README.md`), so this is not a claim that the adapter is better than Ultra. At the 95% precision bar the student would answer 1 of 86 held-out measurement questions on exam 1 and 0 of 100 on exam 2: the confidence gate passes almost none of them, so the adapter does not replace Ultra today.
+
+**Tool calling (round 3; `evidence/toolcall/results.json` is the source of truth).**
+
+| Exam | Untrained | Adapter | Ultra |
+|---|---|---|---|
+| Hard exam (150 questions) | 94/150 = 62.7% | 136/150 = 90.7% | 137/150 = 91.3% |
+| BFCL subset (300 questions) | 232/300 = 77.3% | 241/300 = 80.3% | 265/300 = 88.3% |
+
+On the BFCL subset the adapter is about the same as the untrained model and lower than Ultra; the exact comparison wording is generated from `scripts/toolcall_results.py`.
+
+**Cost on record (estimates, not invoices).** About $12.2 of Ultra answers for the SQL training data and exams (computed from token counts at the list prices in `ratchet/config.py`) and about $4.80 for the Modal job that trained round 2 (the job's own GPU-time estimate), about $17 in all for the SQL work; the tool-calling round adds about $4.6 of teacher calls and about $2.3 of Modal GPU time. Some items are not recorded (kernel builds, smoke tests), so these are lower bounds.
+
+These results do not move any status in §6: the live measurement run (FR-8.1, FR-8.2, FR-8.4, SM-1 to SM-5) still waits on its evidence file, and FR-4.5 stays `untested (on GPU)` because the T4 runs used `scripts/text2sql/modal_train.py`, not `ratchet/nightschool/train.py`.
 
 ## 9. Release plan
 
@@ -466,7 +494,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | v0.2.0 (demo layer) | Scout, pinned tasks, landing page, By task table, workloads, mock warm-up, Nebius VM deploy kit; 49 tests passing | Built Oct 20, 2026 |
 | v0.3.0 (web app) | React story page, Scout page and dashboard; 49 tests passing | Built Oct 20, 2026 |
 | v0.4.0 (hardening) | PII redaction, gateway API keys and quotas, streaming, signed BOM per adapter, `/healthz`; 64 tests passing | Built Oct 20, 2026 |
-| v0.1 live | Day-1 checks; Nano 4B trained on a Serverless Job; vLLM endpoint; real numbers | Oct 20–28, 2026 |
+| v0.1 live | Day-1 checks; Nano 4B LoRA adapters trained on a free Colab T4 and a rented Modal T4 (not on Nebius; the Serverless Job and Endpoint scripts are written and tested offline, not run); exam scores in `evidence/text2sql-*` and `evidence/toolcall`; the live demo calls Token Factory (the teacher answers every request) | Partly done; Oct 20–28, 2026 |
 | v0.5 (backend completeness) | Work packages A–F: traceability and a test safety net; request contract and resilience; task model and use cases; operations, security and performance; data governance and success metrics; cost accounting and verifiable evidence (§6.15, §6.16). See [Roadmap](ROADMAP.md) Milestone 0.9 | In progress (from Oct 20, 2026) |
 | v0.6 | Postgres ledger, multi-worker shared state, PyPI package, NER-based redaction | After hackathon |
 | v1.0 | Managed Ratchet Cloud, multi-tenant, savings-based billing, region choice (EU, India) | Startup track |
@@ -477,7 +505,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 
 | Dependency | Use | Notes |
 |---|---|---|
-| Nebius Token Factory | Teacher (Nemotron 3 Ultra), judge (Super), fallback (Nano 30B) | OpenAI-compatible API; Builder Program gives $25 credit |
+| Nebius Token Factory | Teacher (Nemotron 3 Ultra), judge (Super), fallback (Nano 30B) | OpenAI-compatible API; Builder Program gives $25 credit (program terms, research notes, 2026-10-25; re-check before submission) |
 | Nebius Serverless Jobs | Nightly LoRA training | GPU billed per second |
 | Nebius Serverless Endpoints | vLLM student serving | A stopped endpoint is not billed for compute or its own storage; a mounted Object Storage bucket still is ([Serverless overview](https://docs.nebius.com/serverless/overview), read Oct 21, 2026) |
 | Nebius Object Storage | Datasets and adapters | S3-compatible |
@@ -491,10 +519,10 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 | # | Risk | Severity | Mitigation |
 |---|---|---|---|
 | R1 | Token Factory cannot fine-tune or host a tuned Nemotron | High | Train on Serverless Jobs, serve on Serverless Endpoints with vLLM |
-| R2 | Nano 30B needs about 60GB VRAM for LoRA | High | Use Nano 4B on L40S; 30B is a stretch goal |
+| R2 | Nano 30B needs about 60GB VRAM for LoRA (research notes, 2026-10; unverified) | High | Use Nano 4B on L40S; 30B is a stretch goal |
 | R3 | Small budget; no GPU credits in the Builder Program | High | Short training runs; stop endpoints when idle; ask for credits |
 | R4 | Demo must stay live Dec 1–15 | Medium | Fallback to hosted Nano; mock-mode demo |
-| R5 | Token Factory ToS 5(f) "competing service" clause | Medium | Email sent to tokenfactory-support@nebius.com on Oct 19; position as built on Nebius end to end |
+| R5 | Token Factory ToS 5(f) "competing service" clause | Medium | Email sent to tokenfactory-support@nebius.com on Oct 19; position as built for Nebius Token Factory (teacher, judge, fallback); say plainly that the measured adapters were trained on rented T4s outside Nebius |
 | R6 | Small models are poorly calibrated | Medium | Combined confidence signal; per-version calibration; shadow; audits |
 | R7 | Judge bias (all Nemotron) | Medium | Exact-match labels; reference-based judge only for free text |
 | R8 | Forgetting and drift across retrains | Medium | Retrain from base on cumulative data; golden gate; champion vs challenger |
