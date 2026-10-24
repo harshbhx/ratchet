@@ -8,6 +8,7 @@ import { cn, fmtInt } from "@/lib/utils";
 import { JUDGE_CHAPTERS, type ChapterGroup } from "./chapters";
 import { JudgesProvider, useJudges } from "./data";
 import { Legend, StartHere, WhatsReal } from "./start";
+import { TrainingStatus } from "./training-status";
 import { ExamsChapter } from "./exams";
 import { ApiChapter, ClientChapter, FeaturesChapter } from "./outside";
 import { ArchitectureChapter, CascadeChapter, LedgerChapter, ReleaseChapter } from "./inside-a";
@@ -235,6 +236,7 @@ function Page() {
       <SectionBar current={current} top={headerH} onTour={startTour} />
 
       <Container className="pb-24">
+        <TrainingStatus />
         <StartHere />
 
         <Group id="group-results" title="Results" group="start" purpose="What was measured, and what every claim on this site rests on.">
