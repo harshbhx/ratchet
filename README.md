@@ -92,7 +92,7 @@ A small Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $17 on 
   <img src="docs/img/toolcall-results.svg" alt="Strict tool-calling scores on a hard exam and a BFCL exam: untrained model, tool-calling adapter and teacher, with the 95% range and exact counts" width="100%">
 </p>
 
-A tool-calling adapter on Nemotron 3 Nano 4B (2,940 training rows, about $2.33 in all), scored strictly on two exams it never saw. This is a measured result on real models (24 Oct 2026); the text-to-SQL result above stays the headline.
+A tool-calling adapter on Nemotron 3 Nano 4B (2,940 training rows, about $2.33 of Modal GPU time), scored strictly on two exams it never saw. This is a measured result on real models (24 Oct 2026); the text-to-SQL result above stays the headline.
 
 | | Hard exam (150) | BFCL exam (300) |
 |---|---|---|
@@ -191,7 +191,7 @@ curl -s localhost:8000/v1/chat/completions -H "Content-Type: application/json" \
 | I want to | Run |
 |---|---|
 | See the whole loop, with a bad deploy rolled back | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` |
-| Run the tests (1920 tests, no network, no GPU) | `make test` |
+| Run the tests (1922 tests, no network, no GPU) | `make test` |
 | Run Scout as an outside client | `python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1` |
 | Use the Docker image (mock mode) | `make docker && docker run -p 8000:8000 ratchet-gateway` |
 | Rebuild the web UI (Node 22) | `make web` |

@@ -7,7 +7,7 @@ Everything needed to recompute the adapter's numbers without a GPU. Measured on 
 1. **Data (22 Oct).** The teacher (Nemotron 3 Ultra on Nebius Token Factory) wrote small SQLite databases, then questions with a
    reference query for each. Every query was run in a sandbox and kept only if it ran and returned rows
    (`data/teacher_manifest.json`; teacher cost $2.87). 821 rows trained the adapter (`data/train.jsonl`). 172 rows are the exam
-   (`data/golden.jsonl`, with the databases in `data/dbs.json`); 40 percent of the exam comes from five industries held out of training.
+   (`data/golden.jsonl`, with the databases in `data/dbs.json`); 57 rows (33 percent) come from two industries (airline operations, pharmacy inventory) held out of training.
 2. **Training.** Nemotron-3-Nano-4B, 4-bit, LoRA r=16, on a **free Colab T4 (not on Nebius GPUs)**: 206 steps, 66 minutes, training loss
    0.334 to 0.075 (`logs/training_log.txt`, `adapter/run_info.json`). The weights (40.5 MB) are not in git; their SHA-256 is in
    `MANIFEST.json`, so any copy of the weights can be matched to this run.

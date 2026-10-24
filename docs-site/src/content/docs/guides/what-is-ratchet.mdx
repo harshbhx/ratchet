@@ -27,7 +27,7 @@ Ratchet puts an apprentice next to the head chef. The apprentice cooks each dish
 </PlainWords>
 
 <StatRow cols={3} label="Ratchet at a glance">
-  <Stat value={1900} label="tests in the suite" note="They run offline, with no network and no GPU." />
+  <Stat value={1922} label="tests in the suite" note="They run offline, with no network and no GPU." />
   <Stat value={95} suffix="%" count={false} label="held-out precision floor" tone="owned" note="A new adapter must reach it on golden rows it never trained on." />
   <Stat value="Open teachers only" label="license-clean, in code" note="Closed models are refused as teachers." />
 </StatRow>
@@ -143,7 +143,7 @@ Ratchet also reports the bill honestly: savings per token and by GPU-hours actua
 
 | Part | Status |
 |---|---|
-| Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,900 tests that need no network and no GPU |
+| Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,922 tests that need no network and no GPU |
 | Teacher calls | <span class="rt-badge rt-badge--live">Real</span> Nemotron 3 Ultra on Nebius Token Factory. Real teacher calls built the text-to-SQL data on Oct 22, 2026 |
 | Student endpoint | **Not served on a Nebius GPU yet.** On the live demo no trained student exists yet, so the teacher answers every request. If a trained version were live without a GPU endpoint, its calls would go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages would say so |
 | A text-to-SQL adapter | Trained on a free Colab T4 (round 1) and a rented Modal T4 (round 2), not on Nebius. Its measured results are on [Results](/guides/results/) |

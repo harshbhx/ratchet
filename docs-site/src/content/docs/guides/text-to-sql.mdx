@@ -62,7 +62,7 @@ The honest question is "good enough at what, measured how?" This page and the [R
 
 3. **Every SQL is run.** The SQL goes into a sandbox on that database. It is kept only if it is one read-only `SELECT` (or `WITH`) that finishes inside 2 seconds and returns 1 to 100 rows. Duplicate questions on the same database are dropped. Everything else is counted as rejected and thrown away.
 
-4. **The exam is kept apart by database.** Training uses 25 industries. The exam uses whole databases that never appear in training: 60% come from industries that are in training (but a different, new database) and 40% from five industries that are never in training (airline operations, pharmacy inventory, ride sharing, construction projects, IoT sensor readings). The script stops if one database ends up on both sides.
+4. **The exam is kept apart by database.** Training uses 25 industries. The exam uses whole databases that never appear in training: about two thirds come from industries that are in training (but a different, new database) and 57 of the 172 questions (33%) from two industries that are never in training (airline operations and pharmacy inventory). The script stops if one database ends up on both sides.
 
 5. **The student is trained.** QLoRA on a T4 (a free Colab T4 for round 1, a rented Modal T4 for round 2): the Nano 4B base loaded in 4-bit, LoRA rank 16, fp16, two epochs, with the loss counted on the SQL only.
 
