@@ -118,5 +118,5 @@ export function useScout() {
   const live = useMemo(() => pickLive(recordings), [recordings]);
   const playing = recording !== null && run.status === "running";
 
-  return { run, derived, examples, examplesError, status, mode, who, start, stop, reloadExamples: loadExamples, recording, playing, liveRecording: live, play, skip };
+  return { run, derived, examples, examplesError, status, mode, who, start, stop, reloadExamples: loadExamples, refreshStatus: loadStatus, recording, playing, liveRecording: live, play, skip };
 }

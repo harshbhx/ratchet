@@ -444,6 +444,8 @@ export interface ScoutStatus {
   /** v0.5: a step whose `model` is this id came from the hosted fallback, not our adapter (FR-7.40). */
   fallback_student?: string;
   student_serving?: StudentServing;
+  /** ADR 0120: judge access. Read through `parseJudge` (src/pages/scout/judge-model.ts), which treats a missing block as off. */
+  judge?: { enabled?: boolean; session?: boolean; reserved_runs_per_day?: number | null; runs_today?: number; runs_left_today?: number | null };
 }
 
 // ---------- fetch helpers ----------
@@ -486,6 +488,25 @@ function adminHeaders(key: string | undefined): Record<string, string> {
   return k ? { authorization: `Bearer ${k}` } : {};
 }
 
+/**
+ * The judge code goes out once, in the JSON body of POST /scout/judge, never in a URL or header (access logs record both).
+ * The caller holds it in an input's memory and clears it after the call; the gateway answers with an HttpOnly cookie that
+ * this code cannot read. Resolves to the HTTP status (0 when the request got no answer), never to the code.
+ */
+async function judgeCall(method: "POST" | "DELETE", body?: string): Promise<number> {
+  try {
+    const r = await fetch("/scout/judge", {
+      method,
+      credentials: "same-origin",
+      headers: body === undefined ? {} : { "content-type": "application/json" },
+      body,
+    });
+    return r.status;
+  } catch {
+    return 0;
+  }
+}
+
 const taskPath = (name: string) => `/ratchet/tasks/${encodeURIComponent(name)}`;
 
 export const api = {
@@ -513,7 +534,11 @@ export const api = {
   reset: () => json<{ status: string }>("/ratchet/demo/reset", { method: "POST" }),
   redact: (text: string) => json<RedactPreview>("/ratchet/redact", { method: "POST", body: JSON.stringify({ text }) }),
   scoutExamples: () => json<ScoutExamples>("/scout/examples"),
-  scoutStatus: () => json<ScoutStatus>("/scout/status"),
+  scoutStatus: () => json<ScoutStatus>("/scout/status", { credentials: "same-origin" }),
+  /** Unlock the judges' reserve (ADR 0120). Resolves to the HTTP status: 200 ok, 400, 401, 404, 429, or 0 with no answer. */
+  judgeUnlock: (code: string) => judgeCall("POST", JSON.stringify({ code })),
+  /** End the judge session (clears the cookie). Resolves to the HTTP status. */
+  judgeSignOut: () => judgeCall("DELETE"),
   /** Recorded live runs, newest first (FR-10.40): read-only, no model call, no budget. */
   scoutRecordings: () => json<{ recordings: RecordingSummary[] }>("/scout/recorded"),
   scoutRecording: (id: string) => json<Recording>(`/scout/recorded/${encodeURIComponent(id)}`),
