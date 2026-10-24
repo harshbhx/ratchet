@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/img/banner.svg" alt="Ratchet: rent intelligence today, own it tomorrow" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-banner-dark.gif">
+    <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-banner-light.gif">
+    <img src="docs/img/banner.svg" alt="Ratchet: rent intelligence today, own it tomorrow" width="100%">
+  </picture>
 </p>
 
 <p align="center">
@@ -19,11 +23,34 @@
 
 An OpenAI-compatible gateway: a small student model answers first, a teacher answers when the student is unsure, and every night the student learns from the teacher's answers and ships only if it passes a statistical gate.
 
-<!--
-  DEMO GIF: save your recording as docs/img/demo.gif, then replace this comment with:
-
-  <p align="center"><img src="docs/img/demo.gif" alt="Ratchet: a request, the dashboard and a rollback" width="90%"></p>
--->
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-click-dark.gif">
+        <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-click-light.gif">
+        <img src="docs/img/anim/ratchet-click-dark.gif" alt="The ratchet clicks forward one tooth" width="200">
+      </picture>
+      <br><sub><b>Every night it clicks forward</b><br>a better student, one tooth at a time</sub>
+    </td>
+    <td align="center" width="33%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-forward-only-dark.gif">
+        <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-forward-only-light.gif">
+        <img src="docs/img/anim/ratchet-forward-only-dark.gif" alt="The ratchet only turns forward" width="200">
+      </picture>
+      <br><sub><b>It only turns one way</b><br>a bad release is rolled back, never kept</sub>
+    </td>
+    <td align="center" width="33%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-3d-dark.gif">
+        <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-3d-light.gif">
+        <img src="docs/img/anim/ratchet-3d-dark.gif" alt="The Ratchet mark, turning in 3D" width="200">
+      </picture>
+      <br><sub><b>The mark</b><br>blue: the model you train. Orange: the teacher that checks it</sub>
+    </td>
+  </tr>
+</table>
 
 | Try it | |
 |---|---|
