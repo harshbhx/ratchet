@@ -10,7 +10,7 @@
   <a href="https://ratchet.dualmindlab.tech"><img alt="Story site" src="https://img.shields.io/badge/site-ratchet.dualmindlab.tech-0b1220"></a>
   <a href="https://live.ratchet.dualmindlab.tech"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-Token%20Factory-1f6feb"></a>
   <a href="https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql"><img alt="Adapter on Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-adapter-FFD21E"></a>
-  <a href="https://docs.ratchet.dualmindlab.tech"><img alt="Docs" src="https://img.shields.io/badge/docs-read-64748b"></a>
+  <a href="https://docs.ratchet.dualmindlab.tech"><img alt="Docs" src="https://img.shields.io/badge/docs-guides-64748b"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="https://github.com/harshbhx/ratchet/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/harshbhx/ratchet/ci.yml?branch=main&label=CI"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776AB">
@@ -20,7 +20,7 @@
 <p align="center">
   <b>License-clean distillation on open models.</b><br>
   An OpenAI-compatible gateway: a small student model answers first, a teacher answers when the student is unsure,<br>
-  and every night the student learns from the teacher's answers and ships only if it passes a statistical gate.
+  and the loop is built so that every night the student learns from the teacher's answers and ships only if it passes a statistical gate (shown in simulation; the real adapters so far were trained by hand on rented T4 GPUs).
 </p>
 
 <p align="center">
@@ -44,7 +44,7 @@
     </td>
     <td width="33%" valign="top">
       <b>The proof</b><br>
-      2.6 to 3.0 times the untrained model on two exams, for about $23. Real models, and every score recomputes from the saved answers.
+      2.6 to 3.0 times the untrained model on two exams, for about $17 on record. Real models, and every score recomputes from the saved answers.
     </td>
   </tr>
 </table>
@@ -59,7 +59,7 @@
 | **Start** | [Try it](#try-it) · [Real results](#real-results) · [How it works](#how-it-works) · [Watch it work](#watch-it-work) · [Quick start](#quick-start) · [Run it on Nebius](#run-it-on-nebius-and-where-else-to-host-it) |
 | **Check it** | [For judges](#for-judges-a-five-minute-path) · [Status, honestly](#status-honestly) · [Limitations](#limitations) |
 | **Why** | [Why license-clean](#why-license-clean) · [NVIDIA and Nebius](#how-it-uses-nvidia-and-nebius) · [Scout](#scout-ratchet-on-agent-traffic) · [Why not a router](#why-not-a-router-or-a-distillation-api) |
-| **Background** | [NVIDIA lineage](#nvidia-lineage) · [Prior art](#prior-art-and-what-is-new) · [Documentation](#documentation) · [Repo map](#repo-map) · [License](#license) |
+| **Background** | [NVIDIA lineage](#nvidia-lineage) · [Prior art](#prior-art-and-what-is-new) · [Go deeper](#go-deeper) · [Documentation](#documentation) · [How the repo was built](#how-the-repo-was-built) · [Repo map](#repo-map) · [License](#license) |
 
 ## Try it
 
@@ -82,7 +82,7 @@
   </picture>
 </p>
 
-A small Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $23 (about $15 of teacher answers and about $8 of rented GPU), scores 2.6 to 3.0 times the untrained model on two exams, one written by the teacher and one by a different model. Every score recomputes from the saved answers: see [Check it yourself](docs/VERIFY.md). These are **measured** results on real models, 22 to 24 Oct 2026, not the simulation. They are strict (exact rows), and at a 95% precision bar the student answers about 2% of questions by itself, so most traffic still goes to the teacher. The adapter was trained on rented T4 GPUs (a free Colab T4 and a Modal T4), not on Nebius GPUs, on synthetic data.
+A small Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $17 on record ($12.16 of teacher answers, from the two data manifests and the exam 2 self-check, plus $4.80 for the Modal training job; round 1 ran on a free Colab T4, and the Modal exam runs were not costed; estimates, not invoices; see [what it cost](docs/VERIFY.md#what-it-cost)), scores 2.6 to 3.0 times the untrained model on two exams, one written by the teacher and one by a different model (Claude Sonnet 5.5, for evaluation only; no Claude output was used for training). In absolute terms the round 2 adapter scores 39.0% on exam 1 (172 questions) and 33.0% on exam 2 (200 questions), against 12.8% and 12.5% untrained and 25.6% and 15.0% for the teacher, which loses points mostly on extra columns the strict scorer rejects. Every score recomputes from the saved answers: see [Check it yourself](docs/VERIFY.md). These are **measured** results on real models, 22 to 24 Oct 2026, not the simulation. They are strict (exact rows), and at a 95% precision bar the gate lets the round 2 adapter answer 1 of 86 measurement questions on exam 1 and none of the 100 on exam 2, so in practice all traffic still goes to the teacher. The adapter was trained on rented T4 GPUs (a free Colab T4 and a Modal T4), not on Nebius GPUs, on synthetic data.
 
 [Adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) · [Exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams)
 
@@ -114,7 +114,7 @@ Every score recomputes from the saved answers: see [Check it yourself](docs/VERI
 
 ## How it works
 
-Change one line (your base URL) and:
+Change one line (your base URL) and the designed flow is (simulation and scripts; see [Status](#status-honestly)):
 
 1. A small model answers each request first: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter **you own**, served by vLLM on a Nebius Serverless Endpoint.
 2. If it is not confident, the request goes to the teacher, **NVIDIA Nemotron 3 Ultra on Nebius Token Factory**.
@@ -168,7 +168,7 @@ The screenshots show the simulation (mock models, labelled as such on every page
 
 ## Quick start
 
-You need Python 3.10 or newer. Nothing below needs a key or a GPU.
+You need Python 3.10 or newer (text-to-SQL fixture tasks need 3.11; the Docker image uses 3.12). Nothing below needs a key or a GPU.
 
 <p align="center">
   <img src="docs/img/anim/ratchet-terminal-demo.gif" alt="A terminal: the mock gateway starts, a ticket the student has learned is served by the student, and a ticket it has never seen goes to the teacher" width="88%">
@@ -177,7 +177,7 @@ You need Python 3.10 or newer. Nothing below needs a key or a GPU.
 
 ```bash
 git clone https://github.com/harshbhx/ratchet.git && cd ratchet
-pip install -e ".[dev]"                 # or: make install
+pip install -e ".[dev]"                 # includes ruff for `make lint`; `make install` does the same
 make demo                               # mock gateway with a trained student: http://localhost:8000
 ```
 
@@ -217,8 +217,8 @@ The gateway does no inference, so it runs anywhere a container does. The student
 
 | Where | How | State |
 |---|---|---|
-| **Nebius AI Cloud** (the student and Night School) | `bash deploy/student_endpoint.sh create` makes a Serverless Endpoint (vLLM with runtime LoRA loading), and `python -m ratchet.live night` runs the nightly Serverless Job. Add `DRY_RUN=1` to print the commands first. Steps: [docs/LIVE_MODE.md](docs/LIVE_MODE.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). | Ready to run. Nebius has no one-click "Deploy" button that we could find (Oct 2026): it deploys with its CLI and these scripts. |
-| **Nebius AI Cloud** (the demo host) | One CPU VM with Docker Compose and Caddy: [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md) | Ready to run |
+| **Nebius AI Cloud** (the student and Night School) | `bash deploy/student_endpoint.sh create` makes a Serverless Endpoint (vLLM with runtime LoRA loading), and `python -m ratchet.live night` runs the nightly Serverless Job. Add `DRY_RUN=1` to print the commands first. Steps: [docs/LIVE_MODE.md](docs/LIVE_MODE.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). | Scripted and tested offline against a fake `nebius` CLI; not run on a Nebius account yet. Nebius has no one-click "Deploy" button that we could find (Oct 2026): it deploys with its CLI and these scripts. |
+| **Nebius AI Cloud** (the demo host) | One CPU VM with Docker Compose and Caddy: [docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md) | Scripted and tested offline; not run on a Nebius account yet (an alternative to Cloudflare) |
 | **Cloudflare** | Workers with Containers, deployed by a manual workflow: `deploy/cloudflare-live` (live demo) and `deploy/cloudflare` (simulation) | Running: [live demo](https://live.ratchet.dualmindlab.tech), [simulation](https://demo.ratchet.dualmindlab.tech) |
 | **Hugging Face** | A static Space that replays the recorded Scout runs, and a dataset with the recordings | Published: [Space](https://huggingface.co/spaces/harshbhx/ratchet-scout), [dataset](https://huggingface.co/datasets/harshbhx/ratchet-scout-runs) |
 | **Any container host** | `make docker && docker run -p 8000:8000 ratchet-gateway` (mock mode; add the live settings from [Quick start](#quick-start)) | Works |
@@ -239,7 +239,7 @@ The gateway does no inference, so it runs anywhere a container does. The student
 > [!NOTE]
 > - **Simulation numbers are mock.** Every figure from `python -m sim.simulate` comes from mock models and is labelled simulation. It shows how the loop behaves, not real model quality.
 > - **Measured on real models:** the exam scores above, from two adapters trained on rented T4 GPUs (a free Colab T4 and a Modal T4).
-> - **Ready to run on Nebius:** the Serverless Job and Endpoint scripts are written and tested offline; see [Run it on Nebius](#run-it-on-nebius-and-where-else-to-host-it).
+> - **Scripted for Nebius, not run there:** the Serverless Job and Endpoint scripts are written and tested offline against a fake `nebius` CLI; no Nebius GPU has trained or served anything. See [Run it on Nebius](#run-it-on-nebius-and-where-else-to-host-it).
 > - **The live demo calls Token Factory for real,** under spend limits, and the teacher answers every request: no trained student is served on a GPU yet, so a trained version's calls would go to a hosted, untuned Nano model (see [Limitations](#limitations)).
 > - **Recorded live Scout runs** are in [evidence/scout](evidence/scout): real Token Factory and Tavily calls, every model call answered by the teacher.
 
@@ -255,16 +255,16 @@ In its own words, OpenMDW-1.1 "does not impose any restrictions or obligations w
 
 | Role | Model / service | Why |
 |---|---|---|
-| Teacher | `nvidia/Nemotron-3-Ultra-550b-a55b` on **Token Factory** | Best reasoning; OpenMDW license allows distillation |
-| Judge (free-text eval) | `nvidia/nemotron-3-super-120b-a12b` on **Token Factory** | Fast, cheap, JSON mode |
+| Teacher | `nvidia/Nemotron-3-Ultra-550b-a55b` on **Token Factory** | Largest Nemotron 3 model; OpenMDW-1.1 allows distillation |
+| Judge (free-text eval) | `nvidia/nemotron-3-super-120b-a12b` on **Token Factory** | JSON mode; priced below the teacher in `config.py` |
 | Fallback student | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on **Token Factory** | Used when your endpoint is stopped |
-| Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA on a **Nebius Serverless Endpoint** (vLLM) | Cheap, fast; the adapter is yours |
-| Night School | **Nebius Serverless Jobs** (L40S) with TRL + PEFT | Pay only while training |
+| Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA on a **Nebius Serverless Endpoint** (vLLM) | Small enough for one GPU; the adapter is the part you own |
+| Night School | **Nebius Serverless Jobs** (L40S) with TRL + PEFT | Billed by the hour while a job runs (Nebius docs) |
 | Dataset / adapters | **Nebius Object Storage** bucket mounted in jobs and endpoints | |
 | Public demo host | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | The gateway does no inference |
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) | Search tool for the Scout demo only |
 
-Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the student is trained and served on Nebius AI Cloud.
+Rows 4 to 6 (the student endpoint, Night School and the object storage) are the design: the scripts are written but have not run on Nebius, and the adapters in [Real results](#real-results) were trained on rented T4 GPUs. Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the designed home of the student is Nebius AI Cloud.
 
 ## Scout: Ratchet on agent traffic
 
@@ -278,17 +278,19 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2
 | Reader | `page-read` | **Distilled**: one call per relevant result, pulls out the key fact |
 | Writer | `research-write` | **Pinned** to Nemotron 3 Ultra (open-ended) |
 
-Pinned tasks always go to the teacher and are never stored as training data. The many narrow triage and reader calls are where the student takes over. A public demo has a budget guard: a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with a share held back for hackathon judges and a paced Tavily credit budget; a run whose search fails still finishes, labelled.
+Pinned tasks always go to the teacher and are never stored as training data. The many narrow triage and reader calls are where the student takes over. A public demo has a budget guard: a daily spend cap, a daily run cap and a per-IP hourly limit, kept in the ledger across restarts, with an opt-in share held back for hackathon judges (off on the current live demo) and a paced Tavily credit budget; a run whose search fails still finishes, labelled.
 
 ## Why not a router or a distillation API?
 
 | | Cascade router | Distillation service ([OpenPipe](https://coreweave.com/news/coreweave-to-acquire-openpipe-leader-in-reinforcement-learning), [AWS Bedrock](https://aws.amazon.com/bedrock/model-distillation), [OpenAI](https://openai.com/index/api-model-distillation/)) | Ratchet |
 |---|---|---|---|
-| Who owns the student | Nobody: each call is rented | Usually stays on the provider's platform | You: a LoRA adapter and its signed lineage; the Nano base keeps NVIDIA's license |
+| Who owns the student | Nobody: each call is rented | On the pages we read, stays on the provider's platform | You: a LoRA adapter and its signed lineage; the Nano base keeps NVIDIA's license |
 | Teacher license recorded per example | Not recorded | Not stated | Recorded when the example is captured, and signed into the adapter's BOM |
 | Automatic nightly retrain | None | You start each job | Every night, from teacher answers only |
 | Statistical release gate | Nothing ships | Your own evaluation | Held-out certificate, shadow, canary and automatic rollback |
 | Reports when it loses money | Per-token savings only | No | Savings by GPU-hours paid, the break-even volume and a recommendation |
+
+Cells describe the pages we read on 21 Oct 2026 ([sources](docs/COMPETITIVE_ANALYSIS.md)); "Not stated" and "Not recorded" mean we found no statement, not that the feature is absent. The Ratchet column describes the design, shown in simulation and in the scripts (see [Status](#status-honestly)).
 
 The YC Summer 2026 teams Understudy and Experiential Labs, as cited in the [competitive analysis](docs/COMPETITIVE_ANALYSIS.md) (not re-checked here), sit between the columns: both say the customer owns the model, and neither page we found documents shadow, canary and automatic rollback.
 
@@ -303,7 +305,7 @@ What breaks first:
 - **Scout's reader is checked on two labels.** page-read's precision covers its `answers_question` and `fact_type` fields only; the free-text `key_fact` the writer cites is not checked.
 - **A signed BOM is the operator's signed statement** of the data and evaluation behind an adapter. It shows that nothing changed after signing, not that the weights were trained on that data.
 - **One gateway process.** The ledger is one SQLite file behind one lock; a Postgres ledger for several workers is planned ([roadmap](docs/ROADMAP.md)).
-- **Simulation numbers come from mock models.** They show how the loop behaves, not real model quality. As of Oct 21, 2026, Ratchet has not run on Nebius yet.
+- **Simulation numbers come from mock models.** They show how the loop behaves, not real model quality. As of Oct 25, 2026, no Nebius GPU has trained or served a student: the Serverless Job and Endpoint scripts have not run. Token Factory calls (the teacher) are real.
 - **Token Factory's Terms of Service §5(f)** ("competing service") is broad. We asked Nebius support about it in writing on Oct 19, 2026; until the answer is final, treat the question as open. Not legal advice.
 
 ## NVIDIA lineage
@@ -414,6 +416,12 @@ deploy/                 Serverless Job / Endpoint scripts, training Dockerfile
 deploy/vm/              demo VM on Nebius: cloud-init, Docker Compose, Caddy, update and backup scripts
 sim/                    synthetic tickets + mock models for demos and tests
 sim/research.py         mock research world for Scout (8 questions, simulated search results)
+evidence/               saved answers, manifests and results behind the measured numbers (text2sql-*, toolcall, scout, live-smoke-*)
+scripts/text2sql/       text-to-SQL exam tooling; exam_numbers.py recomputes the exam scores
+scripts/measure_adapter.py  re-scores one adapter's saved answers
+scripts/toolcall_results.py recomputes the tool-calling results from evidence/toolcall
+docs-site/              the docs site (docs.ratchet.dualmindlab.tech)
+deploy/cloudflare*      Workers with Containers: the live demo (cloudflare-live) and the simulation (cloudflare)
 ```
 
 </details>

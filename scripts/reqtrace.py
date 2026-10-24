@@ -48,6 +48,7 @@ COUNT_DOCS = (
     "docs/TESTING.md",
     "README.md",
     "docs/DEPLOYMENT.md",
+    "docs/VERIFY.md",
 )
 CLIP = 100  # characters of requirement text in the matrix
 # The gateway builds its Runtime at import time; import it as an offline demo with no warm-up.

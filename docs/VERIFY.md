@@ -14,10 +14,12 @@ pip install -e ".[dev]"
 | The exam scores are what the saved answers give | `python scripts/text2sql/exam_numbers.py --check` | nothing |
 | One adapter's score recomputes row by row | `python scripts/measure_adapter.py verify …` ([below](#2-one-adapters-score-recomputes-row-by-row)) | nothing |
 | The exam was frozen before any model answered it | `sha256sum evidence/text2sql-exam2/data/golden.jsonl` | nothing |
+| The adapters are the ones on Hugging Face | `sha256sum adapter_model.safetensors` ([below](#4-the-adapters-are-the-ones-on-hugging-face)) | a download |
 | The live run's numbers come from its records | `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` | nothing |
 | The live demo calls Token Factory | `curl` the live demo ([below](#5-the-live-demo-calls-token-factory)) | a network |
 | The loop works, with a bad release rolled back | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` | nothing |
 | The tool-calling scores (round 3) recompute from the saved answers | `python scripts/toolcall_results.py --check` ([below](#tool-calling-round-3)) | nothing |
+| A signed BOM verifies offline | `python -m ratchet.bom verify …` ([below](#7-a-signed-bill-of-materials-per-adapter)) | nothing |
 | Every requirement maps to code and tests | `python scripts/reqtrace.py --check` | nothing |
 
 ## 1. The exam scores are what the saved answers give
@@ -31,7 +33,7 @@ Expected: `OK: both exams.json files match the saved answers`.
 This reruns the strict scoring over every saved answer of the untrained model, the teacher and both adapters on both exams, and compares the result with the numbers the website and the README chart show (`web/src/data/exams.json`). Scoring is strict: an answer is right only if running it on the exam's database returns exactly the reference rows.
 
 **It shows:** the published numbers are the saved answers' numbers, with no typed-in figure.
-**It does not show:** that the answers were produced the way the README says. For that, read the [exam 2 evidence](../evidence/text2sql-exam2/README.md) and [exam 1 and round 1](../evidence/text2sql-round1/README.md), which name each script and its cost.
+**It does not show:** that the answers were produced the way the README says. For that, read the [exam 2 evidence](../evidence/text2sql-exam2/README.md) and [exam 1 and round 1](../evidence/text2sql-round1/README.md), which name each script and, where recorded, its cost.
 
 ## 2. One adapter's score recomputes row by row
 
@@ -68,7 +70,7 @@ Download an adapter's `adapter_model.safetensors` from the [model page](https://
 | Round 1 | `a883bcf6bbf4152efb5a874520b8fa1a09d9bead55c172507725dc255f18236a` |
 | Round 2 | `38f99d441e0527b75fdf8fd9d10acbf4473dcf70db7febe3ad73fccd631a6aa7` |
 
-The same values are in each evidence folder's `MANIFEST.json`. The weights themselves are 40.5 MB each and are not in git.
+The same values are in each evidence folder's `MANIFEST.json`. Round 2's first run is in [`evidence/text2sql-round2`](../evidence/text2sql-round2). The weights themselves are 40.5 MB each and are not in git.
 
 ## 5. The live demo calls Token Factory
 
@@ -80,7 +82,7 @@ curl -s https://live.ratchet.dualmindlab.tech/v1/chat/completions \
 
 The reply carries a `ratchet` block. Expect `served_by: "teacher"`, the model `nvidia/Nemotron-3-Ultra-550b-a55b`, a small `cost_usd` (a fraction of a cent) and a `request_id`. It is a real call, so please keep it to a few. No trained student is served in the live demo yet, so the teacher answers every request.
 
-**The run on record:** `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` recomputes the client-side numbers of a recorded 20-request run from its 21 per-request records. Expected: `recomputed 11 client-side values and 1 rounds from 21 records`. Three recorded live Scout runs are in [`evidence/scout`](../evidence/scout), and you can replay them [in your browser](https://huggingface.co/spaces/harshbhx/ratchet-scout).
+**The run on record:** `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` recomputes the client-side numbers of a recorded 20-request run from its 21 per-request records. Expected: `recomputed 11 client-side values and 1 rounds from 21 records`. It also prints a line that starts `not recomputable here (ledger snapshots or entered by hand)`; those values are listed, not checked. Three recorded live Scout runs are in [`evidence/scout`](../evidence/scout), and you can replay them [in your browser](https://huggingface.co/spaces/harshbhx/ratchet-scout).
 
 ## 6. The loop works, and a bad release is rolled back
 
@@ -107,17 +109,33 @@ A signed BOM is the operator's signed statement of the data and evaluation behin
 ## 8. The test suite and the requirements matrix
 
 ```bash
-make test                      # 1909 tests, no network, no GPU
+make test                      # 1920 tests, no network, no GPU
 python scripts/reqtrace.py --check
 ```
 
 Expected for the second command: `reqtrace: OK: 226 requirements …`. Every requirement in the PRD and every invariant maps to code and to tests in [REQUIREMENTS.md](REQUIREMENTS.md).
+
+## What it cost
+
+About $17 on record for the two text-to-SQL adapters. All are estimates recorded by the scripts, not invoices; check the billing pages before quoting them.
+
+| Item | USD | Where it is recorded |
+|---|---|---|
+| Teacher answers, round 1 data and exam 1 (273 calls) | 2.87 | `evidence/text2sql-round1/data/teacher_manifest.json` (`spent_usd_estimate`) |
+| Teacher answers, round 2 data (914 calls) | 9.18 | `evidence/text2sql-round2/data/teacher_manifest_round2.json` (`spent_usd_estimate`) |
+| Teacher answering exam 2 (200 rows) | 0.11 | `evidence/text2sql-exam2/results/teacher_selfcheck.json` |
+| Modal T4 job, round 2 training and exam 1 answers | 4.80 | `evidence/text2sql-round2/logs/final_status.json` (`spent_usd`) |
+| Round 1 training | 0 | a free Colab T4 |
+
+Not costed: the Modal runs that answered exam 2, small teacher re-runs on exam 1, and any earlier probes. The tool-calling round (about $2.33 of Modal time, plus teacher spend) is separate and is not in this sum.
 
 ## What none of this proves
 
 - The exams are synthetic text-to-SQL, not your data. A strict one-reference exam also marks a correct query wrong when it returns extra columns; the teacher's own score shows that.
 - Agreement is with the teacher's answers, not with ground truth.
 - The adapters were trained on rented T4 GPUs, not on Nebius GPUs. Nothing here shows Nebius training.
+- The hard tool-calling exam was written by one model (Claude Sonnet 5.5), so it may favour that model's style; the BFCL exam is a sample of a public benchmark, which models may have seen.
+- On the BFCL exam the adapter's gain over the untrained model is not significant (sign test p = 0.0784), and its gain comes from the `irrelevance` category only. See [Tool-calling round 3](#tool-calling-round-3).
 - Scores come from one run of each model at one setting. The 95% ranges say how much a different sample of questions could move them; they do not cover a different training run.
 
 ## Tool-calling round 3

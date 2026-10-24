@@ -28,11 +28,11 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_system.py` | 21 |
 | `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 88 (50 functions; one has 20 cases, two have 7, one has 6, one has 3) |
-| `tests/test_scout.py` | 45 |
+| `tests/test_scout.py` | 46 |
 | `tests/test_contract.py` | 57 (45 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 47 (23 functions; one has 23 cases) |
-| `tests/test_live.py` | 78 (3 of them strict xfails for NFR-60) |
+| `tests/test_live.py` | 79 (3 of them strict xfails for NFR-60) |
 | `tests/test_livesim.py` | 19 |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |

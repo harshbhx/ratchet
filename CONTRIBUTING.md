@@ -5,9 +5,9 @@ Thanks for helping. Ratchet is small on purpose; keep changes focused.
 ## Setup
 
 ```bash
-git clone <repo> && cd ratchet
+git clone https://github.com/harshbhx/ratchet.git && cd ratchet
 make install
-make lint test      # must pass before every commit (lint includes the traceability check)
+make lint test reference   # must pass before every commit (lint includes the traceability check)
 make sim            # see the whole loop run with mock models
 make demo           # http://localhost:8000: / landing, /scout, /dashboard
 ```
@@ -28,7 +28,7 @@ Read [CLAUDE.md](CLAUDE.md) first. The invariants there are non-negotiable, espe
 1. Branch from `main`.
 2. Keep the PR to one change. Describe what and why.
 3. Fill in the PR template checklist.
-4. CI runs ruff, pytest on Python 3.10–3.13, the requirements traceability check, a simulation smoke test, and a Docker build.
+4. CI runs ruff, pytest on Python 3.10–3.13, the requirements traceability check, the startup config check, the reference workloads, a simulation smoke test, a web job (type check, `npm test`, build, and a check that the committed build matches), a docs job and a Docker build.
 
 ## Commit messages
 
