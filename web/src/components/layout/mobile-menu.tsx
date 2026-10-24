@@ -7,7 +7,7 @@ import { Logo } from "@/components/ui/logo";
 import { ButtonA } from "@/components/ui/button";
 import { useTheme } from "@/lib/hooks";
 import { DUR, EASE } from "@/lib/motion";
-import { cn, DEMO_URL } from "@/lib/utils";
+import { cn, LIVE_URL } from "@/lib/utils";
 import { isCurrentRoute, MORE_NAV, PAGE_NAV, STORY_NAV, type NavItem } from "./nav-model";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -180,12 +180,12 @@ export function MobileMenu({
           <div className="shrink-0 border-t border-line bg-bg px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
             <div className="flex items-center gap-3">
               <ButtonA
-                href={DEMO_URL}
+                href={LIVE_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 size="lg"
                 className="flex-1"
-                aria-label="Live demo (simulation), opens in a new tab"
+                aria-label="Live demo, opens in a new tab"
               >
                 Live demo <ArrowUpRight aria-hidden />
               </ButtonA>

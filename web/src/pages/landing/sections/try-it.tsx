@@ -3,15 +3,15 @@ import { Link } from "react-router";
 import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container, Eyebrow, H2 } from "@/components/ui/section";
-import { DEMO_URL, REPO_URL } from "@/lib/utils";
+import { DEMO_URL, LIVE_URL, REPO_URL } from "@/lib/utils";
 import { Reveal } from "../shared";
 
 /**
  * "Try it in a minute": the shortest path from this page to a working request, for someone judging many projects. Three ways in
- * (click, paste one command, run it locally), each with what they will see. The demo behind the first two is the simulation
- * (mock models): the page says so, next to the commands. A live-gateway entry replaces the first card when that host is deployed.
+ * (click, paste one command, run it locally), each with what they will see. The live demo makes real Token Factory calls under
+ * spend limits (the teacher answers every request for now); the simulation next to it runs mock models and is labelled as such.
  */
-const CURL = `curl ${DEMO_URL}/v1/chat/completions \\
+const CURL = `curl ${LIVE_URL}/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{"model":"ratchet","messages":[{"role":"user","content":"My order never arrived"}]}'`;
 
@@ -41,14 +41,18 @@ export function TryIt() {
             Send a request in under a minute.
           </H2>
           <p className="mt-3 max-w-[62ch] text-[15px] leading-relaxed text-ink-2">
-            Three ways in, from nothing to a real request. The demo below runs mock models (a labelled simulation), so it costs nothing and needs no key.
+            Three ways in, from nothing to a real request. The live demo calls Nebius Token Factory for real, under spend limits, and needs no key. The simulation and the local setup run mock models and cost nothing.
           </p>
           <ol className="mt-7 grid gap-4 lg:grid-cols-3">
             <Step n="1" title="Click">
               <p className="text-[14px] leading-relaxed text-ink-2">Run a simulated day, break a release on purpose, and watch the gate roll it back.</p>
               <div className="mt-auto flex flex-wrap gap-2.5 pt-2">
-                <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="lg">
-                  <Play aria-hidden /> Open the demo <ArrowUpRight aria-hidden />
+                <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="lg">
+                  <Play aria-hidden /> Open the live demo <ArrowUpRight aria-hidden />
+                  <span className="sr-only"> (opens in a new tab)</span>
+                </ButtonA>
+                <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="lg" variant="outline">
+                  Simulation <ArrowUpRight aria-hidden />
                   <span className="sr-only"> (opens in a new tab)</span>
                 </ButtonA>
                 <ButtonLink to="/scout" variant="outline" size="lg">
@@ -60,9 +64,9 @@ export function TryIt() {
               </div>
             </Step>
             <Step n="2" title="Paste one command">
-              <p className="text-[14px] leading-relaxed text-ink-2">It is the OpenAI API. The answer comes back with a `ratchet` block that says who answered and what it cost.</p>
+              <p className="text-[14px] leading-relaxed text-ink-2">It is the OpenAI API. The reply carries a `ratchet` block that says who answered and what it cost. This one is a real call, so please keep it to a few.</p>
               <CodeBlock title="terminal" copy={CURL} className="mt-auto">
-                {tok.k("curl")} {DEMO_URL.replace("https://", "")}/v1/chat/completions \
+                {tok.k("curl")} {LIVE_URL.replace("https://", "")}/v1/chat/completions \
                 {"\n  "}-H {tok.s('"Content-Type: application/json"')} \
                 {"\n  "}-d {tok.s(`'{"model":"ratchet","messages":[{"role":"user","content":"My order never arrived"}]}'`)}
               </CodeBlock>
@@ -79,7 +83,7 @@ export function TryIt() {
           </ol>
           <p className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-muted">
             <Terminal className="size-3.5" aria-hidden />
-            <span>Mock models: numbers here are simulation. The real results are above.</span>
+            <span>The simulation and a local install use mock models: their numbers are simulation. The measured results are above.</span>
             <Link to="/judges" className="font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink">
               For judges: where to look
             </Link>

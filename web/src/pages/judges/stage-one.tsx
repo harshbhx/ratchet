@@ -1,6 +1,7 @@
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { RealBadge } from "@/components/ui/real-badge";
 import { REAL_STATUSES, STATUS_TEXT, type RealStatus } from "@/lib/real-model";
+import { LIVE_URL } from "@/lib/utils";
 import { REAL } from "./real";
 
 /** One hackathon requirement, the status its evidence earns today and where to check it. */
@@ -37,9 +38,9 @@ export const STAGE_ONE: StageOneItem[] = [
   {
     id: "live-demo",
     requirement: "A live demo that calls Token Factory",
-    status: "pending",
-    evidence: "Built, with spending caps, and tested locally with real calls. Not deployed yet: there is no public live URL today.",
-    link: null,
+    status: "real",
+    evidence: "Deployed on Cloudflare Containers, in live mode, with spending caps. A request to it is answered by Nemotron 3 Ultra on Token Factory. No trained student is served yet, so the teacher answers every request.",
+    link: { label: "Open the live demo", href: LIVE_URL },
   },
   {
     id: "runtime-call",

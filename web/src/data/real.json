@@ -153,6 +153,32 @@
       "metrics": []
     },
     {
+      "id": "live-demo",
+      "claim": "A public live demo that calls Nebius Token Factory",
+      "status": "real",
+      "evidence": "On 24 Oct 2026 the gateway was deployed in live mode on Cloudflare Containers. A request to it is answered by Nemotron 3 Ultra on Nebius Token Factory under daily spend and rate limits, and an admin key and the mock-only demo controls are refused. No trained student is served in it yet, so the teacher answers every request.",
+      "check": {
+        "label": "Send it a request and read the ratchet block in the reply",
+        "command": "curl -s https://live.ratchet.dualmindlab.tech/v1/chat/completions -H 'Content-Type: application/json' -d '{\"model\":\"ratchet\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
+      },
+      "paths": [
+        "deploy/cloudflare-live/src/index.ts",
+        "deploy/cloudflare-live/wrangler.json"
+      ],
+      "date": "2026-10-24",
+      "facts": [
+        {
+          "label": "Answered by",
+          "value": "the teacher, Nemotron 3 Ultra on Token Factory"
+        },
+        {
+          "label": "Limits",
+          "value": "about $2.50 a day for the gateway, $1.50 for the demo key"
+        }
+      ],
+      "metrics": []
+    },
+    {
       "id": "live-gateway-smoke",
       "claim": "The gateway in live mode, answering through real Token Factory calls",
       "status": "real",

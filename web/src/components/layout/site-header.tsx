@@ -7,7 +7,7 @@ import { ButtonA, ButtonLink } from "@/components/ui/button";
 import type { Stats } from "@/lib/api";
 import { useTheme } from "@/lib/hooks";
 import { surfaceSwitch, type SurfaceSwitch as Switch } from "@/lib/surface-model";
-import { cn, DEMO_URL } from "@/lib/utils";
+import { cn, LIVE_URL } from "@/lib/utils";
 import { MobileMenu } from "./mobile-menu";
 import { isCurrentRoute, pillItems, sectionIds, type NavItem } from "./nav-model";
 
@@ -303,7 +303,7 @@ export function SiteHeader({ stats }: { stats: Stats | null }) {
             >
               {onDashboard ? "Scout" : "Dashboard"}
             </ButtonLink>
-            <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="sm" aria-label="Live demo (simulation), opens in a new tab">
+            <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="sm" aria-label="Live demo, opens in a new tab">
               Live demo <ArrowUpRight aria-hidden className="hidden lg:block" />
             </ButtonA>
             <button
