@@ -1,6 +1,8 @@
 # Configuration
 
-All settings come from environment variables. Defaults live in `ratchet/config.py` (`Settings`), `ratchet/live.py`, the `deploy/` scripts and `deploy/vm/`. Model IDs and prices follow the Nebius Token Factory catalog as of October 2026. Check them on day 1 with `python scripts/day1_check.py`.
+All settings come from environment variables. Defaults live in `ratchet/config.py` (`Settings`), `ratchet/live.py`, the `deploy/` scripts and `deploy/vm/`. Model IDs and prices were read from the Nebius Token Factory catalog in October 2026 and are unverified until `python scripts/day1_check.py` passes with a real key (INV-9).
+
+Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.md); FR-, NFR- and INV- ids are requirement and invariant ids ([REQUIREMENTS.md](REQUIREMENTS.md)). A one-page overview is in [README.md](../README.md).
 
 ## Gateway and cascade (`ratchet/config.py`)
 
@@ -193,7 +195,7 @@ Read with `Settings.scout_policy()` in `Runtime.reset`; a bad value stops startu
 | `RATCHET_TAVILY_MONTHLY_CREDITS` | `0` | Tavily credits per cycle (the free plan gives 1,000 a month; the Nebius Builders Program may add more, unverified). `0` counts credits without a cap. A basic search costs 1 credit, an advanced one 2; the meter charges what Tavily reports in `usage.credits` |
 | `RATCHET_TAVILY_JUDGE_CREDITS` | unset | Credits per cycle held back for judge runs, at most the monthly credits, above 0 only with judge access on. Unset: monthly × judge runs / run cap, rounded down (1,000 × 7 / 22 = 318) |
 | `RATCHET_TAVILY_CYCLE_DAY` | `1` | Day of the month (1 to 28) the credit cycle starts, at 00:00 UTC. Tavily's own reset day is not documented (unverified): set the day your dashboard shows |
-| `RATCHET_TAVILY_PACE_UNTIL` | unset | A date (`YYYY-MM-DD`, UTC). While it falls in the current cycle and is today or later, the public's daily credit allowance spreads what is left until that date instead of the cycle's end; unused credits roll forward. Recommended: `2026-12-15`, the last day of judging |
+| `RATCHET_TAVILY_PACE_UNTIL` | unset | A date (`YYYY-MM-DD`, UTC). While it falls in the current cycle and is today or later, the public's daily credit allowance spreads what is left until that date instead of the cycle's end; unused credits roll forward. Recommended: the last day of judging (the plan assumes `2026-12-15`; unverified, see [ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)) |
 
 A public run whose search credits for today are used up still runs: the planner (pinned to the teacher) has already called Token Factory, and the writer answers without web sources, labelled "search unavailable" (FR-10.22). Credits never refuse a run; the run and USD caps bound the cost.
 
@@ -332,7 +334,7 @@ Read only by `deploy/train_job.sh` and `deploy/student_endpoint.sh` on the machi
 
 ## Prices (`DEFAULT_PRICES`)
 
-USD per 1M tokens (input / output). These are Token Factory list prices as of October 2026; verify them in the console.
+USD per 1M tokens (input / output). These are Token Factory list prices as read in October 2026 and unverified until `scripts/day1_check.py` passes (INV-9); verify them in the console.
 
 | Key | Input | Output | Note |
 |---|---|---|---|
@@ -366,7 +368,6 @@ Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py
 The simulated endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock-mode demo](#mock-mode-demo)).
 
 ## Savings receipts
-## Success metrics
 
 Read in `ratchet/config.py` (`Settings.receipt_policy()`); used by `ratchet/receipts.py`, the gateway's receipt endpoints and its demo days, `python -m ratchet.live seal`, `python -m ratchet.receipt seal` and `python -m sim.simulate --receipts` ([ADR 0029](adr/0029-verified-savings-receipts.md), [API](API.md#savings-receipts)). A bad value stops startup with `ValueError` naming the variable, because a sealed receipt can never be corrected (invariant 17). Receipts are signed with `RATCHET_BOM_SIGNING_KEY` ([Privacy and security](#privacy-and-security)) when it is set; without it they carry their sha256 only.
 
@@ -390,7 +391,6 @@ How Night School's golden eval picks each version's threshold and what its certi
 Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served held-out rows; `python -m ratchet.stats plan --target T --delta D`): 95% at delta 0.05 needs 59, 93, 124 or 153 served rows; 97% needs 99, 157, 208 or 257; 90% needs 29, 46, 61 or 76. Only the held-out half counts, so the golden set must be about twice that, divided by the coverage.
 
 ## Ledger and hot path
-## Teacher watch (`Settings.teacher_watch_limits()`)
 
 How the ledger file is written and how often the request path does periodic work ([ADR 0060](adr/0060-hot-path-caches-and-throttled-tick.md), [ARCHITECTURE §11](ARCHITECTURE.md#11-hot-path-and-performance)). A bad value stops startup with a `ValueError` naming the variable (the gateway, `python -m ratchet.live` and `python -m ratchet.cost`).
 
@@ -467,11 +467,16 @@ Warnings (the gateway starts, unless `RATCHET_STRICT_CONFIG=1`):
 `config.KNOWN_ENV` lists every variable the package reads; `python scripts/reqtrace.py --check` fails when code reads one that is not listed (or lists one nothing reads), so a new variable goes in `KNOWN_ENV` and in this file. Variables the deploy scripts read go in `config.DEPLOY_ENV`.
 
 
+## Success metrics
+
 Read in `ratchet/config.py` (`Settings.kpi_window()`); used by `ratchet/kpis.py` through `GET /ratchet/kpis`, the `kpis` block of `/ratchet/stats` and the simulator ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). SM-2 needs the release gate's `RATCHET_MIN_AUDITS` audits in the window before it reports met or not met.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `RATCHET_KPI_WINDOW_DAYS` | `3` | The steady state the success metrics describe: SM-1 to SM-3 and NFR-1 cover the last this many ledger days with traffic (days without requests are skipped). A whole number from 1 to 3,650; anything else stops startup with `ValueError` naming the variable. `GET /ratchet/kpis?days=N` overrides it for one report |
+
+## Teacher watch (`Settings.teacher_watch_limits()`)
+
 How much paid teacher work Night School spends each night checking the teacher (FR-5.40, FR-5.41, [ADR 0033](adr/0033-teacher-watch.md)). The checks that come free with traffic (a stored request's first re-test in each check epoch) need no setting. Read by the gateway (mock nights), the simulator and `python -m ratchet.live night`; a value that is not a whole number from 0 to 10,000 stops startup with a `ValueError` naming the variable. The freeze rule and the switch are [release policy](#release-policy-ratchetreleasepy) fields (`teacher_noise_max`, `alpha_teacher`, `teacher_watch`).
 
 | Variable | Default | Meaning |
@@ -480,6 +485,7 @@ How much paid teacher work Night School spends each night checking the teacher (
 | `RATCHET_ADJUDICATE_MAX` | `50` | Contested labels Night School adjudicates each night, two more teacher answers each: a strict majority of the three becomes the label and ends the quarantine; without one the label stays quarantined and is tried again after the labels never adjudicated. 0: none (contested labels stay out of training) |
 
 At the defaults a night makes at most 120 teacher calls (20 probes, 50 adjudications of two calls each); at the teacher's list price (unverified) and about 200 tokens in and 300 out a call, that is about $0.13. The night's `teacher_watch` event states what it spent when anything happened; the cost report does not count it yet (ADR 0033).
+
 ## Release policy (`ratchet/release.py`)
 
 `ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so the demo can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`, `--drift-alarm`, `--drift-boost`, `--drift-early-night`, `--teacher-watch`; `--teacher-noise` and `--teacher-noise-day` make its mock teacher unstable).
@@ -515,7 +521,7 @@ At the defaults a night makes at most 120 teacher calls (20 probes, 50 adjudicat
 
 `ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance`, `min_judge_pass` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, `drift_alarm` 0 or more than 1, `drift_audit_boost` 1 or more, `teacher_noise_max` and `alpha_teacher` strictly between 0 and 1, the switches 0 or 1, `task_mode` `disable` or `reject`. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed), and a drift action (`drift_audit_boost` above 1 or `drift_early_night=1`) with `drift_alarm=0`. The live gateway's startup check (and `python -m ratchet.config check`) also applies the rules across fields, which building a policy does not, so tests and simulations may still use any value: 0 < `live_floor` <= `min_precision` <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate admitted), `min_audits` and `min_shadow` at least 1, `tolerance` at most 0.2 ([Configuration checks](#configuration-checks)).
 
-A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. The fields of the evidence features not built yet are in [Reserved settings](#reserved-settings).
+A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. No policy field is reserved today ([Reserved settings](#reserved-settings)).
 
 Other constants:
 
@@ -540,12 +546,9 @@ The evidence features (PRD §6.16) are built one at a time. Their settings are d
 
 | Variable | Default | Feature that will read it |
 |---|---|---|
-
 | `RATCHET_BATCH_API` | `operations` | Clean-room backfill (FR-16.8): the Token Factory batch API (`operations` or `openai`) |
 | `RATCHET_BATCH_DISCOUNT` | `0.5` | Clean-room backfill (FR-16.8): the batch price discount (unverified, like every price) |
 | `RATCHET_BACKFILL_MAX_TOKENS` | `2048` | Clean-room backfill (FR-16.8): the output cap the worst-case budget is computed from |
-
-`RATCHET_DB_SYNC` was reserved here for the WAL journal; it is built now ([Ledger and hot path](#ledger-and-hot-path)).
 | `RATCHET_GATEWAY_LEASE` | `warn` | One gateway process per live ledger (NFR-60, waiting for the leases table): `warn` will write a `gateway_lease` event when a second process serves the same ledger and keep serving, `exclusive` will refuse to start, `off` will do nothing. Any other value stops startup now, also through `Settings.scout_policy()` |
 
 `ReleasePolicy` (`release.RESERVED_POLICY`): none today. Every field declared for the evidence features is built; the check stays for the next feature that declares a field before it is built.
@@ -560,7 +563,6 @@ Tasks come from four places ([ADR 0022](adr/0022-task-registry.md)): the built-i
 |---|---|---|
 | `RATCHET_TASKS_FILE` | empty | A file of task specs ([Adding a task](#adding-a-task)), JSON, or YAML for a `.yaml` or `.yml` file (needs PyYAML: `pip install pyyaml`, or the `yaml` extra). Read when the gateway starts (and on a mock demo reset) and by `python -m ratchet.live`. A file task may replace a built-in one. A bad file stops startup with every error and its path (`tasks[2].fields.total.abs_tol: must be a number >= 0`); a YAML file without PyYAML is an error that says so |
 | `RATCHET_UNKNOWN_TASKS` | `distill` | What a request naming a task that is not registered gets. `distill` (v0.4): a task without fields made up for the name, distilled like any other. `teacher`: the teacher answers (route `unknown_task`), the student is not called and nothing is stored. `reject`: 400 `unknown_task`, listing the registered tasks the key may use. Under `teacher` and `reject` an `X-Ratchet-Task` header that is not a valid task name is a 400 `unknown_task` too (under `distill` it means `default`, as in v0.4). Case-insensitive; anything else stops startup |
-| `RATCHET_MAX_AUTO_TASKS` | `200` | Most auto tasks (derived from a request's `response_format` json_schema, [Structured outputs](#structured-outputs)) the registry holds, counted from the stored and new ones. Past it a request with a new schema gets an unregistered task of its auto name, which `RATCHET_UNKNOWN_TASKS` decides about (under `reject`, a 400 until an admin deletes auto tasks), and one `auto_task_cap` event is written. `0` turns auto tasks off: a json_schema request then keeps the task it names (an unregistered name follows `RATCHET_UNKNOWN_TASKS`), or `default` when it names none, and the schema only binds its answers, as before auto tasks; no request is refused for having a schema. A whole number from 0 to 500 (the registry's size); anything else stops startup |
 | `RATCHET_SCHEMA_REPAIR` | `1` | `0`: no repair call. Otherwise a complete teacher answer that breaks its request's `response_format` gets one more call to the same teacher, shown its answer and the schema errors; the repaired answer is served (unless it was cut off or is empty: the first answer is then kept) and, when valid, stored with the request's own messages. Both calls are paid for in `cost_usd`; the baseline and the client's `usage.prompt_tokens` count the request's own prompt, and `latency_ms` both calls. Read in `ratchet/config.py`, used by `ratchet/router.py` (`Ratchet._repair`) |
 | `RATCHET_MODEL_POLICY` | `lenient` | What a request whose `model` Ratchet does not know gets ([task resolution](#task-resolution), [ADR 0048](adr/0048-model-field-routing.md)). `lenient`: it is served as `ratchet` (its task from the other rules) and the response carries `X-Ratchet-Model-Alias: <the id>` (UTF-8 percent-encoded except for visible ASCII), so clients with a hard-coded model name work unchanged. `strict`: a 404 `model_not_found` ("The model 'gpt-4o' does not exist"), before anything is logged or billed, also when a header names the task. Under both, a missing or empty `model`, `ratchet`, `ratchet/<task>` and the aliases are accepted (`ratchet/<task>` for an unregistered task then follows `RATCHET_UNKNOWN_TASKS`, and `GET /v1/models/{id}` gives the same answer), and `ratchet/` with a name that is not a task name is a 404. Case-insensitive; anything else stops startup |
 | `RATCHET_MODEL_ALIASES` | empty | Model ids that name a task, as `model=task` pairs: `gpt-4o-mini=ticket-triage,openai/gpt-4o=default`. For clients that send a fixed model name. An alias is 1 to 256 characters without spaces, `,` or `=`, and must not be `ratchet` or start with `ratchet/` or `ratchet:`; at most 256. The task need not be registered yet: until it is, requests for the alias follow `RATCHET_UNKNOWN_TASKS`. Aliases are listed in `GET /v1/models` (with `alias_of`). A bad entry stops startup |
@@ -735,7 +737,7 @@ A request's task is the first of these that names one (`openai_compat.resolve_ta
 | 3 | A `model` of `ratchet/<task>` or `ratchet:<task>`; on the Azure-style route, the deployment in the URL instead (the body's `model` is not read there) | `model`, `deployment` |
 | 4 | A model alias (`RATCHET_MODEL_ALIASES`), for the `model` or a deployment | `alias` |
 | 5 | The first registered task whose `match` rules all hold, among those the key may use | `match` |
-| 6 | (Reserved for an auto task from a `response_format` json_schema, a later item) | |
+| 6 | A `response_format` json_schema: its auto task ([Structured outputs](#structured-outputs)), made on first use (at most `RATCHET_MAX_AUTO_TASKS`) | `response_format` |
 | 7 | With `RATCHET_AUTO_TASK=system_prompt`, the auto task of the first system message | `auto_system` |
 | 8 | `default` | `default` |
 
