@@ -13,6 +13,7 @@ import { AskBar } from "./ask-bar";
 import { AGENTS, RouteNote } from "./bits";
 import { Explainer } from "./explainer";
 import { PlannerLane, ReaderLane, SearcherLane, TriageLane } from "./lanes";
+import { JudgeCode } from "./judge-code";
 import { ErrorAlert, RunSummary, WriterCard } from "./summary";
 import { announceText, phaseText } from "./state";
 import { TotalsBar } from "./totals-bar";
@@ -73,7 +74,7 @@ export default function ScoutPage() {
 }
 
 function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
-  const { run, derived, examples, examplesError, status, mode, start, stop, reloadExamples, recording, playing, liveRecording, play, skip } = scout;
+  const { run, derived, examples, examplesError, status, mode, start, stop, reloadExamples, refreshStatus, recording, playing, liveRecording, play, skip } = scout;
   const [hint, setHint] = useState<string | null>(null);
   const graphRef = useRef<HTMLDivElement | null>(null);
   const running = run.status === "running";
@@ -173,6 +174,7 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
                 )}
               </div>
             )}
+            <JudgeCode status={status} running={running} onChange={refreshStatus} />
             {hint && (
               <p className="mt-2 inline-flex items-center gap-1.5 text-[13.5px] font-medium text-warn" role="alert">
                 <Info className="size-4" aria-hidden /> {hint}
