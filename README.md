@@ -145,6 +145,11 @@ The screenshots show the simulation (mock models, labelled as such on every page
 
 You need Python 3.10 or newer. Nothing below needs a key or a GPU.
 
+<p align="center">
+  <img src="docs/img/anim/ratchet-terminal-demo.gif" alt="A terminal: the mock gateway starts, a ticket the student has learned is served by the student, and a ticket it has never seen goes to the teacher" width="88%">
+  <br><sub>Simulation (mock models): the student answers what it has learned, and anything new goes to the teacher.</sub>
+</p>
+
 ```bash
 git clone https://github.com/harshbhx/ratchet.git && cd ratchet
 pip install -e ".[dev]"                 # or: make install
