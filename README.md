@@ -90,22 +90,14 @@ Change one line (your base URL) and:
 
 Your bill falls as your own model takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.
 
-```mermaid
-flowchart LR
-    app([Your app]) --> gw[Ratchet gateway]
-    gw --> st["Student: Nemotron Nano 4B + your LoRA"]
-    st -->|confident| out([Answer])
-    st -->|unsure| te["Teacher: Nemotron 3 Ultra"]
-    te --> out
-    te --> led[("Ledger: answer, teacher, license")]
-    led --> ns[Night School: nightly LoRA training]
-    ns --> rel["Gated release"]
-    rel --> st
-    classDef owned fill:#1e3a8a,stroke:#3b82f6,color:#fff
-    classDef rented fill:#7c2d12,stroke:#f97316,color:#fff
-    class st owned
-    class te rented
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-how-it-works-dark.gif">
+    <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-how-it-works-light.gif">
+    <img src="docs/img/anim/ratchet-how-it-works-dark.gif" alt="A system diagram, animated over 15 steps: a request enters the gateway, the student answers or escalates to the teacher, the answer is logged, Night School trains and tests a new adapter, the release gate promotes it, and the next similar request is served by the student" width="100%">
+  </picture>
+  <br><sub>The whole loop in 23 seconds. The confidence numbers in it are an example, not a measurement.</sub>
+</p>
 
 A new student never goes straight to full traffic. It is graded on rows it never trained on, runs silently next to the live one, then takes 10%, 50% and 100% of traffic with teacher audits at each step, and rolls back by itself if its audited precision slips:
 
