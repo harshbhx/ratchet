@@ -43,6 +43,7 @@ const HF = "https://huggingface.co/harshbhx";
 export const HF_MODEL = `${HF}/ratchet-nemotron-nano-4b-text2sql` as `https://${string}`;
 export const HF_TRAIN = "https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic" as `https://${string}`;
 export const HF_EXAMS = "https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams" as `https://${string}`;
+export const HF_TOOL_MODEL = `${HF}/ratchet-nemotron-nano-4b-toolcall` as `https://${string}`;
 /** The maintainer's answer on the license question for the docs site's adapted components. */
 export const REACT_BITS_PERMISSION = "https://github.com/DavidHDev/react-bits/discussions/1111" as `https://${string}`;
 
@@ -65,6 +66,7 @@ export const FOOTER_COLUMNS: readonly { title: string; items: readonly NavItem[]
       { label: "Trained adapter", href: HF_MODEL, kind: "external" },
       { label: "Training data", href: HF_TRAIN, kind: "external" },
       { label: "Exams and answers", href: HF_EXAMS, kind: "external" },
+      { label: "Tool-calling adapter", href: HF_TOOL_MODEL, kind: "external" },
     ],
   },
   {

@@ -131,6 +131,14 @@
         {
           "label": "Exams and answers",
           "value": "harshbhx/ratchet-text2sql-exams"
+        },
+        {
+          "label": "Tool-calling adapter (round 3)",
+          "value": "harshbhx/ratchet-nemotron-nano-4b-toolcall"
+        },
+        {
+          "label": "Tool-calling data and exams (round 3)",
+          "value": "harshbhx/ratchet-toolcall-train, ratchet-toolcall-exam-hard, ratchet-toolcall-exam-bfcl"
         }
       ],
       "metrics": []

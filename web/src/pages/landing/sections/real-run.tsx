@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { Container } from "@/components/ui/section";
 import { RealBadge } from "@/components/ui/real-badge";
 import { EXAMS, ScoreBars } from "@/components/charts/exam-charts";
+import { TOOLCALL, ToolCallBlock } from "@/components/charts/toolcall-block";
 import { pct, timesBase } from "@/lib/exams-model";
 import { LINKS, Reveal } from "../shared";
 
@@ -71,6 +72,8 @@ export function RealRun() {
             answer, so even the teacher scores {pct(e1.teacher.rate)} and {pct(e2.teacher.rate)}. Trained on a free Colab and a rented Modal GPU, not on Nebius GPUs.
           </p>
 
+          <ToolCallBlock where="bottom" />
+
           <p className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13.5px]">
             <Link to="/judges#exams" className={LINK}>
               Every number, by difficulty
@@ -84,6 +87,11 @@ export function RealRun() {
             <a href={LINKS.hfExams} target="_blank" rel="noopener noreferrer" className={LINK}>
               Exams and answers <ArrowUpRight className="size-3.5 text-muted" aria-hidden />
             </a>
+            {TOOLCALL ? (
+              <a href={LINKS.hfToolModel} target="_blank" rel="noopener noreferrer" className={LINK}>
+                Tool-calling adapter <ArrowUpRight className="size-3.5 text-muted" aria-hidden />
+              </a>
+            ) : null}
           </p>
         </Reveal>
       </Container>

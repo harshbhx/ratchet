@@ -226,7 +226,7 @@ The gateway does no inference, so it runs anywhere a container does. The student
 | Open source with a license | [`LICENSE`](LICENSE), Apache-2.0 for the code | Real |
 | A working demo that calls Token Factory | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech): send a request, read the `ratchet` block in the reply | Real |
 | A real run on record | [`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23) (20 real requests, about $0.01) and three recorded Scout runs in [`evidence/scout`](evidence/scout), also [replayable on Hugging Face](https://huggingface.co/spaces/harshbhx/ratchet-scout) | Real |
-| Results that recompute | [Real results](#real-results), [Check it yourself](docs/VERIFY.md), the data on [Hugging Face](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), `python scripts/text2sql/exam_numbers.py --check` | Measured |
+| Results that recompute | [Real results](#real-results), [Check it yourself](docs/VERIFY.md), the data on [Hugging Face](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), `python scripts/text2sql/exam_numbers.py --check`, and for tool calling [`evidence/toolcall`](evidence/toolcall) with `python scripts/toolcall_results.py --check` | Measured |
 | The loop, end to end | [Simulation](https://demo.ratchet.dualmindlab.tech) or `make demo` | Simulation |
 | Everything on one page | [ratchet.dualmindlab.tech/judges](https://ratchet.dualmindlab.tech/judges) | |
 
