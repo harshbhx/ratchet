@@ -219,7 +219,7 @@
       "id": "scout-tavily",
       "claim": "Scout with real Tavily searches",
       "status": "real",
-      "evidence": "Three recorded Scout runs on 23 and 24 Oct 2026: every model call went to Nemotron 3 Ultra on Nebius Token Factory and every search to Tavily, 18 to 20 model calls and 3 searches each, $0.022 to $0.028 a run. All were answered by the teacher (no trained student was serving), so they show Scout working end to end, not savings. The Scout page plays them back.",
+      "evidence": "Three recorded Scout runs on 23 and 24 Oct 2026: every model call went to Nemotron 3 Ultra on Nebius Token Factory and every search to Tavily, 18 to 20 model calls and 3 searches each, $0.022 to $0.028 a run. All were answered by the teacher (no trained student was serving), so they show Scout working end to end, not savings. The Scout page plays them back, and on the story site it can make a new live run (judge code or the daily allowance, under a spend guard).",
       "check": {
         "label": "Read the recorded runs",
         "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/scout"

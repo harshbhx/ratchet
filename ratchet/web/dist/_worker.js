@@ -6,28 +6,39 @@
 // WHICH GATEWAY is a setting, not code: set the variable GATEWAY_ORIGIN (an https address with no path, for example
 // https://live.ratchet.dualmindlab.tech) in the Cloudflare dashboard: Workers & Pages, the project, Settings, Variables and Secrets,
 // separately for Production and Preview. It takes effect at once, with no push and no deploy. Without it the simulation demo is used.
+// SCOUT_ORIGIN is a second, separate setting for the paths under /scout/ only (the Scout page's status, examples, stream, recordings
+// and judge calls). It defaults to the live gateway, so Scout on this site is real; set it to the same value as GATEWAY_ORIGIN (or to
+// the simulation demo) to send Scout where everything else goes. Everything else (/ratchet/*, /v1/*, /healthz, /readyz) follows GATEWAY_ORIGIN.
 // No keys here: the simulation demo is keyless, and a live gateway's key is added by its own Worker.
 const DEFAULT_GATEWAY = "https://demo.ratchet.dualmindlab.tech";
 
+const DEFAULT_SCOUT = "https://live.ratchet.dualmindlab.tech";
+const SCOUT = /^\/scout\//;
+
 const API = [/^\/ratchet\//, /^\/scout\//, /^\/v1\//, /^\/healthz$/, /^\/readyz$/, /^\/livez$/];
 
-/** The configured gateway if it is a plain https origin, else the default (a typo must not take the site down). */
-function gatewayOf(env) {
-  const raw = typeof env.GATEWAY_ORIGIN === "string" ? env.GATEWAY_ORIGIN.trim() : "";
+/** A plain https origin from a setting, else the fallback (a typo must not take the site down). */
+function originOf(raw, fallback) {
   try {
-    const u = new URL(raw);
+    const u = new URL(typeof raw === "string" ? raw.trim() : "");
     if (u.protocol === "https:") return u.origin;
   } catch {
-    /* fall through to the default */
+    /* fall through to the fallback */
   }
-  return DEFAULT_GATEWAY;
+  return fallback;
+}
+
+/** Where a path goes: /scout/* to SCOUT_ORIGIN, everything else to GATEWAY_ORIGIN. */
+function gatewayOf(env, pathname) {
+  if (SCOUT.test(pathname)) return originOf(env.SCOUT_ORIGIN, DEFAULT_SCOUT);
+  return originOf(env.GATEWAY_ORIGIN, DEFAULT_GATEWAY);
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (!API.some((re) => re.test(url.pathname))) return env.ASSETS.fetch(request);
-    const target = new URL(url.pathname + url.search, gatewayOf(env));
+    const target = new URL(url.pathname + url.search, gatewayOf(env, url.pathname));
     const headers = new Headers(request.headers);
     headers.delete("host");
     headers.delete("accept-encoding"); // the edge compresses the reply for the browser; no double handling here
