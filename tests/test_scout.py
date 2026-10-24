@@ -1147,6 +1147,26 @@ def test_record_refuses_incomplete_and_mock(gw_env, tmp_path, capsys):
     assert len(list(out.glob("*.json"))) == 1
 
 
+@pytest.mark.req("FR-10.40")
+def test_record_subcommand_is_reached_by_python_dash_m(tmp_path):
+    """`python -m ratchet.scout record ...` reaches the record branch (the entry point passes sys.argv[1:] to main)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    out = tmp_path / "out"
+    p = subprocess.run(
+        [sys.executable, "-m", "ratchet.scout", "record", "Q", "--base-url", "http://127.0.0.1:9", "--out", str(out)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert "unrecognized arguments" not in p.stderr
+    assert p.returncode == 1 and "error" in p.stderr and not out.exists()
+
+
 @pytest.mark.req("FR-10.40", "NFR-71", "INV-13")
 def test_recording_never_holds_secrets(gw_env, tmp_path):
     from ratchet.scout import record as sr

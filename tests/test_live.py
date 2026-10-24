@@ -2545,6 +2545,25 @@ def test_liverun_end_to_end_offline(liverun_world):
 
 
 @pytest.mark.req("FR-8.20")
+def test_liverun_markdown_names_a_serverless_endpoint_only_when_one_was_used():
+    """The recorded smoke run had no student endpoint, so its LIVE_RESULTS.md must not say it ran on one."""
+    import copy
+    import json
+    from pathlib import Path
+
+    from ratchet import liverun
+
+    res = json.loads((Path(__file__).resolve().parent.parent / "evidence" / "live-smoke-2026-10-23" / "results.json").read_text())
+    assert res["settings"]["student_endpoint"] is False
+    md = liverun.render_markdown(res)
+    assert "Serverless Endpoint" not in md and "no student endpoint" in md and "student side" in md
+    with_ep = copy.deepcopy(res)
+    with_ep["settings"]["student_endpoint"] = True
+    md2 = liverun.render_markdown(with_ep)
+    assert "and a Nebius Serverless Endpoint" in md2 and "student endpoint" in md2
+
+
+@pytest.mark.req("FR-8.20")
 def test_liverun_rounds_are_keyed_by_client_and_id_range(liverun_world):
     res = _results(liverun_world.run_dir())
     r1, r2, r3 = res["rounds"]
