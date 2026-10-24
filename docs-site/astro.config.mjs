@@ -182,6 +182,7 @@ export default defineConfig({
             ...guide('cost-and-savings', 'Cost and savings'),
             ...guide('evidence', 'Evidence you can check'),
             ...guide('proof', 'Proof you can run'),
+            ...page('reference/verify', 'Verify: the commands'),
           ],
         },
         {

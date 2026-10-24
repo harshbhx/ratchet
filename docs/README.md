@@ -6,7 +6,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 | You are | Read, in this order |
 |---|---|
-| **A judge, with five minutes** | [README](../README.md) (the results chart and the judges' path) → [the judges' page](https://ratchet.dualmindlab.tech/judges) → [FEATURES](FEATURES.md) for how each claim is checked |
+| **A judge, with five minutes** | [README](../README.md) (the results chart and the judges' path) → [the judges' page](https://ratchet.dualmindlab.tech/judges) → [VERIFY](VERIFY.md) to recompute any claim |
 | **A developer who wants it running** | [README: Quick start](../README.md#quick-start) → [API](API.md) → [CONFIGURATION](CONFIGURATION.md) |
 | **An operator hosting it** | [DEPLOYMENT](DEPLOYMENT.md) → [LIVE_MODE](LIVE_MODE.md) → [RUNBOOK](RUNBOOK.md) |
 | **Reviewing security or licenses** | [THREAT_MODEL](THREAT_MODEL.md) → [README: Why license-clean](../README.md#why-license-clean) → [ADR 0001](adr/0001-open-teacher-only.md) and [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md) |
@@ -44,6 +44,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 | Doc or folder | What it covers |
 |---|---|
+| [VERIFY.md](VERIFY.md) | Check it yourself: one command per claim, the output to expect, and what none of it proves |
 | [TESTING.md](TESTING.md) | Test suite, contract tests, live-path tests (live mode, CLIs and deploy scripts run offline), the traceability check, simulation method and assumptions, bugs found and fixed, seed robustness |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Generated traceability matrix: every PRD requirement and invariant with its code, tests and how it is verified (`make trace`) |
 | [../evidence/text2sql-round1](../evidence/text2sql-round1), [round2](../evidence/text2sql-round2), [exam2](../evidence/text2sql-exam2) | The measured text-to-SQL results: data, exams, every answer, scores and the scripts that recompute them |

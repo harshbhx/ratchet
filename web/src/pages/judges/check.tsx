@@ -20,7 +20,21 @@ export function CheckChapter() {
     <Chapter
       id="check"
       title="Check it yourself"
-      lead={<p>Everything on this page can be checked from a fresh clone. Each command has a copy button.</p>}
+      lead={
+        <p>
+          Everything on this page can be checked from a fresh clone. Each command has a copy button. The full list, with the output to expect and
+          what none of it proves, is{" "}
+          <a
+            href="https://ratchet-docs.pages.dev/reference/verify/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink"
+          >
+            Check it yourself<span className="sr-only"> (opens in a new tab)</span>
+          </a>
+          .
+        </p>
+      }
     >
       <ol className="space-y-4">
         {COMMANDS.map((c, i) => (

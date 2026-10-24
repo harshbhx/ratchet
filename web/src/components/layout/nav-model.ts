@@ -90,6 +90,7 @@ export const FOOTER_COLUMNS: readonly { title: string; items: readonly NavItem[]
       { label: "Security", href: docs("guides/security/"), kind: "external" },
       { label: "Licenses", href: docs("guides/licenses/"), kind: "external" },
       { label: "Evidence", href: docs("guides/evidence/"), kind: "external" },
+      { label: "Check it yourself", href: docs("reference/verify/"), kind: "external" },
     ],
   },
 ];

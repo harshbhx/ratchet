@@ -1,0 +1,23 @@
+name: Documentation problem
+description: Something in the docs, README or a page is wrong, unclear or does not match
+labels: [documentation]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Where is it?
+      description: A link to the page or file, and the section.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or unclear?
+      description: For a number that does not match what a command prints, include the command and its output.
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: What would you change?
+      description: Optional.

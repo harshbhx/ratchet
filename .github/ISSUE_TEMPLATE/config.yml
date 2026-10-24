@@ -3,3 +3,9 @@ contact_links:
   - name: Security issue
     url: https://github.com/harshbhx/ratchet/security/advisories/new
     about: Please report security problems privately (see SECURITY.md).
+  - name: Documentation
+    url: https://ratchet-docs.pages.dev
+    about: Guides, the HTTP API reference and every setting.
+  - name: Check a result yourself
+    url: https://github.com/harshbhx/ratchet/blob/main/docs/VERIFY.md
+    about: One command per claim, the output to expect, and what none of it proves.

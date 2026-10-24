@@ -1,0 +1,25 @@
+name: Question
+description: Ask how something works, or how to set it up
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you ask, the [documentation](https://ratchet-docs.pages.dev), the [README](https://github.com/harshbhx/ratchet#readme) and [Check it yourself](https://github.com/harshbhx/ratchet/blob/main/docs/VERIFY.md) answer most questions.
+  - type: textarea
+    id: question
+    attributes:
+      label: What would you like to know?
+      description: What you are trying to do, and where you got stuck.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode are you using?
+      options:
+        - Mock (no keys)
+        - Live (Token Factory)
+        - Not running it yet
+    validations:
+      required: true

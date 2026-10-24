@@ -82,7 +82,7 @@
   </picture>
 </p>
 
-A small Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $23 (about $15 of teacher answers and about $8 of rented GPU), scores 2.6 to 3.0 times the untrained model on two exams, one written by the teacher and one by a different model. Every score recomputes from the saved answers. These are **measured** results on real models, 22 to 24 Oct 2026, not the simulation. They are strict (exact rows), and at a 95% precision bar the student answers about 2% of questions by itself, so most traffic still goes to the teacher. The adapter was trained on rented T4 GPUs (a free Colab T4 and a Modal T4), not on Nebius GPUs, on synthetic data.
+A small Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $23 (about $15 of teacher answers and about $8 of rented GPU), scores 2.6 to 3.0 times the untrained model on two exams, one written by the teacher and one by a different model. Every score recomputes from the saved answers: see [Check it yourself](docs/VERIFY.md). These are **measured** results on real models, 22 to 24 Oct 2026, not the simulation. They are strict (exact rows), and at a 95% precision bar the student answers about 2% of questions by itself, so most traffic still goes to the teacher. The adapter was trained on rented T4 GPUs (a free Colab T4 and a Modal T4), not on Nebius GPUs, on synthetic data.
 
 [Adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) · [Exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams)
 
@@ -204,7 +204,7 @@ The gateway does no inference, so it runs anywhere a container does. The student
 | Open source with a license | [`LICENSE`](LICENSE), Apache-2.0 for the code | Real |
 | A working demo that calls Token Factory | [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech): send a request, read the `ratchet` block in the reply | Real |
 | A real run on record | [`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23) (20 real requests, about $0.01) and two recorded Scout runs in [`evidence/scout`](evidence/scout), also [replayable on Hugging Face](https://huggingface.co/spaces/harshbhx/ratchet-scout) | Real |
-| Results that recompute | [Real results](#real-results), the data on [Hugging Face](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), `python scripts/text2sql/exam_numbers.py --check` | Measured |
+| Results that recompute | [Real results](#real-results), [Check it yourself](docs/VERIFY.md), the data on [Hugging Face](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), `python scripts/text2sql/exam_numbers.py --check` | Measured |
 | The loop, end to end | [Simulation](https://demo.ratchet.dualmindlab.tech) or `make demo` | Simulation |
 | Everything on one page | [ratchet.dualmindlab.tech/judges](https://ratchet.dualmindlab.tech/judges) | |
 
@@ -320,6 +320,7 @@ We did not invent the pieces. Ratchet puts them in one loop that runs by itself.
 
 | | |
 |---|---|
+| [Check it yourself](docs/VERIFY.md) | the commands that recompute every result, with the output to expect, and what none of it proves |
 | [Features in depth](docs/FEATURES.md) | the reference simulation, economics, the safety rules, certificates, proofs of what an adapter was trained on, ledger replay, savings receipts, privacy |
 | [Live mode](docs/LIVE_MODE.md) | the student endpoint, nightly jobs, measuring a live run |
 | [Documentation index](docs/README.md) | PRD, architecture, API, configuration, runbook, threat model, ADRs |
