@@ -231,14 +231,14 @@ export function Checked({ stats }: { stats: Stats | null }) {
         <Reveal className="mt-5">
           <div className="flex flex-col gap-3 rounded-2xl border border-dashed border-line-strong px-5 py-4 sm:flex-row sm:items-start sm:gap-4">
             <Badge tone="outline" className="self-start">
-              In v0.5
+              Also in the code
             </Badge>
             <p className="text-pretty text-[13.5px] leading-relaxed text-ink-2">
-              Each candidate's signed bill of materials now also carries a certified lower bound on its precision on the held-out golden rows,
-              which <code className="font-mono text-[12.5px]">python -m ratchet.stats check</code> recomputes from the signed counts. Being built
-              on foundations already in the code, with their tests (<code className="font-mono text-[12.5px]">ratchet/stats.py</code>,{" "}
-              <code className="font-mono text-[12.5px]">ratchet/merkle.py</code>): each adapter's training and golden sets committed with Merkle
-              proofs, and signed savings receipts per API client.
+              Each candidate's signed bill of materials also carries a certified lower bound on its precision on the held-out golden rows,
+              which <code className="font-mono text-[12.5px]">python -m ratchet.stats check</code> recomputes from the signed counts. Two more
+              checks are built and tested, and have only run in simulation: each adapter's training and golden sets committed under signed Merkle
+              roots (<code className="font-mono text-[12.5px]">python -m ratchet.proof</code>), and a signed savings receipt per day and API client (
+              <code className="font-mono text-[12.5px]">python -m ratchet.receipt</code>).
             </p>
           </div>
         </Reveal>

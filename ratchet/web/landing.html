@@ -256,7 +256,7 @@ r = client.chat.completions.create(
         <div class="panel diagram">
           <svg viewBox="0 0 400 612" role="img" aria-labelledby="dg-title dg-desc">
             <title id="dg-title">Ratchet request and training loop</title>
-            <desc id="dg-desc">Your app calls the Ratchet gateway. The gateway tries the student first: Nemotron 3 Nano 4B with a LoRA adapter, which you own. When the student is unsure, the teacher, Nemotron 3 Ultra on Nebius Token Factory, answers. Teacher answers go to the provenance ledger with their license. Each night Night School, a Nebius Serverless Job, trains a new student. The release gate moves it through shadow, canary 10%, 50% and 100%, with rollback, and the new version becomes the student.</desc>
+            <desc id="dg-desc">Your app calls the Ratchet gateway. The gateway tries the student first: Nemotron 3 Nano 4B with a LoRA adapter, which you own. When the student is unsure, the teacher, Nemotron 3 Ultra on Nebius Token Factory, answers. Teacher answers go to the provenance ledger with their license. Each night Night School trains a new student (designed as a Nebius Serverless Job; not run there yet). The release gate moves it through shadow, canary 10%, 50% and 100%, with rollback, and the new version becomes the student.</desc>
             <defs>
               <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head" d="M0 0 L10 5 L0 10 z"/></marker>
               <marker id="ahA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head acc" d="M0 0 L10 5 L0 10 z"/></marker>
@@ -306,7 +306,7 @@ r = client.chat.completions.create(
             <!-- Night School -->
             <rect class="d-box" x="86" y="396" width="300" height="72" rx="10"/>
             <text class="d-t" x="236" y="419" text-anchor="middle">Night School</text>
-            <text class="d-s" x="236" y="438" text-anchor="middle">Nebius Serverless Job: trains a LoRA,</text>
+            <text class="d-s" x="236" y="438" text-anchor="middle">Planned Nebius Serverless Job: trains a LoRA,</text>
             <text class="d-s" x="236" y="455" text-anchor="middle">tests it on a held-out golden set</text>
             <path class="d-line" d="M236 468 V496" marker-end="url(#ah)"/>
 
@@ -333,10 +333,10 @@ r = client.chat.completions.create(
 
         <div>
           <ol class="steps">
-            <li><h3>Your model answers first</h3><p>A small model tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own, served by vLLM on a Nebius Serverless Endpoint.</p></li>
+            <li><h3>Your adapter answers first</h3><p>A small model tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own, served by vLLM (designed for a Nebius Serverless Endpoint; scripted, not yet run there).</p></li>
             <li><h3>The teacher answers when it is unsure</h3><p>If the student is not confident, the request goes to NVIDIA Nemotron 3 Ultra on Nebius Token Factory.</p></li>
             <li><h3>Every teacher answer keeps its provenance</h3><p>The ledger records which teacher wrote it and the license that permits training on it.</p></li>
-            <li><h3>Night School trains and releases a new student</h3><p>Each night a Nebius Serverless Job fine-tunes a new student and tests it on a held-out golden set. It then goes out step by step: shadow, canary 10% → 50% → 100%, with automatic rollback.</p></li>
+            <li><h3>Night School trains and releases a new student</h3><p>Each night Night School fine-tunes a new student (designed to run as a Nebius Serverless Job; scripted, not yet run there) and tests it on a held-out golden set. It then goes out step by step: shadow, canary 10% → 50% → 100%, with automatic rollback.</p></li>
           </ol>
           <p class="after">Your bill falls as your own model takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.</p>
         </div>
@@ -406,7 +406,7 @@ r = client.chat.completions.create(
     <section aria-labelledby="stack-title">
       <p class="eyebrow">Built on Nebius and NVIDIA</p>
       <h2 id="stack-title">Open models on Nebius infrastructure</h2>
-      <p class="lead">Every model in the loop is an NVIDIA Nemotron model. Training and serving run on Nebius.</p>
+      <p class="lead">Every model in the loop is an NVIDIA Nemotron model. The teacher runs on Nebius Token Factory. Training and serving on Nebius are scripted but not run yet; the adapters so far were trained on a Colab T4 and a Modal T4.</p>
       <div class="panel">
         <table>
           <caption class="sr-only">Models and services Ratchet uses, by role</caption>
@@ -415,9 +415,9 @@ r = client.chat.completions.create(
             <tr><td>Teacher</td><td>Nemotron 3 Ultra on Nebius Token Factory</td></tr>
             <tr><td>Judge</td><td>Nemotron 3 Super on Token Factory <span class="muted">(scores free-text answers)</span></td></tr>
             <tr><td>Fallback</td><td>Nemotron 3 Nano 30B on Token Factory <span class="muted">(used when your endpoint is stopped)</span></td></tr>
-            <tr><td>Student</td><td>Nemotron 3 Nano 4B + LoRA on a Nebius Serverless Endpoint with vLLM</td></tr>
-            <tr><td>Night School</td><td>Nebius Serverless Jobs <span class="muted">(pay only while training)</span></td></tr>
-            <tr><td>Storage</td><td>Nebius Object Storage <span class="muted">(dataset and adapters)</span></td></tr>
+            <tr><td>Student</td><td>Nemotron 3 Nano 4B + LoRA with vLLM <span class="muted">(designed for a Nebius Serverless Endpoint; not run yet)</span></td></tr>
+            <tr><td>Night School</td><td>Nebius Serverless Jobs <span class="muted">(designed, not run yet)</span></td></tr>
+            <tr><td>Storage</td><td>Nebius Object Storage <span class="muted">(dataset and adapters; designed, not run yet)</span></td></tr>
             <tr><td>Search</td><td>Tavily <span class="muted">(Scout demo only)</span></td></tr>
           </tbody>
         </table>

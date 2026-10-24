@@ -94,7 +94,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "inside",
     label: "Releases",
     tourTitle: "Night School and the release gate",
-    tour: "Each night a new student trains on teacher answers only and is tested on a held-out golden set. The gate rolls it out, or back.",
+    tour: "Each night a new student trains on teacher answers and attested human labels, never the student's own, and is tested on a held-out golden set. The gate rolls it out, or back.",
   },
   {
     id: "certificate",

@@ -40,7 +40,7 @@ EXAMS = [
         "built": "22 Oct 2026",
         "writer": "Nemotron 3 Ultra, the teacher (open model, OpenMDW-1.1)",
         "writer_note": "The same model that wrote the training labels, so it favours the teacher and anything trained to copy it.",
-        "industries": "14 industries; 57 of the 172 questions come from five industries that were never in training.",
+        "industries": "14 industries; 57 of the 172 questions come from two industries (airline operations, pharmacy inventory) that were never in training. The other 115 are on databases that were not in training, in industries that were.",
         "checked": "Every reference query was run in the sandbox and kept only if it was one read-only SELECT returning 1 to 100 rows.",
         "fingerprint": "6b9c1db49bbe2aecf4157ed27845fe024d1b4fcb540f93d81b6987b982b22864",
         "evidence": "evidence/text2sql-round1",

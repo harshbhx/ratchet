@@ -203,7 +203,7 @@ export function ExamAuthors({ className }: { className?: string }) {
   const training = {
     name: "Training examples",
     writer: "Nemotron 3 Ultra, the teacher (open model, OpenMDW-1.1)",
-    what: "821 examples in round 1 and 3,501 more in round 2, written on Nebius Token Factory. Every query was run before it was kept.",
+    what: "821 examples in round 1 and 3,501 more in round 2 (3,507 written, 6 dropped for overlapping the exam), written on Nebius Token Factory. Every query was run before it was kept.",
     never: "Never used to score anything, and never overlapping with either exam (0 of 172 and 0 of 200 questions, queries or table sets).",
   };
   return (
