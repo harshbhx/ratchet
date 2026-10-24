@@ -12,6 +12,12 @@ governed by their own licenses:
   https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
 If you distribute LoRA adapters trained with Ratchet, include the base model's license.
 
+Third-party data included in this repository:
+- evidence/toolcall/exams/exam_bfcl.jsonl: 300 rows sampled from the Berkeley Function Calling
+  Leaderboard (v3), Apache-2.0, https://github.com/ShishirPatil/gorilla
+  (berkeley-function-call-leaderboard). The scoring rules in evidence/toolcall/scorers/ follow
+  that project's published answer normalisation.
+
 tests/fixtures/nano4b_chat_template.jinja is the chat template of
 nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 (repository commit dfaf35d), included unmodified so an
 offline test can render training and serving prompts; it is under the NVIDIA Nemotron Open
