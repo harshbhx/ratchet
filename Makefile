@@ -1,4 +1,4 @@
-.PHONY: demo-check install test lint fmt trace reference sim demo day1 docker clean web web-dev live-plan live-smoke live-run
+.PHONY: nebius-plan nebius-up nebius-down nebius-status demo-check install test lint fmt trace reference sim demo day1 docker clean web web-dev live-plan live-smoke live-run
 
 install:
 	pip install -e ".[dev]" ruff
@@ -22,6 +22,21 @@ reference:
 # The public demo as a judge sees it, from outside (never part of test or lint): make demo-check URL=https://<domain> ARGS=--chat
 demo-check:
 	python scripts/demo_check.py $(URL) $(ARGS)
+
+# One command to host Ratchet on Nebius (scripted and tested offline, never run on a real account; docs/WHERE_IT_RUNS.md).
+# nebius-plan prints every command and changes nothing. nebius-up and nebius-down are dry runs unless you set
+# RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 and pass YES=1; GPU parts need ARGS="--with-student" (and --with-training).
+nebius-plan:
+	bash deploy/nebius/nebius.sh plan $(ARGS)
+
+nebius-up:
+	bash deploy/nebius/nebius.sh up $(if $(YES),--yes) $(ARGS)
+
+nebius-down:
+	bash deploy/nebius/nebius.sh down $(if $(YES),--yes)
+
+nebius-status:
+	bash deploy/nebius/nebius.sh status
 
 fmt:
 	ruff format .

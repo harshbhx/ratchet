@@ -149,6 +149,6 @@ Next steps
   4. Live mode, keys and the budget guard: docs/DEPLOY_NEBIUS_VM.md
 
 Teardown (stops all charges for these resources):
-  nebius compute instance delete ${VM_ID}
-  nebius compute disk delete ${DISK_ID}
+  nebius compute instance delete --id ${VM_ID}
+  nebius compute disk delete --id ${DISK_ID}
 EOF

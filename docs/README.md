@@ -8,7 +8,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 |---|---|
 | **A judge, with five minutes** | [README](../README.md) (the results chart and the judges' path) → [the judges' page](https://ratchet.dualmindlab.tech/judges) → [VERIFY](VERIFY.md) to recompute any claim |
 | **A developer who wants it running** | [README: Quick start](../README.md#quick-start) → [API](API.md) → [CONFIGURATION](CONFIGURATION.md) |
-| **An operator hosting it** | [DEPLOYMENT](DEPLOYMENT.md) → [LIVE_MODE](LIVE_MODE.md) → [RUNBOOK](RUNBOOK.md) |
+| **An operator hosting it** | [WHERE_IT_RUNS](WHERE_IT_RUNS.md) → [DEPLOYMENT](DEPLOYMENT.md) → [LIVE_MODE](LIVE_MODE.md) → [RUNBOOK](RUNBOOK.md) |
 | **Reviewing security or licenses** | [THREAT_MODEL](THREAT_MODEL.md) → [README: Why license-clean](../README.md#why-license-clean) → [ADR 0001](adr/0001-open-teacher-only.md) and [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md) |
 | **Contributing** | [../CONTRIBUTING.md](../CONTRIBUTING.md) → [ARCHITECTURE](ARCHITECTURE.md) → [TESTING](TESTING.md) |
 
@@ -34,6 +34,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 | Doc | What it covers |
 |---|---|
+| [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md) | Where every part runs today (laptop, Cloudflare, Token Factory) and where it is designed to run on Nebius, and the one command that hosts it all there (scripted, not yet run on a real account) |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Local mock mode and live mode on Nebius step by step, cost estimates, keeping the demo alive |
 | [LIVE_MODE.md](LIVE_MODE.md) | Running against real Token Factory, the student endpoint and nightly jobs, measuring a live run |
 | [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | Hosting the public demo on one Nebius CPU VM: setup, mock to live, costs, monitoring, backups, security, teardown |
@@ -62,7 +63,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 ## Images
 
-`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models). `img/toolcall-results.svg` is the tool-calling chart, drawn by `scripts/toolcall_results_svg.py` from `evidence/toolcall/results.json` (`--check` compares only). `img/results.svg` is the README's results chart, drawn from the exam data by `scripts/readme_results_svg.py`. `img/architecture.svg` and its two PNGs (`architecture-light.png`, `architecture-dark.png`, and a 1200 by 800 copy for Devpost) are the architecture diagram, drawn by `scripts/render_architecture.py`. `img/anim/` holds the README's animations.
+`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models). `img/toolcall-results.svg` is the tool-calling chart, drawn by `scripts/toolcall_results_svg.py` from `evidence/toolcall/results.json` (`--check` compares only). `img/results.svg` is the README's results chart, drawn from the exam data by `scripts/readme_results_svg.py`. `img/architecture.svg` and its two PNGs (`architecture-light.png`, `architecture-dark.png`, and a 1200 by 800 copy for Devpost) are the architecture diagram, drawn by `scripts/render_architecture.py`. `img/where-it-runs.svg` and its two PNGs (`where-it-runs-light.png`, `where-it-runs-dark.png`) are the map of where everything runs, drawn in the same style and rendered by the same script. `img/run-on-nebius.svg` is the README's text-only "Run on Nebius" badge. `img/anim/` holds the README's animations.
 
 ## Repo-level files
 

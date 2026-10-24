@@ -1,0 +1,191 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="wir-t wir-d" font-family="'Inter', system-ui, sans-serif">
+  <title id="wir-t">Where everything runs</title>
+  <desc id="wir-d">Where each part of Ratchet runs. Real today: development and tests on the owner's laptop in mock mode with no GPU; the adapters were trained on a free Colab T4 and a rented Modal T4; the public live demo and the simulation demo run on Cloudflare Workers with Containers, CPU only, and the live demo has no student endpoint, so the teacher answers every call; the teacher, Nemotron 3 Ultra, runs on Nebius Token Factory. Designed for Nebius AI Cloud, scripted and tested offline but not yet run on a real account: a CPU virtual machine for the gateway, ledger and Caddy, a serverless endpoint for the student with vLLM and a LoRA adapter, a serverless job for Night School training, and an object storage bucket. One command, make nebius-plan, prints every step.</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mk" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mkb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+  </defs>
+  <style>
+    .bg{fill:#fbfaf7}
+    .card{fill:#ffffff;stroke:#d3cfc6;stroke-width:1.5}
+    .cardS{fill:#e3eefc;stroke:#2a78d6;stroke-width:1.5}
+    .cardT{fill:#fdeae1;stroke:#eb6834;stroke-width:1.5}
+    .inner{fill:#ffffff;stroke:#d3cfc6;stroke-width:1.2}
+    .chip{fill:#f7f6f2;stroke:#d3cfc6;stroke-width:1.2}
+    .chipS{fill:#e3eefc;stroke:#2a78d6;stroke-width:1.5}
+    .grp{fill:none;stroke:#b9b5aa;stroke-width:1.5;stroke-dasharray:7 7}
+    .ar{fill:none;stroke:#77746d;stroke-width:2.5;stroke-linecap:round}
+    .arb{fill:none;stroke:#2a78d6;stroke-width:3.5;stroke-linecap:round}
+    .mk{stroke:#77746d}
+    .mkb{stroke:#2a78d6}
+    .t{fill:#121212}
+    .t2{fill:#3d3c39}
+    .m{fill:#64625d}
+    .bi{fill:#1c5cab}
+    .ri{fill:#b4461a}
+    .badge{fill:#121212}
+    .badgeT{fill:#fbfaf7}
+    .badgeB{fill:#2a78d6}
+    .dot{fill:#b9b5aa}
+    .rail{stroke:#d3cfc6;stroke-width:2}
+    .bad{stroke:#c92a2a;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+    .sw{fill:#2a78d6}
+    .swT{fill:#eb6834}
+    .planS{fill:#fbfaf7;stroke:#2a78d6;stroke-width:1.8;stroke-dasharray:8 6}
+    .planC{fill:#fbfaf7;stroke:#77746d;stroke-width:1.8;stroke-dasharray:8 6}
+    .arD{fill:none;stroke:#2a78d6;stroke-width:2.5;stroke-linecap:round;stroke-dasharray:3 7}
+    .zoneD{fill:none;stroke:#2a78d6;stroke-width:1.5;stroke-dasharray:3 6}
+    .pill{fill:#121212}
+    .pillT{fill:#fbfaf7}
+    .pillG{fill:#eb6834}
+    .h{font-weight:600}
+    .mo{font-family:'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;font-weight:500}
+    @media (prefers-color-scheme: dark){
+    /*dark:start*/
+    .bg{fill:#0b0b0c}
+    .card{fill:#141416;stroke:#34343a}
+    .cardS{fill:#192433;stroke:#3987e5}
+    .cardT{fill:#331f19;stroke:#d95926}
+    .inner{fill:#1a1a1d;stroke:#34343a}
+    .chip{fill:#1a1a1d;stroke:#34343a}
+    .chipS{fill:#192433;stroke:#3987e5}
+    .grp{stroke:#4a4a52}
+    .ar{stroke:#8f8e87}
+    .arb{stroke:#3987e5}
+    .mk{stroke:#8f8e87}
+    .mkb{stroke:#3987e5}
+    .t{fill:#f2f1ec}
+    .t2{fill:#d6d5cf}
+    .m{fill:#a4a39c}
+    .bi{fill:#86b6ef}
+    .ri{fill:#f29a72}
+    .badge{fill:#f2f1ec}
+    .badgeT{fill:#0b0b0c}
+    .badgeB{fill:#3987e5}
+    .dot{fill:#4a4a52}
+    .rail{stroke:#34343a}
+    .bad{stroke:#ff6b6b}
+    .sw{fill:#3987e5}
+    .swT{fill:#d95926}
+    .planS{fill:#0b0b0c;stroke:#3987e5}
+    .planC{fill:#0b0b0c;stroke:#8f8e87}
+    .arD{stroke:#3987e5}
+    .zoneD{stroke:#3987e5}
+    .pill{fill:#f2f1ec}
+    .pillT{fill:#0b0b0c}
+    .pillG{fill:#d95926}
+    /*dark:end*/
+    }
+  </style>
+  <rect class="bg" width="1600" height="900"/>
+  <text x="64" y="76" class="mo bi" font-size="16" letter-spacing="2.5">WHERE EVERYTHING RUNS</text>
+  <text x="64" y="128" class="t h" font-size="40" letter-spacing="-0.8">What runs today, and what is only designed for Nebius.</text>
+  <rect class="grp" x="64" y="176" width="320" height="378" rx="24"/>
+  <text x="88" y="208" class="mo m" font-size="14" letter-spacing="1.5">YOUR LAPTOP · REAL</text>
+  <rect class="card" x="84" y="224" width="280" height="150" rx="16"/>
+  <text x="104" y="258" class="t h" font-size="21">Development</text>
+  <rect class="pill" x="284" y="238" width="64" height="28" rx="14"/>
+  <text x="316.0" y="257" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">CPU</text>
+  <text x="104" y="286" class="mo bi" font-size="15">make demo</text>
+  <text x="104" y="312" class="t2" font-size="16">Mock mode: simulated models,</text>
+  <text x="104" y="334" class="t2" font-size="16">no keys, no GPU.</text>
+  <text x="104" y="356" class="t2" font-size="16">Open localhost:8000.</text>
+  <rect class="card" x="84" y="390" width="280" height="140" rx="16"/>
+  <text x="104" y="424" class="t h" font-size="21">Tests and CI</text>
+  <rect class="pill" x="284" y="404" width="64" height="28" rx="14"/>
+  <text x="316.0" y="423" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">CPU</text>
+  <text x="104" y="452" class="t2" font-size="16">pytest, lint, reference runs.</text>
+  <text x="104" y="474" class="t2" font-size="16">No network, no GPU.</text>
+  <text x="104" y="496" class="t2" font-size="16">Same checks on GitHub.</text>
+  <rect class="grp" x="64" y="578" width="320" height="212" rx="24"/>
+  <text x="88" y="610" class="mo m" font-size="14" letter-spacing="1.5">RENTED GPUS · REAL</text>
+  <rect class="card" x="84" y="626" width="280" height="140" rx="16"/>
+  <text x="104" y="660" class="t h" font-size="21">Adapter training</text>
+  <rect class="pillG" x="284" y="640" width="64" height="28" rx="14"/>
+  <text x="316.0" y="659" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">GPU</text>
+  <text x="104" y="688" class="t2" font-size="16">Free Colab T4 and a rented</text>
+  <text x="104" y="710" class="t2" font-size="16">Modal T4: LoRA training only.</text>
+  <text x="104" y="732" class="t2" font-size="16">Nothing is served from them.</text>
+  <rect class="grp" x="424" y="176" width="372" height="614" rx="24"/>
+  <text x="448" y="208" class="mo m" font-size="14" letter-spacing="1.5">CLOUDFLARE · REAL, CPU ONLY</text>
+  <rect class="card" x="444" y="224" width="332" height="190" rx="16"/>
+  <text x="464" y="258" class="t h" font-size="21">Live demo</text>
+  <rect class="pill" x="696" y="238" width="64" height="28" rx="14"/>
+  <text x="728.0" y="257" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">CPU</text>
+  <text x="464" y="286" class="mo bi" font-size="15">live.ratchet.dualmindlab.tech</text>
+  <text x="464" y="312" class="t2" font-size="16">Workers + Containers.</text>
+  <text x="464" y="334" class="t2" font-size="16">Gateway, dashboard, Scout.</text>
+  <text x="464" y="356" class="t2" font-size="16">No student endpoint: the</text>
+  <text x="464" y="378" class="t2" font-size="16">teacher answers every call.</text>
+  <rect class="card" x="444" y="430" width="332" height="190" rx="16"/>
+  <text x="464" y="464" class="t h" font-size="21">Simulation demo</text>
+  <rect class="pill" x="696" y="444" width="64" height="28" rx="14"/>
+  <text x="728.0" y="463" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">CPU</text>
+  <text x="464" y="492" class="mo bi" font-size="15">demo.ratchet.dualmindlab.tech</text>
+  <text x="464" y="518" class="t2" font-size="16">Workers + Containers.</text>
+  <text x="464" y="540" class="t2" font-size="16">Mock models, no keys.</text>
+  <text x="464" y="562" class="t2" font-size="16">Run days, break a deploy,</text>
+  <text x="464" y="584" class="t2" font-size="16">watch the rollback.</text>
+  <rect class="card" x="444" y="636" width="332" height="140" rx="16"/>
+  <text x="464" y="670" class="t h" font-size="21">Story site and docs</text>
+  <text x="464" y="698" class="mo bi" font-size="15">docs.ratchet.dualmindlab.tech</text>
+  <text x="464" y="724" class="t2" font-size="16">Cloudflare Pages: static</text>
+  <text x="464" y="746" class="t2" font-size="16">pages, no server code.</text>
+  <rect class="grp" x="836" y="176" width="360" height="300" rx="24"/>
+  <text x="860" y="208" class="mo m" font-size="14" letter-spacing="1.5">NEBIUS TOKEN FACTORY · REAL</text>
+  <rect class="cardT" x="856" y="224" width="320" height="230" rx="16"/>
+  <text x="876" y="258" class="t h" font-size="21">Teacher</text>
+  <text x="876" y="286" class="mo ri" font-size="15">Nemotron 3 Ultra</text>
+  <text x="876" y="312" class="t2" font-size="16">Real API calls from the</text>
+  <text x="876" y="334" class="t2" font-size="16">live demo, billed per token.</text>
+  <text x="876" y="356" class="t2" font-size="16"></text>
+  <text x="876" y="378" class="t2" font-size="16">The only part that runs</text>
+  <text x="876" y="400" class="t2" font-size="16">on Nebius today.</text>
+  <rect class="zoneD" x="1236" y="176" width="300" height="300" rx="24"/>
+  <text x="1260" y="208" class="mo m" font-size="14" letter-spacing="1.5">HOST IT ALL ON NEBIUS</text>
+  <text x="1260" y="250" class="t2" font-size="16">Print every step with:</text>
+  <rect class="chip" x="1260" y="268" width="252" height="44" rx="10"/>
+  <text x="1386" y="296" class="mo t" font-size="17" text-anchor="middle">make nebius-plan</text>
+  <text x="1260" y="350" class="t2" font-size="16">Then, with a flag and a</text>
+  <text x="1260" y="372" class="t2" font-size="16">confirmation: make nebius-up.</text>
+  <text x="1260" y="414" class="t h" font-size="16">Scripted and tested offline.</text>
+  <text x="1260" y="436" class="t h" font-size="15">Not yet run on a real account.</text>
+  <rect class="zoneD" x="836" y="506" width="700" height="284" rx="24"/>
+  <text x="860" y="538" class="mo m" font-size="14" letter-spacing="1.5">NEBIUS AI CLOUD · NOT RUN YET</text>
+  <rect class="planC" x="856" y="546" width="312" height="100" rx="16"/>
+  <text x="876" y="580" class="t h" font-size="21">CPU VM</text>
+  <rect class="pill" x="1088" y="560" width="64" height="28" rx="14"/>
+  <text x="1120.0" y="579" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">CPU</text>
+  <text x="876" y="608" class="t2" font-size="16">Gateway, ledger, Caddy.</text>
+  <text x="876" y="630" class="t2" font-size="16">About $0.06 an hour (estimate).</text>
+  <rect class="planS" x="1208" y="546" width="312" height="100" rx="16"/>
+  <text x="1228" y="580" class="t h" font-size="21">Student endpoint</text>
+  <rect class="pillG" x="1440" y="560" width="64" height="28" rx="14"/>
+  <text x="1472.0" y="579" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">GPU</text>
+  <text x="1228" y="608" class="t2" font-size="16">vLLM + LoRA adapter.</text>
+  <text x="1228" y="630" class="t2" font-size="16">GPU, billed while it runs.</text>
+  <rect class="planS" x="856" y="676" width="312" height="100" rx="16"/>
+  <text x="876" y="710" class="t h" font-size="21">Training job</text>
+  <rect class="pillG" x="1088" y="690" width="64" height="28" rx="14"/>
+  <text x="1120.0" y="709" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">GPU</text>
+  <text x="876" y="738" class="t2" font-size="16">Night School: LoRA fine-tune,</text>
+  <text x="876" y="760" class="t2" font-size="16">then the exam. GPU, 2 h cap.</text>
+  <rect class="planC" x="1208" y="676" width="312" height="100" rx="16"/>
+  <text x="1228" y="710" class="t h" font-size="21">Object Storage bucket</text>
+  <text x="1228" y="738" class="t2" font-size="16">Datasets and adapters,</text>
+  <text x="1228" y="760" class="t2" font-size="16">mounted at /data.</text>
+  <path class="ar" d="M778 304 H832" marker-end="url(#ah)"/>
+  <text x="805" y="294" class="m" font-size="14" text-anchor="middle">calls</text>
+  <path class="arD" d="M1162 544 V480" marker-end="url(#ab)"/>
+  <path class="arD" d="M1170 596 H1204" marker-end="url(#ab)"/>
+  <path class="arD" d="M1364 648 V672" marker-end="url(#ab)"/>
+  <path class="arD" d="M1170 726 H1204" marker-end="url(#ab)"/>
+  <rect class="card" x="64" y="818" width="26" height="20" rx="6"/>
+  <text x="100" y="834" class="t h" font-size="16">Real today</text>
+  <rect class="planS" x="236" y="818" width="26" height="20" rx="6"/>
+  <text x="272" y="834" class="t h" font-size="16">Scripted and tested offline, not yet run on a real account</text>
+  <rect class="pillG" x="760" y="816" width="50" height="24" rx="12"/>
+  <text x="785" y="833" class="pillT mo" font-size="13" text-anchor="middle" letter-spacing="1" fill="#fff">GPU</text>
+  <text x="822" y="834" class="t2" font-size="16">= training and the student endpoint. All else is CPU.</text>
+  <text x="64" y="874" class="m" font-size="16">The public demos have no student endpoint. None of our own code has been deployed to Nebius AI Cloud yet.</text>
+</svg>

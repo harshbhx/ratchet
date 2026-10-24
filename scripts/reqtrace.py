@@ -994,7 +994,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "web/src/lib/recording-model.ts",
     ),
     # 6.11 Demo hosting
-    "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml"),
+    "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml", "deploy/nebius/nebius.sh", "deploy/vm/set_env.sh"),
     "FR-11.2": ("deploy/vm/backup.sh", "deploy/vm/update.sh"),
     "FR-11.32": (
         "ratchet.watch:tick",

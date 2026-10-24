@@ -109,7 +109,7 @@ A signed BOM is the operator's signed statement of the data and evaluation behin
 ## 8. The test suite and the requirements matrix
 
 ```bash
-make test                      # 1922 tests, no network, no GPU
+make test                      # 1934 tests, no network, no GPU
 python scripts/reqtrace.py --check
 ```
 

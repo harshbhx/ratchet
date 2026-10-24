@@ -135,7 +135,7 @@ The text-to-SQL results (the headline) and the smaller tool-calling results, bot
 | Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` with a LoRA adapter, vLLM on a Serverless Endpoint |
 | Night School | Serverless Jobs on an L40S, with TRL and PEFT |
 | Datasets and adapters | An Object Storage bucket mounted in the job and the endpoint |
-| Public demo host | Cloudflare Workers with Containers today; a Nebius CPU VM (`2vcpu-8gb`) is scripted and ready to run, not deployed |
+| Public demo host | Cloudflare Workers with Containers today; a Nebius CPU VM (`2vcpu-8gb`) is scripted and tested offline, not yet run on a real account (`make nebius-plan` prints every step) |
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) |
 
 Token Factory did not offer fine-tuning or LoRA serving for Nemotron (Oct 2026), so the student is trained and served on Nebius AI Cloud. [Host it on Nebius](/guides/host-on-nebius/)

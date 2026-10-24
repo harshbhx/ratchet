@@ -306,7 +306,7 @@ The run's planned gate profile is set on the gateway, not here: `RATCHET_SEQUENT
 
 ## Deploy scripts (`deploy/`)
 
-Read only by `deploy/train_job.sh` and `deploy/student_endpoint.sh` on the machine that runs the `nebius` CLI, never by the gateway (`config.DEPLOY_ENV` lists them so the traceability check holds each to a row here). The Nebius commands follow the CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026); [DEPLOYMENT.md](DEPLOYMENT.md#step-4-student-endpoint-vllm-with-runtime-lora) has the actions.
+Read only by `deploy/train_job.sh`, `deploy/student_endpoint.sh` and the one-command script `deploy/nebius/nebius.sh` ([WHERE_IT_RUNS.md](WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius)) on the machine that runs the `nebius` CLI, never by the gateway (`config.DEPLOY_ENV` lists them so the traceability check holds each to a row here). The Nebius commands follow the CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026); [DEPLOYMENT.md](DEPLOYMENT.md#step-4-student-endpoint-vllm-with-runtime-lora) has the actions.
 
 | Variable | Used by | Default | Meaning |
 |---|---|---|---|
@@ -331,6 +331,9 @@ Read only by `deploy/train_job.sh` and `deploy/student_endpoint.sh` on the machi
 | `RATCHET_SERVE_TEMPLATE_KWARGS` | `student_endpoint.sh` | `{"enable_thinking":false}` | vLLM `--default-chat-template-kwargs` (a JSON object, checked before `create`; no single quote), so the student answers without reasoning unless a request asks. Set but empty to leave the flag out (requests then carry their own `chat_template_kwargs`) |
 | `RATCHET_REASONING_PARSER_PLUGIN` | `student_endpoint.sh` | empty | Absolute path in the container of the model card's `nano_v3_reasoning_parser.py` (for example `/data/nano_v3_reasoning_parser.py`, uploaded to the bucket). When set, vLLM gets `--reasoning-parser-plugin <file> --reasoning-parser nano_v3` |
 | `RATCHET_STUDENT_BASE_MODEL` | both | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Base model |
+| `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY` | `nebius.sh` | unset | Must be `1`, together with `--yes`, for `up` or `down` to create or delete anything; without both, those commands are a dry run that calls no Nebius API. `plan` and `status` ignore it |
+| `RATCHET_TRAIN_VERSION` | `nebius.sh` | `student-v1` | Version name of the training job `up --with-training` submits through `train_job.sh` |
+| `RATCHET_SMOKE_CMD` | `nebius.sh` | empty (`scripts/demo_check.py`) | One executable called as `<cmd> https://<domain> --mode mock\|live` for the smoke check after `up` (tests set a stub) |
 
 ## Prices (`DEFAULT_PRICES`)
 

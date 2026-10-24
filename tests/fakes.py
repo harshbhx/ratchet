@@ -462,6 +462,17 @@ with open({log!r}, "a", encoding="utf-8") as f:
 fail = Path({fail!r})
 if fail.exists() and any(argv[: len(p)] == p for p in json.loads(fail.read_text(encoding="utf-8"))):
     sys.exit("nebius: the fake was told to fail this call")
+resp = Path({responses!r})
+if resp.exists():
+    best = None
+    for prefix, stdout, code in json.loads(resp.read_text(encoding="utf-8")):
+        if argv[: len(prefix)] == prefix and (best is None or len(prefix) >= len(best[0])):
+            best = (prefix, stdout, code)
+    if best is not None:
+        sys.stdout.write(best[1])
+        if best[2]:
+            sys.exit(best[2])
+        sys.exit(0)
 listing = Path({listing!r})
 if argv[:3] == ["ai", "endpoint", "list"] and listing.exists():
     sys.stdout.write(listing.read_text(encoding="utf-8"))
@@ -479,14 +490,26 @@ class FakeNebius:
         self.bin = root / "fake-nebius-bin"
         self.bin.mkdir(exist_ok=True)
         self._log, self._listing, self._fail = root / "nebius-calls.jsonl", root / "nebius-list.json", root / "nebius-fail.json"
+        self._responses = root / "nebius-responses.json"
+        self._table: list[list[Any]] = []
         script = self.bin / "fake_nebius.py"
         script.write_text(
-            _FAKE_NEBIUS_PY.format(log=str(self._log), fail=str(self._fail), listing=str(self._listing)), encoding="utf-8"
+            _FAKE_NEBIUS_PY.format(
+                log=str(self._log), fail=str(self._fail), listing=str(self._listing), responses=str(self._responses)
+            ),
+            encoding="utf-8",
         )
         launcher = self.bin / "nebius"
         launcher.write_text(f'#!/usr/bin/env bash\nexec "{sys.executable}" -I "{script}" "$@"\n', encoding="utf-8")
         launcher.chmod(0o755)
         self.listing(self.fixture())
+
+    def respond(self, prefix: list[str], stdout: str = "", code: int = 0) -> None:
+        """Calls whose argv starts with `prefix` print `stdout` and exit `code` (the longest matching prefix wins; a later
+        call with the same prefix replaces the earlier). The compute, VPC and storage calls the one-command Nebius script
+        makes print nothing otherwise, and `ai endpoint list` keeps printing the listing."""
+        self._table = [row for row in self._table if row[0] != prefix] + [[list(prefix), stdout, code]]
+        self._responses.write_text(json.dumps(self._table), encoding="utf-8")
 
     @staticmethod
     def fixture() -> dict[str, Any]:

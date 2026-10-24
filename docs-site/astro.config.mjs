@@ -198,6 +198,7 @@ export default defineConfig({
         {
           label: 'Run it',
           items: [
+            ...page('reference/where-it-runs', 'Where everything runs'),
             ...guide('host-on-nebius', 'Host on Nebius'),
             ...page('reference/deployment', 'Deployment'),
             ...page('reference/deploy-nebius-vm', 'Demo VM on Nebius'),

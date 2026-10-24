@@ -42,7 +42,7 @@ import Closing from '../../components/home/Closing.astro';
 
 <Section id="proof" index="01" eyebrow="Facts you can check" title="Built to be checked, not taken on trust" lead="Every tile is a fact you can check in the repository. Numbers from the simulator appear elsewhere in these docs, and each one is labelled Simulation.">
   <StatRow cols={3} label="Facts about Ratchet">
-    <Stat value={1922} label="tests in the suite" note="They run offline, with no network and no GPU." />
+    <Stat value={1934} label="tests in the suite" note="They run offline, with no network and no GPU." />
     <Stat value={95} suffix="%" label="held-out precision floor" note="A new adapter must reach it on golden rows it never trained on." tone="owned" />
     <Stat value="Open teachers only" label="license-clean, in code" note="A teacher's license must be on an allowlist; closed models are refused." />
     <Stat value="Signed" label="bill of materials per adapter" note="Ed25519-signed, from the exact training and golden rows, with each teacher and license." tone="owned" />
@@ -59,7 +59,7 @@ import Closing from '../../components/home/Closing.astro';
       <PathCard title="How it works" href="/guides/big-picture/" icon="loop" eyebrow="Concepts" tone="neutral" description="Every part and how they connect: one request, confidence, the ledger, Night School and the release gate." />
       <PathCard title="Text-to-SQL adapter" href="/guides/text-to-sql/" icon="database" eyebrow="Worked example" description="A small model that writes SQLite queries, trained only on teacher answers that were run on a database." />
       <PathCard title="Text-to-SQL adapter: results" href="/guides/results/" icon="chart" eyebrow="Measured" description="The exam on databases it never trained on: how it is scored, and what the run's results file says." />
-      <PathCard title="Host it" href="/guides/host-on-nebius/" icon="server" eyebrow="Deploy" tone="neutral" description="Every Nebius piece, step by step: the CPU VM, Token Factory, the GPU endpoint, the training job and the bucket." />
+      <PathCard title="Run on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="One command" tone="neutral" description="One command prints every step to host Ratchet on Nebius, then runs them. Scripted and tested offline; not yet run on a real account." />
       <PathCard title="API reference" href="/api/http/" icon="code" eyebrow="Reference" tone="neutral" description="Every HTTP route, generated from the gateway's OpenAPI schema, plus every setting and command." />
       <PathCard title="For judges" href="/guides/for-judges/" icon="check" eyebrow="Hackathon" tone="neutral" description="Where the demo is, what to try in five minutes, and which numbers are live and which are simulation." />
     </PathGrid>

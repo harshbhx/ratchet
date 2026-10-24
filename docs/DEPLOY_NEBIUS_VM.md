@@ -4,6 +4,8 @@
 
 This guide puts the Ratchet demo on one small Nebius AI Cloud virtual machine, so judges can use it from **Oct 29 to Dec 15, 2026** if you choose this host. The VM runs three containers: the live Ratchet gateway, a second gateway in mock mode for the simulation, and [Caddy](https://caddyserver.com/), which gets HTTPS certificates automatically. The live gateway is at your domain (the URL for Stage One); the simulation, where judges can run days, break a deploy and watch the rollback for free, is at `sim.<your domain>` ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
 
+> **One command instead of the steps below:** `make nebius-plan` prints every command, and `deploy/nebius/nebius.sh up --yes` (with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`) creates the VM, optionally the student endpoint, wires the VM's `.env` and runs a smoke check; `down` tears it down. It is scripted and tested offline like the rest of this kit, not yet run on a real account. See [Where everything runs](WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius).
+
 Files: [`deploy/vm/`](../deploy/vm/). Facts about Nebius below were checked on docs.nebius.com and nebius.com on **Oct 20, 2026** (items dated Oct 21 and 22 were re-checked then). Anything marked **verify on day 1** has not been run against a real account yet.
 
 ## Why a CPU VM
@@ -300,9 +302,9 @@ On Dec 16, or whenever judging ends. The boot disk was created on its own, so de
 scp ubuntu@<ip>:/var/backups/ratchet/*.db.gz ./ratchet-backups/
 
 VM_ID=$(nebius compute instance get-by-name --parent-id $NEBIUS_PROJECT_ID --name ratchet-demo --format json | jq -r .metadata.id)
-nebius compute instance delete $VM_ID
+nebius compute instance delete --id $VM_ID
 nebius compute disk list --parent-id $NEBIUS_PROJECT_ID     # find ratchet-demo-boot (verify on day 1: flags)
-nebius compute disk delete <disk ID>
+nebius compute disk delete --id <disk ID>
 ```
 
 Then remove the DNS record, stop the student endpoint if it is still running, and rotate the keys listed above.
@@ -315,7 +317,7 @@ Confirmed in the Nebius docs on Oct 20, 2026:
 - `nebius compute instance create` with `--parent-id`, `--name`, `--resources-platform`, `--resources-preset`, `--boot-disk-existing-disk-id`, `--boot-disk-attach-mode`, `--cloud-init-user-data`, `--network-interfaces`, `--format` ([CLI reference](https://docs.nebius.com/cli/reference/compute/instance/create)).
 - `"public_ip_address": {"static": true}` for a static address; `{}` for a dynamic one ([Managing VMs](https://docs.nebius.com/compute/virtual-machines/manage)).
 - Reading the public IP from `.status.network_interfaces[0].public_ip_address.address` with `nebius compute instance get --id` or `get-by-name` ([Compute quickstart](https://docs.nebius.com/compute/quickstart), [Connecting to VMs](https://docs.nebius.com/compute/virtual-machines/connect)).
-- `nebius compute instance delete <id>` (also deletes managed disks, not existing ones) and `nebius compute disk delete <id>` ([instance commands](https://docs.nebius.com/cli/reference/compute/instance), [Managing volumes](https://docs.nebius.com/compute/storage/manage)).
+- `nebius compute instance delete --id <id>` (the `--id` form is unverified; also deletes managed disks, not existing ones) and `nebius compute disk delete --id <id>` ([instance commands](https://docs.nebius.com/cli/reference/compute/instance), [Managing volumes](https://docs.nebius.com/compute/storage/manage)).
 - Platforms `cpu-e2` (eu-north1 only) and `cpu-d3`, preset `2vcpu-8gb` ([VM types](https://docs.nebius.com/compute/virtual-machines/types)); image family `ubuntu24.04-driverless` is the recommended image for both ([boot disk images](https://docs.nebius.com/compute/storage/boot-disk-images)).
 - `nebius profile create --parent-id` ([CLI quickstart](https://docs.nebius.com/cli/quickstart)).
 - `nebius vpc subnet list --parent-id` ([CLI reference](https://docs.nebius.com/cli/reference)).
