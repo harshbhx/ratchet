@@ -6,7 +6,7 @@
 
 export type ToolExamId = "hard" | "bfcl";
 export type ToolModelId = "base" | "ultra" | "adapter";
-export type Verdict = "above" | "about_same" | "below";
+export type Verdict = "above" | "about_same" | "below" | "higher" | "lower";
 
 export interface ToolScore {
   agree: number;

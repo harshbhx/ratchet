@@ -34,3 +34,12 @@ test("a file whose variant or counts do not follow is refused", () => {
   assert.throws(() => m.parseToolcall(file("B", sc(40, 100, 0.31, 0.5), sc(30, 100, 0.22, 0.4))), /variant/);
   assert.throws(() => m.parseToolcall(file("A", { ...sc(40, 100, 0.31, 0.5), rate: 0.9 }, sc(30, 100, 0.22, 0.4))), /inconsistent/);
 });
+
+test("the lower and higher verdicts (overlapping ranges, a gap of 5 points or more) are read as they are", () => {
+  const d = JSON.parse(file("A", sc(40, 100, 0.31, 0.5), sc(30, 100, 0.22, 0.4)));
+  d.exams.bfcl.verdicts = { adapter_vs_base: "higher", adapter_vs_ultra: "lower" };
+  const read = m.parseToolcall(JSON.stringify(d));
+  assert.equal(read.exams.bfcl.verdicts.adapter_vs_ultra, "lower");
+  assert.equal(read.exams.bfcl.verdicts.adapter_vs_base, "higher");
+  assert.equal(read.variant, "A");
+});

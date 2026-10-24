@@ -303,7 +303,7 @@
   },
   "bfcl": {
    "adapter_vs_base": "about_same",
-   "adapter_vs_ultra": "about_same"
+   "adapter_vs_ultra": "lower"
   }
  },
  "headline": {
