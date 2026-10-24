@@ -73,7 +73,14 @@
 
 ## Real results
 
-<p align="center"><img src="docs/img/results.svg" alt="Strict scores on two text-to-SQL exams: untrained, teacher, adapter round 1 and round 2" width="100%"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/results.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-results-dark.gif">
+    <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-results-light.gif">
+    <img src="docs/img/results.svg" alt="Strict scores on two text-to-SQL exams: untrained, teacher, adapter round 1 and round 2, with the 95% range" width="100%">
+  </picture>
+</p>
 
 A small Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $23 (about $15 of teacher answers and about $8 of rented GPU), scores 2.6 to 3.0 times the untrained model on two exams, one written by the teacher and one by a different model. Every score recomputes from the saved answers. These are **measured** results on real models, 22 to 24 Oct 2026, not the simulation. They are strict (exact rows), and at a 95% precision bar the student answers about 2% of questions by itself, so most traffic still goes to the teacher. The adapter was trained on rented T4 GPUs (a free Colab T4 and a Modal T4), not on Nebius GPUs, on synthetic data.
 
