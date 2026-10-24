@@ -1,118 +1,219 @@
 ---
 /**
- * An "Ask AI" menu under every page title: open this page in ChatGPT, Claude or Perplexity, copy the page text, or copy its link.
- * The three assistant links carry a short prompt that names this page's public address, so the assistant reads the live page.
- * Nothing is sent from this site; the page text is copied only when the reader chooses "Copy page".
+ * Page actions under every page title, in the shape readers now expect from documentation: one split button, "Copy page", whose
+ * menu holds the page as Markdown (copy it, or open its source), the page's address, and a prompt that opens ChatGPT, Claude or
+ * Perplexity with this page named in it.
+ *
+ * The Markdown is made in the browser from the page you are reading (headings, lists, tables, code and callouts), so it is what
+ * the reader sees, not the source's component tags. "View as Markdown" opens the source file as plain text on GitHub; it is
+ * left out on a page that has no source file. Nothing is sent from this site: the page text goes to the clipboard only when the
+ * reader chooses to copy it, and the assistant links carry the page's address, never its text.
  */
 const route = Astro.locals.starlightRoute;
 const title = String(route.entry.data.title ?? 'this page');
 const page = new URL(Astro.url.pathname, Astro.site ?? Astro.url).href;
-const prompt = `Read this page of the Ratchet documentation: ${page}\n\nThen answer my questions about it. Quote the page where you can, and say so when the page does not cover something.`;
-const q = encodeURIComponent(prompt);
-const items = [
-  { label: 'Open in ChatGPT', hint: 'Ask ChatGPT about this page', href: `https://chatgpt.com/?q=${q}`, icon: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z' },
-  { label: 'Open in Claude', hint: 'Ask Claude about this page', href: `https://claude.ai/new?q=${q}`, icon: 'M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4' },
-  { label: 'Open in Perplexity', hint: 'Search with this page as the source', href: `https://www.perplexity.ai/search?q=${q}`, icon: 'M12 3 4 8v8l8 5 8-5V8l-8-5Zm0 0v18M4 8l8 5 8-5' },
+// The edit link points at the source file on GitHub (docs/ for the reference pages, docs-site/ for the guides).
+const edit = route.editUrl ? route.editUrl.toString() : '';
+const blob = edit.replace('/edit/', '/blob/');
+const raw = edit.replace('https://github.com/', 'https://raw.githubusercontent.com/').replace('/edit/', '/');
+const assistants = [
+  { name: 'ChatGPT', hint: 'Ask about this page', base: 'https://chatgpt.com/?q=', icon: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z' },
+  { name: 'Claude', hint: 'Ask about this page', base: 'https://claude.ai/new?q=', icon: 'M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4' },
+  { name: 'Perplexity', hint: 'Search with this page as the source', base: 'https://www.perplexity.ai/search?q=', icon: 'M12 3 4 8v8l8 5 8-5V8l-8-5Zm0 0v18M4 8l8 5 8-5' },
 ];
+const ask = (src: string) =>
+  encodeURIComponent(
+    `Read this page of the Ratchet documentation: ${page}${src ? `\nIts Markdown source: ${src}` : ''}\n\nThen answer my questions about it. Quote the page where you can, and say so when the page does not cover something.`,
+  );
 ---
 
-<div class="rt-ask" data-title={title} data-url={page}>
-  <details class="rt-ask__menu">
-    <summary class="rt-ask__trigger" aria-haspopup="menu">
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"></path><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"></path></svg>
-      Ask AI
-      <svg class="rt-ask__chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
-    </summary>
-    <div class="rt-ask__list" role="menu" aria-label="Ask AI about this page">
-      {
-        items.map((it) => (
-          <a class="rt-ask__item" role="menuitem" href={it.href} target="_blank" rel="noopener noreferrer">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={it.icon}></path></svg>
-            <span><strong>{it.label}</strong><small>{it.hint}</small></span>
-            <svg class="rt-ask__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg>
-          </a>
-        ))
-      }
-      <hr class="rt-ask__rule" />
-      <button type="button" class="rt-ask__item" role="menuitem" data-copy="page">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
-        <span><strong>Copy page</strong><small>The text of this page, to paste anywhere</small></span>
-      </button>
-      <button type="button" class="rt-ask__item" role="menuitem" data-copy="link">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg>
-        <span><strong>Copy link</strong><small>The address of this page</small></span>
-      </button>
-    </div>
-  </details>
-  <span class="rt-ask__status" role="status" aria-live="polite" data-status></span>
+<div class="rt-pa" data-title={title} data-url={page} data-raw={raw} data-blob={blob}>
+  <div class="rt-pa__group">
+    <button type="button" class="rt-pa__main" data-copy="page">
+      <span class="rt-pa__ico" data-ico="copy" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
+      </span>
+      <span class="rt-pa__ico rt-pa__ico--done" data-ico="done" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"></path></svg>
+      </span>
+      <span data-label>Copy page</span>
+    </button>
+    <button type="button" class="rt-pa__more" aria-haspopup="menu" aria-expanded="false" aria-controls="rt-pa-menu" aria-label="More page actions">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+    </button>
+  </div>
+
+  <div class="rt-pa__menu" id="rt-pa-menu" role="menu" aria-label="Page actions" hidden>
+    <p class="rt-pa__label">This page</p>
+    <button type="button" class="rt-pa__item" role="menuitem" data-copy="page">
+      <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg></span>
+      <span class="rt-pa__text"><strong>Copy page</strong><small>As Markdown, for any assistant or editor</small></span>
+    </button>
+    {
+      raw && (
+        <a class="rt-pa__item" role="menuitem" href={raw} target="_blank" rel="noopener noreferrer">
+          <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"></path><path d="M14 3v5h5M9 13h6M9 17h4"></path></svg></span>
+          <span class="rt-pa__text"><strong>View as Markdown</strong><small>The source file, as plain text</small></span>
+          <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg>
+        </a>
+      )
+    }
+    {
+      blob && (
+        <a class="rt-pa__item" role="menuitem" href={blob} target="_blank" rel="noopener noreferrer">
+          <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 8-5 4 5 4M16 8l5 4-5 4M14 5l-4 14"></path></svg></span>
+          <span class="rt-pa__text"><strong>View source</strong><small>This file in the repository</small></span>
+          <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg>
+        </a>
+      )
+    }
+    <button type="button" class="rt-pa__item" role="menuitem" data-copy="link">
+      <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg></span>
+      <span class="rt-pa__text"><strong>Copy link</strong><small>The address of this page</small></span>
+    </button>
+
+    <p class="rt-pa__label">Ask AI</p>
+    {
+      assistants.map((a) => (
+        <a class="rt-pa__item" role="menuitem" href={`${a.base}${ask(raw)}`} data-assistant={a.base} target="_blank" rel="noopener noreferrer">
+          <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={a.icon}></path></svg></span>
+          <span class="rt-pa__text"><strong>Open in {a.name}</strong><small>{a.hint}</small></span>
+          <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg>
+        </a>
+      ))
+    }
+  </div>
+  <span class="rt-pa__status" role="status" aria-live="polite" data-status></span>
 </div>
 
 <style>
-  .rt-ask {
+  .rt-pa {
     position: relative;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 0.75rem;
     margin-top: 1rem;
   }
-  .rt-ask__menu {
-    position: relative;
+  .rt-pa__group {
+    display: inline-flex;
+    border: 1px solid var(--rt-line, var(--sl-color-hairline));
+    border-radius: 0.7rem;
+    background: var(--rt-surface, var(--sl-color-bg-nav, transparent));
+    overflow: hidden;
   }
-  .rt-ask__trigger {
+  .rt-pa__main,
+  .rt-pa__more {
     display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
-    padding: 0.4rem 0.8rem;
-    list-style: none;
-    border: 1px solid var(--rt-line, var(--sl-color-hairline));
-    border-radius: 999px;
-    background: var(--sl-color-bg-nav, transparent);
+    gap: 0.5rem;
+    border: 0;
+    background: transparent;
     color: var(--sl-color-gray-1);
+    font: inherit;
     font-size: 0.82rem;
     font-weight: 500;
     line-height: 1.2;
     cursor: pointer;
-    user-select: none;
+    transition: background 0.12s, color 0.12s;
   }
-  .rt-ask__trigger::-webkit-details-marker {
-    display: none;
+  .rt-pa__main {
+    padding: 0.45rem 0.85rem 0.45rem 0.75rem;
+    min-width: 7.9rem;
   }
-  .rt-ask__trigger:hover,
-  .rt-ask__menu[open] > .rt-ask__trigger {
+  .rt-pa__more {
+    padding: 0.45rem 0.55rem;
+    border-left: 1px solid var(--rt-line, var(--sl-color-hairline));
+  }
+  .rt-pa__main:hover,
+  .rt-pa__more:hover,
+  .rt-pa__more[aria-expanded='true'] {
+    background: var(--rt-surface-2, var(--sl-color-gray-6));
     color: var(--sl-color-white);
-    border-color: var(--sl-color-gray-3);
   }
-  .rt-ask__trigger:focus-visible {
+  .rt-pa__main:focus-visible,
+  .rt-pa__more:focus-visible,
+  .rt-pa__item:focus-visible {
     outline: 2px solid var(--sl-color-accent);
-    outline-offset: 2px;
+    outline-offset: -2px;
   }
-  .rt-ask__chev {
+  .rt-pa__more svg {
     transition: transform 0.15s;
   }
-  .rt-ask__menu[open] .rt-ask__chev {
+  .rt-pa__more[aria-expanded='true'] svg {
     transform: rotate(180deg);
   }
-  .rt-ask__list {
+  .rt-pa__ico {
+    display: inline-grid;
+    place-items: center;
+    width: 15px;
+    height: 15px;
+  }
+  .rt-pa__ico--done {
+    display: none;
+    color: var(--rt-good-ink, #51cf66);
+  }
+  .rt-pa[data-state='done'] [data-ico='copy'] {
+    display: none;
+  }
+  .rt-pa[data-state='done'] .rt-pa__ico--done {
+    display: inline-grid;
+    animation: rt-pop 0.25s ease-out;
+  }
+  @keyframes rt-pop {
+    from {
+      transform: scale(0.6);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  .rt-pa__menu {
     position: absolute;
     z-index: 30;
-    top: calc(100% + 0.4rem);
+    top: calc(100% + 0.45rem);
     left: 0;
-    min-width: 18.5rem;
+    width: 22rem;
     max-width: calc(100vw - 2rem);
-    padding: 0.35rem;
+    padding: 0.4rem;
     border: 1px solid var(--rt-line, var(--sl-color-hairline));
-    border-radius: 0.8rem;
+    border-radius: 0.9rem;
     background: var(--sl-color-bg);
-    box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+    box-shadow: 0 16px 40px rgb(0 0 0 / 0.28);
+    animation: rt-menu 0.14s ease-out;
+    transform-origin: top left;
   }
-  .rt-ask__item {
+  .rt-pa__menu[hidden] {
+    display: none;
+  }
+  @keyframes rt-menu {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .rt-pa__label {
+    margin: 0.45rem 0.6rem 0.25rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-3);
+  }
+  .rt-pa__label:first-child {
+    margin-top: 0.2rem;
+  }
+  .rt-pa__item {
     display: flex;
     align-items: center;
     gap: 0.7rem;
     width: 100%;
-    padding: 0.5rem 0.6rem;
+    padding: 0.42rem 0.5rem;
     border: 0;
-    border-radius: 0.55rem;
+    border-radius: 0.6rem;
     background: transparent;
     color: var(--sl-color-gray-1);
     font: inherit;
@@ -120,56 +221,158 @@ const items = [
     text-decoration: none;
     cursor: pointer;
   }
-  .rt-ask__item > span {
+  .rt-pa__item:hover,
+  .rt-pa__item:focus-visible {
+    background: var(--rt-surface-2, var(--sl-color-gray-6));
+    outline: none;
+  }
+  .rt-pa__item:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--sl-color-accent);
+  }
+  .rt-pa__tile {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--rt-line, var(--sl-color-hairline));
+    border-radius: 0.5rem;
+    background: var(--rt-surface, transparent);
+    color: var(--rt-owned-ink, var(--sl-color-accent));
+  }
+  .rt-pa__text {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-width: 0;
   }
-  .rt-ask__item strong {
+  .rt-pa__text strong {
     font-size: 0.86rem;
     font-weight: 600;
     color: var(--sl-color-white);
   }
-  .rt-ask__item small {
+  .rt-pa__text small {
     font-size: 0.74rem;
     color: var(--sl-color-gray-3);
   }
-  .rt-ask__out {
+  .rt-pa__out {
+    flex: none;
     color: var(--sl-color-gray-3);
   }
-  .rt-ask__item:hover,
-  .rt-ask__item:focus-visible {
-    background: var(--sl-color-gray-6);
-    outline: none;
-  }
-  .rt-ask__rule {
-    height: 1px;
-    margin: 0.3rem 0.4rem;
-    border: 0;
-    background: var(--rt-line, var(--sl-color-hairline));
-  }
-  .rt-ask__status {
+  .rt-pa__status {
     font-size: 0.78rem;
     color: var(--sl-color-gray-3);
   }
   @media (prefers-reduced-motion: reduce) {
-    .rt-ask__chev {
+    .rt-pa__menu,
+    .rt-pa[data-state='done'] .rt-pa__ico--done {
+      animation: none;
+    }
+    .rt-pa__more svg {
       transition: none;
     }
   }
 </style>
 
 <script>
-  document.querySelectorAll<HTMLElement>('.rt-ask').forEach((box) => {
-    const menu = box.querySelector<HTMLDetailsElement>('details');
+  /** The page the reader is on, as Markdown: headings, paragraphs, lists, tables, code, callouts and links. */
+  function toMarkdown(root: HTMLElement): string {
+    const SKIP = new Set(['SCRIPT', 'STYLE', 'SVG', 'BUTTON', 'NAV', 'TEMPLATE']);
+    const squash = (s: string) => s.replace(/\s+/g, ' ');
+    const inline = (n: Node): string => {
+      if (n.nodeType === Node.TEXT_NODE) return squash(n.textContent ?? '');
+      if (!(n instanceof HTMLElement) || SKIP.has(n.tagName.toUpperCase()) || n.classList.contains('sr-only')) return '';
+      const inner = () => [...n.childNodes].map(inline).join('');
+      switch (n.tagName) {
+        case 'STRONG':
+        case 'B':
+          return `**${inner().trim()}**`;
+        case 'EM':
+        case 'I':
+          return `*${inner().trim()}*`;
+        case 'CODE':
+          return '`' + (n.textContent ?? '').trim() + '`';
+        case 'BR':
+          return '\n';
+        case 'IMG':
+          return `![${(n as HTMLImageElement).alt}](${(n as HTMLImageElement).src})`;
+        case 'A': {
+          const href = (n as HTMLAnchorElement).href;
+          const text = inner().trim();
+          return href && text && !n.classList.contains('sl-anchor-link') ? `[${text}](${href})` : text;
+        }
+        default:
+          return inner();
+      }
+    };
+    const cell = (c: Element) => inline(c).trim().replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    const list = (el: HTMLElement, depth: number): string => {
+      const ordered = el.tagName === 'OL';
+      return [...el.children]
+        .filter((li) => li.tagName === 'LI')
+        .map((li, i) => {
+          const own = [...li.childNodes].filter((c) => !(c instanceof HTMLElement && (c.tagName === 'UL' || c.tagName === 'OL')));
+          const nested = [...li.children].filter((c) => c.tagName === 'UL' || c.tagName === 'OL');
+          const pad = '  '.repeat(depth);
+          return (
+            `${pad}${ordered ? `${i + 1}.` : '-'} ${own.map(inline).join('').trim()}` +
+            nested.map((c) => '\n' + list(c as HTMLElement, depth + 1)).join('')
+          );
+        })
+        .join('\n');
+    };
+    const table = (el: HTMLElement): string => {
+      const rows = [...el.querySelectorAll('tr')].map((r) => [...r.children].map(cell));
+      if (!rows.length) return '';
+      const head = rows[0];
+      return [`| ${head.join(' | ')} |`, `|${head.map(() => '---').join('|')}|`, ...rows.slice(1).map((r) => `| ${r.join(' | ')} |`)].join('\n');
+    };
+    const code = (el: HTMLElement): string => {
+      const lang = el.getAttribute('data-language') ?? el.querySelector('code')?.className.match(/language-(\w+)/)?.[1] ?? '';
+      const lines = el.querySelectorAll('.ec-line');
+      const text = lines.length ? [...lines].map((l) => l.textContent ?? '').join('\n') : (el.querySelector('code')?.textContent ?? el.textContent ?? '');
+      return '```' + lang + '\n' + text.replace(/\n+$/, '') + '\n```';
+    };
+    const blocks = (parent: Element): string[] => {
+      const out: string[] = [];
+      for (const el of [...parent.children] as HTMLElement[]) {
+        const tag = el.tagName;
+        if (SKIP.has(tag.toUpperCase()) || el.classList.contains('sr-only') || el.hasAttribute('data-rt-skip')) continue;
+        if (/^H[1-6]$/.test(tag)) out.push('#'.repeat(+tag[1]) + ' ' + inline(el).trim());
+        else if (el.classList.contains('sl-heading-wrapper')) out.push(...blocks(el));
+        else if (tag === 'P') out.push(inline(el).trim());
+        else if (tag === 'UL' || tag === 'OL') out.push(list(el, 0));
+        else if (tag === 'PRE') out.push(code(el));
+        else if (tag === 'FIGURE' && el.querySelector('pre')) out.push(code(el.querySelector('pre') as HTMLElement));
+        else if (tag === 'TABLE') out.push(table(el));
+        else if (tag === 'HR') out.push('---');
+        else if (tag === 'BLOCKQUOTE' || tag === 'ASIDE') {
+          const label = tag === 'ASIDE' ? (el.querySelector('.starlight-aside__title')?.textContent ?? 'Note').trim() : '';
+          const body = blocks(el.querySelector('.starlight-aside__content') ?? el).join('\n\n');
+          out.push(((label ? `**${label}**\n\n` : '') + body).split('\n').map((l) => `> ${l}`.trimEnd()).join('\n'));
+        } else if (el.querySelector('p, ul, ol, pre, table, h1, h2, h3, h4, h5, h6')) out.push(...blocks(el));
+        else {
+          const t = inline(el).trim();
+          if (t) out.push(t);
+        }
+      }
+      return out.filter(Boolean);
+    };
+    return blocks(root).join('\n\n');
+  }
+
+  document.querySelectorAll<HTMLElement>('.rt-pa').forEach((box) => {
+    const more = box.querySelector<HTMLButtonElement>('.rt-pa__more');
+    const menu = box.querySelector<HTMLElement>('.rt-pa__menu');
     const status = box.querySelector<HTMLElement>('[data-status]');
-    if (!menu) return;
-    // The page address was written at build time from the configured site name. Use the address the reader is on instead, so the
-    // assistants always get a page that exists, whichever host serves the docs (pages.dev now, a custom domain later).
+    const label = box.querySelector<HTMLElement>('[data-label]');
+    if (!more || !menu) return;
+
+    // The address was written at build time from the configured site name. Use the address the reader is on, so the assistants
+    // always get a page that exists, whichever host serves the docs.
     const here = location.origin + location.pathname;
     box.dataset.url = here;
-    menu.querySelectorAll<HTMLAnchorElement>('a[role="menuitem"]').forEach((a) => {
+    menu.querySelectorAll<HTMLAnchorElement>('a[data-assistant]').forEach((a) => {
       const u = new URL(a.href);
       const q = u.searchParams.get('q');
       if (q) {
@@ -177,57 +380,75 @@ const items = [
         a.href = u.toString();
       }
     });
-    const close = (focus = false) => {
-      menu.open = false;
-      if (focus) menu.querySelector<HTMLElement>('summary')?.focus();
+
+    const items = () => [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const setOpen = (open: boolean, focusTrigger = false) => {
+      menu.hidden = !open;
+      more.setAttribute('aria-expanded', String(open));
+      if (open) items()[0]?.focus();
+      else if (focusTrigger) more.focus();
     };
+    more.addEventListener('click', () => setOpen(menu.hidden));
     document.addEventListener('click', (e) => {
-      if (menu.open && !menu.contains(e.target as Node)) close();
+      if (!menu.hidden && !box.contains(e.target as Node)) setOpen(false);
     });
-    menu.addEventListener('keydown', (e) => {
-      const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
-      const i = items.indexOf(document.activeElement as HTMLElement);
-      if (e.key === 'Escape') {
-        close(true);
-      } else if (e.key === 'ArrowDown') {
+    box.addEventListener('keydown', (e) => {
+      if (menu.hidden) return;
+      const list = items();
+      const i = list.indexOf(document.activeElement as HTMLElement);
+      if (e.key === 'Escape') setOpen(false, true);
+      else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        items[(i + 1) % items.length]?.focus();
+        list[(i + 1) % list.length]?.focus();
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        items[(i - 1 + items.length) % items.length]?.focus();
-      }
+        list[(i - 1 + list.length) % list.length]?.focus();
+      } else if (e.key === 'Tab') setOpen(false);
     });
-    menu.querySelectorAll<HTMLAnchorElement>('a[role="menuitem"]').forEach((a) => a.addEventListener('click', () => close()));
-    menu.querySelectorAll<HTMLButtonElement>('button[data-copy]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const article = document.querySelector<HTMLElement>('.sl-markdown-content');
-        const text =
-          btn.dataset.copy === 'link'
-            ? (box.dataset.url ?? '')
-            : `# ${box.dataset.title}\n\n${article?.innerText ?? ''}\n\nSource: ${box.dataset.url}`;
+    menu.querySelectorAll<HTMLAnchorElement>('a').forEach((a) => a.addEventListener('click', () => setOpen(false)));
+
+    let timer = 0;
+    const say = (done: string, ok: boolean) => {
+      if (status) status.textContent = ok ? done : 'Could not copy';
+      if (ok && label) {
+        box.dataset.state = 'done';
+        label.textContent = done;
+      }
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        delete box.dataset.state;
+        if (label) label.textContent = 'Copy page';
+        if (status) status.textContent = '';
+      }, 1900);
+    };
+    const write = async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;opacity:0';
+        document.body.appendChild(ta);
+        ta.select();
         let ok = false;
         try {
-          await navigator.clipboard.writeText(text);
-          ok = true;
+          ok = document.execCommand('copy');
         } catch {
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          document.body.appendChild(ta);
-          ta.select();
-          try {
-            ok = document.execCommand('copy');
-          } catch {
-            ok = false;
-          }
-          ta.remove();
+          ok = false;
         }
-        if (status) status.textContent = ok ? (btn.dataset.copy === 'link' ? 'Link copied' : 'Page copied') : 'Could not copy';
-        close(true);
-        setTimeout(() => {
-          if (status) status.textContent = '';
-        }, 2200);
+        ta.remove();
+        return ok;
+      }
+    };
+    box.querySelectorAll<HTMLElement>('[data-copy]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const link = btn.dataset.copy === 'link';
+        const article = document.querySelector<HTMLElement>('.sl-markdown-content');
+        const text = link ? here : `# ${box.dataset.title}\n\n${article ? toMarkdown(article) : ''}\n\nSource: ${here}\n`;
+        const ok = await write(text);
+        say(link ? 'Link copied' : 'Copied', ok);
+        if (!menu.hidden) setOpen(false, true);
       });
     });
   });
