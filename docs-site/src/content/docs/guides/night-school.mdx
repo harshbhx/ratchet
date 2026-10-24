@@ -316,7 +316,7 @@ flowchart LR
 </figure>
 
 <Aside type="caution" title="Not run on a Nebius GPU yet">
-As of Oct 22, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), but it has not trained an adapter in a Nebius job. The one adapter trained so far, for text-to-SQL, was trained on a free Colab T4 outside Night School. The day-1 checks (`scripts/day1_check.py`) come first.
+As of Oct 25, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), but it has not trained an adapter in a Nebius job. The three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a free Colab T4 and a rented Modal T4, outside Night School. The day-1 checks (`scripts/day1_check.py`) come first.
 </Aside>
 
 ## For engineers
@@ -393,7 +393,7 @@ Big enough for the certificate to mean something. With about 200 golden rows, pr
 
 ### Has a real adapter been trained yet?
 
-One, outside Night School: the [text-to-SQL adapter](/guides/text-to-sql/) was trained on a free Colab T4, not on Nebius. Night School itself has not trained an adapter on a real Nebius account as of Oct 22, 2026: the loop is tested in simulation and the live path offline, and the first real night follows the day-1 checks.
+One, outside Night School: the [text-to-SQL adapter](/guides/text-to-sql/) was trained on a free Colab T4 and a rented Modal T4, not on Nebius. Night School itself has not trained an adapter on a real Nebius account as of Oct 22, 2026: the loop is tested in simulation and the live path offline, and the first real night follows the day-1 checks.
 
 ## Related
 

@@ -24,7 +24,7 @@ Each link has one command. When a link is broken, the command says `FAIL` and wh
 
 <StatRow cols={3} label="The chain at a glance">
   <Stat value={6} count={false} label="links in the chain" note="Each with one command you run on your own machine." />
-  <Stat value={1} count={false} label="run on a real model" tone="owned" note="The text-to-SQL exam and its verify step." />
+  <Stat value={1} count={false} label="run on a real model" tone="owned" note="The text-to-SQL and tool-calling exams and their check scripts." />
   <Stat value="No gateway" label="needed to check" note="Only the documents, a public key and this repository's tools." />
 </StatRow>
 
@@ -32,7 +32,7 @@ Each link has one command. When a link is broken, the command says `FAIL` and wh
 
 <Steps>
 
-1. **The exam.** The adapter answers questions about databases it never trained on, and a CPU-only script recomputes the score from the raw answers (`measure_adapter.py verify`). This is the one check that has been run on a real model, for the text-to-SQL adapter.
+1. **The exam.** The adapter answers questions about databases it never trained on, and a CPU-only script recomputes the score from the raw answers (`scripts/measure_adapter.py verify`, and `scripts/toolcall_results.py --check` for tool calling). These are the checks that have been run on real models, for the text-to-SQL and tool-calling adapters.
 
 2. **The signed bill of materials.** When Night School trains a version it writes a document that lists the teachers and their licenses, the base model's license, the data counts and the eval, and signs it with an Ed25519 key. `python -m ratchet.bom verify` checks the signature and every hash in it.
 
@@ -83,12 +83,12 @@ flowchart TB
 ## What exists today, and what has run for real
 
 <Aside type="caution" title="Read this before quoting a number">
-Only the text-to-SQL adapter has been run on real models, and only its exam and its `verify` step. Every other link on this page is code in the repository, tested offline, and shown by the mock gateway and the simulator. None of it has run on real production traffic.
+Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline, and shown by the mock gateway and the simulator. None of it has run on real production traffic.
 </Aside>
 
 | Link | In the repository | Shown by | Run on a real model |
 |---|---|---|---|
-| Exam and `verify` | Standalone scripts, published next to the adapter | The [Results](/guides/results/) page, when the run's file is added | Yes: the text-to-SQL adapter |
+| Exam and `verify` | Standalone scripts in `scripts/` | The [Results](/guides/results/) page, when the run's file is added | Yes: the text-to-SQL and tool-calling adapters |
 | Signed BOM | `ratchet/bom.py` | Tests and the mock gateway | No |
 | Committed sets and proofs | `ratchet/proof.py`, `ratchet/merkle.py` | Tests and the mock gateway | No |
 | Certified precision | `ratchet/certificate.py`, `ratchet/stats.py` | Tests, seeded Monte Carlo runs and simulation | No |
@@ -102,7 +102,7 @@ The short version, one claim at a time; the full text for each follows below.
 <Stepper
   label="Check it yourself"
   steps={[
-    { title: 'The exam score', body: 'Run `measure_adapter.py verify` with the raw answers, the results, the exam and its databases.\n\nIt prints `OK` when every number is recomputed and matches, or a line starting `FAIL:` that names the file that changed or the numbers that differ.', tone: 'owned' },
+    { title: 'The exam score', body: 'Run `scripts/measure_adapter.py verify` with the raw answers, the results, the exam and its databases.\n\nIt prints `OK` when every number is recomputed and matches, or a line starting `FAIL:` that names the file that changed or the numbers that differ.', tone: 'owned' },
     { title: 'The signed bill of materials', body: 'Run `python -m ratchet.bom verify bom.json --public-key <key>`, and add `--notice NOTICE.md` to check the notice next to the adapter.\n\nA failure starts with `FAIL:`: a signature that does not match, or a hash that differs.' },
     { title: 'The training set', body: 'Run `python -m ratchet.proof verify` for one example, or `python -m ratchet.proof heldout` for every golden example.\n\nA failure starts with `FAIL:`, for example when a proof does not rebuild the signed root.' },
     { title: 'Certified precision', body: 'Run `python -m ratchet.stats check bom.json --public-key <key>`.\n\nIt recomputes the bound from the signed counts and prints a line for each number that differs from the signed one.' },
@@ -117,10 +117,14 @@ The short version, one claim at a time; the full text for each follows below.
 - **The command.**
 
 ```bash
-python measure_adapter.py verify --raw raw.jsonl --results results.json --golden golden.jsonl --dbs dbs.json
+python scripts/measure_adapter.py verify \
+  --raw     evidence/text2sql-exam2/answers/raw_v2.jsonl \
+  --results evidence/text2sql-exam2/results/results_v2.json \
+  --golden  evidence/text2sql-exam2/data/golden.jsonl \
+  --dbs     evidence/text2sql-exam2/data/dbs.json
 ```
 
-- **Success.** `OK: every number in results.json was recomputed from raw.jsonl and matches`.
+- **Success.** `OK: every number in results_v2.json was recomputed from raw_v2.jsonl and matches`.
 - **Failure.** `FAIL: raw.jsonl is not the file the results were computed from`, or `FAIL: golden.jsonl or dbs.json is not the file ...`, or `FAIL: recomputed numbers differ in [...]` with the names of the differing keys.
 - **What it does not prove.** That the teacher's answers are what a user wanted, or that the exam is like your data.
 
@@ -239,7 +243,7 @@ It means the claims were not altered and the arithmetic follows from the inputs.
 
 ### Why is there no real BOM or receipt for the SQL adapter yet?
 
-The SQL run used standalone scripts and a free Colab T4 rather than a nightly Night School run on a gateway, so the BOM, proofs and receipts have so far only been exercised by tests and the simulator.
+The SQL run used standalone scripts and a free Colab T4 and a rented Modal T4 rather than a nightly Night School run on a gateway, so the BOM, proofs and receipts have so far only been exercised by tests and the simulator.
 
 ## Related
 

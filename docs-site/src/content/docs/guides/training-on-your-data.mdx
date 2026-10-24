@@ -19,7 +19,7 @@ import GradientText from '../../../components/ui/GradientText.astro';
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains <GradientText text="a new LoRA adapter you own" tone="owned" />, which the endpoint then loads from your bucket.</Summary>
 
 <Aside type="caution" title="The GPU path has not run on Nebius yet">
-As of Oct 22, 2026, everything on this page is written and tested offline, but **none of the GPU path has run against a real Nebius account**: not the training image, not a training job, not the endpoint. The teacher runs on Nebius Token Factory; the one adapter trained so far, for text-to-SQL, was trained on a free Colab T4. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. This path has no live results yet.
+As of Oct 25, 2026, everything on this page is written and tested offline, but **none of the GPU path has run against a real Nebius account**: not the training image, not a training job, not the endpoint. The teacher runs on Nebius Token Factory; the three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a free Colab T4 and a rented Modal T4. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. This path has no live results yet.
 </Aside>
 
 <Eli10>
@@ -404,10 +404,10 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 
 Not run or not checked yet:
 
-| Part | Status (Oct 22, 2026) |
+| Part | Status (Oct 25, 2026) |
 |---|---|
 | The training image | Not built yet; pins are candidates |
-| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Not run on Nebius yet. The text-to-SQL adapter was trained on a free Colab T4, outside this path |
+| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Not run on Nebius yet. The adapters were trained on a free Colab T4 and a rented Modal T4, outside this path |
 | The endpoint's arguments as the container splits them, thinking off | Not checked yet |
 | Serverless pricing, the S3 endpoint URL | Unverified (the S3 URL format in the docs is an assumption) |
 | Live numbers from this path | None yet; `[LIVE NUMBER]` placeholders stay empty until a real run |
@@ -528,7 +528,7 @@ That is what the day-1 checks are for. The script dry runs, the image's build-ti
 
 ### Has this run on Nebius?
 
-The teacher does: it runs on Nebius Token Factory. The training job and the endpoint do not, as of Oct 22, 2026: they are written and tested offline only, and the one adapter trained so far ran on a free Colab T4. Treat every GPU command here as a plan until the day-1 checks pass.
+The teacher does: it runs on Nebius Token Factory. The training job and the endpoint do not, as of Oct 25, 2026: they are written and tested offline only, and the three adapters trained so far ran on a free Colab T4 and a rented Modal T4. Treat every GPU command here as a plan until the day-1 checks pass.
 
 ## Related
 
