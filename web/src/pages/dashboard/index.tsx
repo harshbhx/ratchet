@@ -16,6 +16,7 @@ import { KpiSkeleton, Kpis } from "./kpis";
 import { MeasuredResults } from "./measured";
 import { Group, JumpBar, SECTIONS, type SectionId } from "./sections";
 import { armedFault, eventKey, fmtTime, newEvents, stateLabel } from "./model";
+import { skipInfo, skipSentence } from "./night-model";
 import { Pipeline } from "./pipeline";
 import { Provenance } from "./provenance";
 import { TaskRegistryPanel } from "./registry";
@@ -38,7 +39,7 @@ function ago(ms: number): string {
   return `${m} min ago`;
 }
 
-function nightSentence(night: NightReport, after: Stats | null): string {
+function nightSentence(night: NightReport, after: Stats | null, skipText?: string): string {
   const prec = night.eval?.precision != null ? `golden precision ${fmtPct(night.eval.precision)}` : null;
   if (night.trained && night.version != null) {
     const v = after?.versions.find((x) => x.id === night.version);
@@ -48,6 +49,7 @@ function nightSentence(night: NightReport, after: Stats | null): string {
     }
     return `Trained v${night.version}${prec ? `: ${prec}` : ""}, rejected at the golden gate.`;
   }
+  if (night.reason === "not enough new data" && skipText) return skipText;
   const why: Record<string, string> = {
     "release in flight": "release in flight",
     "not enough new data": "not enough new data",
@@ -278,6 +280,7 @@ export default function DashboardPage() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const noticeId = useRef(0);
+  const skipStreak = useRef(0);
   const statsRef = useRef<Stats | null>(null);
   statsRef.current = stats;
 
@@ -301,12 +304,17 @@ export default function DashboardPage() {
       const notable = added.filter((e) => NOTABLE.has(e.kind) && e.kind !== "trained");
       const bad = added.some((e) => e.kind === "rollback" || e.kind === "alert" || e.kind === "student_error" || e.kind === "circuit");
       const wl = WORKLOADS.find((w) => w.id === r.workload)?.label ?? r.workload;
+      // A night that trained resets the streak of skips; a skip for another reason leaves it alone.
+      if (r.night.trained) skipStreak.current = 0;
+      else if (r.night.reason === "not enough new data") skipStreak.current += 1;
+      const lastDay = after?.days[after.days.length - 1];
+      const skipText = skipSentence(skipInfo(added), lastDay ? lastDay.student_share : null, skipStreak.current);
       say({
         tone: r.auto_reset ? "info" : bad ? "warn" : r.night.admitted || added.some((e) => e.kind === "live") ? "good" : "info",
         title: (
           <>
             {r.auto_reset && <>{resetSentence(r.auto_reset, after ?? stats)} </>}
-            Day {r.day} done: {fmtInt(DAY_REQUESTS)} requests ({wl}). {nightSentence(r.night, after)}
+            Day {r.day} done: {fmtInt(DAY_REQUESTS)} requests ({wl}). {nightSentence(r.night, after, skipText)}
           </>
         ),
         body:
@@ -377,6 +385,7 @@ export default function DashboardPage() {
     setBusy("reset");
     try {
       await api.reset();
+      skipStreak.current = 0;
       await refresh();
       setFresh(new Set());
       say({ tone: "info", title: "Demo reset.", body: "New ledger, new mock fleet and fresh traffic streams. Any warm-up days ran again." });
