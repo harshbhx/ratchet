@@ -178,7 +178,9 @@ Point any OpenAI SDK at it by changing the base URL, and name the task in a head
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
-r = client.chat.completions.create(model="ratchet", messages=[{"role": "user", "content": "..."}], extra_headers={"X-Ratchet-Task": "ticket-triage"})
+r = client.chat.completions.create(
+    model="ratchet", messages=[{"role": "user", "content": "..."}], extra_headers={"X-Ratchet-Task": "ticket-triage"}
+)
 print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage_breakdown ...
 ```
 
