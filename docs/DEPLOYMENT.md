@@ -28,7 +28,7 @@ cron: python -m ratchet.live tick
 
 ### Step 1: Token Factory key and checks
 
-1. Join the Nebius Builder Program for credits. Its terms say $25 of Token Factory credit, expiring after 90 days.
+1. Join the Nebius Builder Program for credits. Its terms say $25 of Token Factory credit, expiring after 90 days (research notes, 2026-10-25; re-check the program terms before submission).
 2. Create an API key in the Token Factory console.
 3. Run the checks:
 
@@ -218,7 +218,9 @@ On a host or image without `.git`, set `RATCHET_GIT_SHA` to the deployed commit 
 
 Judges need a working demo URL for two weeks, and a GPU endpoint running nonstop is the biggest cost.
 
-**Recommended host: one Nebius CPU VM.** [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) sets up the gateway with Docker Compose and Caddy (automatic HTTPS) on a 2 vCPU / 8 GB VM, with the budget guard, an opt-in edge guard for `/v1/*` and `/openai/*`, backups, monitoring, updates and teardown. It starts in mock mode with a warmed-up student. The points below still apply to it.
+**Where the public demo runs today:** the live gateway (live.ratchet.dualmindlab.tech) and the simulation (demo.ratchet.dualmindlab.tech) run on Cloudflare Workers with Containers, see [deploy/cloudflare-live/README.md](../deploy/cloudflare-live/README.md). The Nebius CPU VM kit below is the alternative host: it is written and tested offline but has not been run on a Nebius account.
+
+**Alternative host: one Nebius CPU VM.** [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) sets up the gateway with Docker Compose and Caddy (automatic HTTPS) on a 2 vCPU / 8 GB VM, with the budget guard, an opt-in edge guard for `/v1/*` and `/openai/*`, backups, monitoring, updates and teardown. It starts in mock mode with a warmed-up student. The points below still apply to it.
 
 1. **The simulation at `sim.<domain>`.** A second gateway in mock mode (the `ratchet-sim` container, no keys). The dashboard with Run day, Break next deploy and Reset is safe there, calls no model (so it spends no credits) and never breaks, and the live host keeps its demo routes at 403. Label it "simulation"; the header switch on every page links the two.
 2. **The live gateway at the root domain** (the URL for Stage One), in live mode with `RATCHET_STUDENT_BASE` **unset** when the GPU endpoint is off. Student calls then go to the hosted, untuned `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on Token Factory, and you pay per token instead of per GPU-hour. Be honest that this is the fallback, not the tuned student. Note that a version's calibrated threshold was set for the tuned adapter, so precision on the fallback may be lower; audits will show it.
@@ -235,8 +237,8 @@ Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (o
 |---|---|---|
 | Training run | L40S at $1.35/GPU-hour, 30–60 min per night | ~$0.70–1.35 per night (estimate) |
 | Student endpoint | L40S at $1.35/GPU-hour, only while testing or recording | ~$32 per full day if left on (estimate) |
-| Teacher calls | Ultra $1 / $3 per 1M tokens; ~150 input + ~380 output tokens per call | ~$1.30 per 1,000 calls |
-| Judge | Super $0.30 / $0.90; only for free-text tasks | small |
+| Teacher calls | Ultra $1 / $3 per 1M tokens (list price in `ratchet/config.py`, research notes, 2026-10-25; unverified); ~150 input + ~380 output tokens per call | ~$1.30 per 1,000 calls |
+| Judge | Super $0.30 / $0.90 (same source); only for free-text tasks | small |
 | Hackathon total | 6–8 training runs, endpoint on a few hours a day, ~$20–30 of teacher calls | **~$35–75** (estimate) |
 
 ## 5. Verification after deploy
@@ -245,4 +247,4 @@ Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (o
 2. Send 20 real requests. `GET /ratchet/stats` (with `-H "Authorization: Bearer $DASHBOARD_KEY"` unless the dashboard is public) shows them with `served_by=teacher` (cold start), and `GET /ratchet/bom` shows the teacher with license `OpenMDW-1.1`.
 3. Run `python -m ratchet.live night` once you have at least 50 new examples. Expect a `trained` event and either `canary` or `rejected`, and a bill of materials at `data/boms/student-v1.json` (also at `GET /ratchet/versions/1/bom`), with `ratchet_bom.json` and `NOTICE.md` in the bucket's `adapters/student-v1/` next to the weights. With `RATCHET_BOM_SIGNING_KEY` set, `python -m ratchet.bom verify data/boms/student-v1.json --public-key <yours>` prints `OK`.
 4. Check that `curl $RATCHET_STUDENT_BASE/models` lists `student-v1` after the night.
-5. Watch the `canary` → `live` events over the next requests. Audits need traffic: at a 5% audit rate and 10% canary, reaching 20 audits takes roughly 4,000+ requests, so for a demo raise `RATCHET_AUDIT_RATE`, or lower `ReleasePolicy.min_audits` in code (there is no environment variable for it).
+5. Watch the `canary` → `live` events over the next requests. Audits need traffic: at a 5% audit rate and 10% canary, reaching 20 audits takes roughly 4,000+ requests, so for a demo raise `RATCHET_AUDIT_RATE`, or lower `RATCHET_MIN_AUDITS` (the default is 20).

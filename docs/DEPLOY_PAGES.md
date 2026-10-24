@@ -1,6 +1,8 @@
 # Publishing the story site and the docs (Cloudflare Pages)
 
-Two Pages projects: `ratchet` (the story site, judges' page and dashboard, at ratchet.dualmindlab.tech) and `ratchet-docs` (the docs).
+Two Pages projects: `ratchet` (the story site, judges' page and dashboard, at ratchet.dualmindlab.tech) and `ratchet-docs` (the docs). The docs are also at docs.ratchet.dualmindlab.tech; the story site at ratchet.dualmindlab.tech.
+
+The two gateways are not on Pages: they are the Cloudflare Containers workers `deploy-cloudflare-live` (live.ratchet.dualmindlab.tech, live mode) and `deploy-cloudflare-demo` (demo.ratchet.dualmindlab.tech, mock mode), see [deploy/cloudflare-live/README.md](../deploy/cloudflare-live/README.md).
 
 ## Previews are automatic, production is a button
 
