@@ -147,7 +147,7 @@ export function WhatsReal() {
       lead={
         <>
           <p>
-            One file holds the status of each result and feature, with what it rests on and how to check it. The demo's numbers come from mock
+            One file holds the status of each result and feature, with what it rests on and how to check it. The simulation demo's numbers come from mock
             models; the text-to-SQL data and adapter are real; the gateway has called Nebius Token Factory for real; nothing has been trained or served on Nebius GPUs yet.
           </p>
           {REAL.updated && <p className="text-[13.5px] text-muted">Updated {fmtDate(REAL.updated)}.</p>}

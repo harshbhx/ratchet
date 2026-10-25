@@ -144,7 +144,7 @@ function ColdStart({ mock, onRun, busy }: { mock: boolean; onRun: () => void; bu
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="max-w-2xl">
           <p className="font-mono text-[11.5px] uppercase tracking-[0.14em] text-muted">Cold start</p>
-          <h2 className="mt-1.5 text-[18px] font-semibold tracking-[-0.015em] text-ink">No traffic yet. Every request will go to the teacher at first.</h2>
+          <h2 className="mt-1.5 text-[18px] font-semibold tracking-[-0.015em] text-ink">{mock ? "No traffic yet. Every request will go to the teacher at first." : "No requests yet on this live demo. Every request goes to the teacher at first."}</h2>
           <p className="mt-1.5 text-pretty text-[14px] leading-6 text-ink-2">
             {mock ? (
               <>

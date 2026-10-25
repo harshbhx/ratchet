@@ -115,7 +115,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "inside",
     label: "Savings receipts",
     tourTitle: "The bill: savings receipts",
-    tour: "Each day gets a receipt over every request's cost, chained to the day before. In the demo these are simulation numbers.",
+    tour: "Each day gets a receipt over every request's cost, chained to the day before. On the live gateway these are its own numbers; on the simulation they are simulation.",
   },
   {
     id: "watch",

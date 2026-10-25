@@ -188,7 +188,7 @@ export function ResilienceChapter() {
           </Panel>
           <Panel title="Breaker and fault events" aside={status && <RealBadge status={status} />}>
             {events.length === 0 ? (
-              <p className="text-[13.5px] text-muted">No breaker has moved yet. Start the outage drill to see one open and close.</p>
+              <p className="text-[13.5px] text-muted">No breaker has moved yet.{stats?.mode === "mock" ? " Start the outage drill to see one open and close." : ""}</p>
             ) : (
               <ol className="space-y-2.5">
                 {events.map((e, i) => (

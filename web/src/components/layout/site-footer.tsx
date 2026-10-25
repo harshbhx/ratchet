@@ -92,7 +92,10 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
               An open-source gateway that moves work from a large rented model to a small one with our LoRA adapter, and checks each release before it serves.
             </p>
             <p className="mt-3 text-[13px] leading-relaxed text-muted">
-              Numbers on the demo are simulation unless labelled Measured. The adapter was trained on rented T4 GPUs, not on Nebius GPUs.
+              {stats?.mode === "mock"
+                ? "Numbers on this page are simulation unless labelled Measured. "
+                : "Numbers from the gateway are its own traffic; reference runs are labelled Simulation and exam results Measured. "}
+              The adapter was trained on rented T4 GPUs, not on Nebius GPUs.
             </p>
             <div className="mt-4">
               <GatewayStatus stats={stats} error={error} />

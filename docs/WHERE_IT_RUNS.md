@@ -18,6 +18,7 @@ This page says, for every part of Ratchet, where it runs **today** and where it 
 | Docs site and story site | Static pages built from `docs-site/` and `web/` | Cloudflare Pages | none (static files) | Nothing planned: static files stay where they are | Real |
 | Live demo | `live.ratchet.dualmindlab.tech`: the gateway in live mode | Cloudflare Workers with Containers ([`deploy/cloudflare-live`](../deploy/cloudflare-live/README.md)) | CPU | The VM runs the same image | Real |
 | Simulation demo | `demo.ratchet.dualmindlab.tech`: mock models, no keys, every number labelled Simulation | Cloudflare Workers with Containers ([`deploy/cloudflare`](../deploy/cloudflare)) | CPU | The VM runs it beside the live gateway at `sim.<domain>` | Simulation |
+| Main site | `ratchet.dualmindlab.tech`: static pages on Cloudflare Pages whose worker sends every gateway-backed path (dashboard, judges, `/ratchet/*`, `/scout/*`) to the live gateway by default; `GATEWAY_ORIGIN` switches it ([`DEPLOY_PAGES.md`](DEPLOY_PAGES.md)) | Cloudflare Pages | none | the gateway serves the same pages | Real for gateway numbers; reference runs on it stay labelled Simulation |
 | Local development | `make demo`: the gateway in mock mode on `localhost:8000` | Your laptop | CPU | Not applicable | Real |
 | Tests and CI | `pytest`, lint and the reference runs: no network, no GPU | Your laptop and GitHub Actions | CPU | Not applicable | Real |
 

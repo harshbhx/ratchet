@@ -24,6 +24,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   const canary = [...stats.versions].reverse().find((v) => v.state === "canary");
   const shadow = [...stats.versions].reverse().find((v) => v.state === "shadow");
   const mock = stats.mode === "mock";
+  const empty = stats.totals.requests === 0;
   // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your model" (FR-7.40).
   const share = studentShareCopy(stats.student_serving);
 
@@ -36,8 +37,8 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   const items: { label: string; value: ReactNode; sub: string }[] = [
     {
       label: "Saved vs all-Ultra",
-      value: <CountUp value={stats.totals.savings_pct} format={(v) => fmtPct(v)} />,
-      sub: `${fmtUsd(stats.totals.saved_usd, 2)} so far`,
+      value: empty ? "–" : <CountUp value={stats.totals.savings_pct} format={(v) => fmtPct(v)} />,
+      sub: empty ? "no requests yet on this live demo" : `${fmtUsd(stats.totals.saved_usd, 2)} so far`,
     },
     {
       label: share.label,
@@ -52,7 +53,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
     {
       label: "Requests",
       value: <CountUp value={stats.totals.requests} format={(v) => fmtInt(v)} />,
-      sub: `over ${stats.days.length} ${stats.days.length === 1 ? "day" : "days"}`,
+      sub: empty ? "send one to start the ledger" : `over ${stats.days.length} ${stats.days.length === 1 ? "day" : "days"}`,
     },
   ];
 

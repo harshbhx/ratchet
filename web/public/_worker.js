@@ -5,12 +5,12 @@
 //
 // WHICH GATEWAY is a setting, not code: set the variable GATEWAY_ORIGIN (an https address with no path, for example
 // https://live.ratchet.dualmindlab.tech) in the Cloudflare dashboard: Workers & Pages, the project, Settings, Variables and Secrets,
-// separately for Production and Preview. It takes effect at once, with no push and no deploy. Without it the simulation demo is used.
+// separately for Production and Preview. It takes effect at once, with no push and no deploy. Without it the live gateway is used; set it to
+// https://demo.ratchet.dualmindlab.tech to send the dashboard and every other gateway-backed page to the simulation again.
 // SCOUT_ORIGIN is a second, separate setting for the paths under /scout/ only (the Scout page's status, examples, stream, recordings
-// and judge calls). It defaults to the live gateway, so Scout on this site is real; set it to the same value as GATEWAY_ORIGIN (or to
-// the simulation demo) to send Scout where everything else goes. Everything else (/ratchet/*, /v1/*, /healthz, /readyz) follows GATEWAY_ORIGIN.
+// and judge calls). It defaults to the live gateway, like GATEWAY_ORIGIN, so the whole site is one live surface; set either to the simulation demo to move that part. Everything else (/ratchet/*, /v1/*, /healthz, /readyz) follows GATEWAY_ORIGIN.
 // No keys here: the simulation demo is keyless, and a live gateway's key is added by its own Worker.
-const DEFAULT_GATEWAY = "https://demo.ratchet.dualmindlab.tech";
+const DEFAULT_GATEWAY = "https://live.ratchet.dualmindlab.tech";
 
 const DEFAULT_SCOUT = "https://live.ratchet.dualmindlab.tech";
 const SCOUT = /^\/scout\//;
