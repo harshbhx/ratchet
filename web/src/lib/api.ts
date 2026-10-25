@@ -4,6 +4,7 @@
  */
 
 import type { DemoInfo, Links, Upstream } from "./surface-model";
+import { gatewayFetch } from "./waking-store";
 
 export type { DemoInfo, Links, Upstream, UpstreamCall } from "./surface-model";
 
@@ -461,7 +462,7 @@ export class ApiError extends Error {
 }
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(path, { ...init, headers: { "content-type": "application/json", ...(init?.headers || {}) } });
+  const r = await gatewayFetch(path, { ...init, headers: { "content-type": "application/json", ...(init?.headers || {}) } });
   if (!r.ok) {
     let msg = `Request failed (${r.status})`;
     let body: unknown;

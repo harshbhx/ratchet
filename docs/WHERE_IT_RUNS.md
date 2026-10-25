@@ -2,6 +2,8 @@
 
 ![Where everything runs. Real today: your laptop (development and tests, CPU), rented T4 GPUs (adapter training), Cloudflare (the live demo, the simulation demo, the story site and docs, all CPU) and Nebius Token Factory (the teacher). Scripted and tested offline, not yet run on a real account: a Nebius CPU VM, a Serverless Endpoint for the student, a Serverless Job for Night School and an Object Storage bucket.](img/where-it-runs.svg)
 
+**When the live demo has slept.** The live gateway's container sleeps after 30 minutes idle (a Cloudflare setting), so the first visitor after a quiet spell waits about 20 seconds while it starts, and its ledger counters reset. Instead of an error, the main site shows a "Waking up the live demo" banner and fills in by itself; the live address shows a splash page that reloads itself. This is a cost choice, not an outage.
+
 This page says, for every part of Ratchet, where it runs **today** and where it is **designed** to run on Nebius AI Cloud. Read the last column first: only **Real** and **Simulation** rows have run anywhere. **Scripted, not run** means the scripts exist and pass their tests against a fake `nebius` command, and that nothing of ours has run on a real Nebius AI Cloud account yet. The one Nebius service in use today is Token Factory, which answers the teacher's calls.
 
 ## The table

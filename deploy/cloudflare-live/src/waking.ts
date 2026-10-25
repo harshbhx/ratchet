@@ -1,52 +1,89 @@
-// The page shown while the demo container wakes up. Self-contained (no external files), light and dark, reduced-motion safe.
-// It asks /__ready every two seconds and reloads the same address when the demo answers.
+// What a visitor gets while the live demo's container is starting. No imports and no external files: the Worker uses it, and
+// web/tests/live-waking.test.mjs runs it under Node.
+
+/** How long a request waits for the container before the visitor is told it is still waking up. */
+export const API_WAIT_MS = 25_000;
+/** A page that answers within this time is passed straight through; a slower one means the container is waking. */
+export const WAKE_AFTER_MS = 2000;
+/** Waits between tries of a read while the container starts. */
+export const READ_RETRY_MS = 700;
+
+/** The JSON every API caller gets (the Pages proxy sends the same body), which the web app turns into its "waking up" banner. */
+export const WARMING_BODY = {
+  error: { code: "warming_up", message: "The live demo is waking up. This takes about 20 seconds." },
+  warming_up: true,
+};
+
+/** A browser navigation: a GET that asks for HTML. */
+export function wantsPage(method: string, accept: string | null): boolean {
+  return method === "GET" && (accept ?? "").includes("text/html");
+}
+
+/**
+ * May the Worker send this request again if the container drops while starting? Reads only, never a paid Scout run
+ * (/scout/stream and /scout/run) and never /v1/*. Everything else waits for readiness first and is then sent exactly once.
+ */
+export function isRetryableRead(method: string, pathname: string): boolean {
+  if (method !== "GET" && method !== "HEAD") return false;
+  return !/^\/v1\//.test(pathname) && !/^\/scout\/(run|stream)(\/|$)/.test(pathname) && !/^\/ratchet\/demo\//.test(pathname);
+}
+
+export function warmingJson(): Response {
+  return new Response(JSON.stringify(WARMING_BODY), {
+    status: 503,
+    headers: { "content-type": "application/json", "retry-after": "5", "cache-control": "no-store" },
+  });
+}
+
+export function warmingPage(): Response {
+  return new Response(WAKING_HTML, {
+    status: 503,
+    headers: { "content-type": "text/html; charset=utf-8", "retry-after": "5", "cache-control": "no-store" },
+  });
+}
+
+/** The answer for a request that is still waiting on the container: a splash page for a browser, the JSON for anything else. */
+export function warmingFor(method: string, accept: string | null): Response {
+  return wantsPage(method, accept) ? warmingPage() : warmingJson();
+}
+
+// The page shown while the demo container wakes up. Self-contained, light and dark, reduced-motion safe.
+// It reloads itself every 3 seconds (meta refresh) and sooner when /__ready says the demo answers.
 export const WAKING_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
+<meta http-equiv="refresh" content="3" />
 <title>Waking up the Ratchet live demo</title>
 <style>
-  :root { color-scheme: light dark; --bg:#fafafa; --ink:#111113; --muted:#5d5d66; --line:#e3e3e8; --blue:#2f6bff; --orange:#f08a24; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#0b0b0c; --ink:#f3f3f5; --muted:#a0a0aa; --line:#26262b; } }
+  :root { color-scheme: light dark; --bg:#fbfaf7; --ink:#121212; --muted:#64625d; --line:#e6e3dc; --blue:#2a78d6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b0b0c; --ink:#f2f1ec; --muted:#a4a39c; --line:#26262b; --blue:#5b9bec; } }
   * { box-sizing: border-box; }
   body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; background:var(--bg); color:var(--ink);
-         font:16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+         font:16px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   main { max-width:30rem; width:100%; text-align:center; }
-  .orbit { position:relative; width:72px; height:72px; margin:0 auto 28px; }
-  .orbit i { position:absolute; inset:0; border-radius:50%; border:3px solid var(--line); }
-  .orbit i:nth-child(2) { border-color:transparent; border-top-color:var(--blue); animation:spin 1.1s linear infinite; }
-  .orbit i:nth-child(3) { inset:14px; border-color:transparent; border-bottom-color:var(--orange); animation:spin 1.7s linear infinite reverse; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .orbit i { animation:none !important; } }
-  h1 { margin:0 0 8px; font-size:1.55rem; letter-spacing:-0.02em; }
+  h1 { margin:0 0 10px; font-size:1.55rem; letter-spacing:-0.02em; }
   p { margin:0 0 14px; color:var(--muted); }
-  .time { font-variant-numeric:tabular-nums; color:var(--ink); font-weight:600; }
+  .bar { position:relative; height:4px; width:min(16rem,80%); margin:26px auto 22px; overflow:hidden; border-radius:999px; background:var(--line); }
+  .bar i { position:absolute; inset:0 auto 0 0; width:35%; border-radius:999px; background:var(--blue); animation:slide 1.6s ease-in-out infinite; }
+  @keyframes slide { 0% { transform:translateX(-100%); } 100% { transform:translateX(300%); } }
+  @media (prefers-reduced-motion: reduce) { .bar i { animation:none; width:100%; opacity:.55; } }
   .note { margin-top:26px; padding-top:18px; border-top:1px solid var(--line); font-size:.9rem; }
   a { color:var(--blue); text-underline-offset:3px; }
-  #slow { display:none; color:var(--ink); }
 </style>
 </head>
 <body>
 <main>
-  <div class="orbit" aria-hidden="true"><i></i><i></i><i></i></div>
   <h1>Waking up the live demo</h1>
-  <p role="status" aria-live="polite">The live demo sleeps when nobody is using it. Starting it takes about a minute. It opens by itself when the server is ready.</p>
-  <p>Waiting <span class="time" id="t">0</span> s</p>
-  <p id="slow">This is taking longer than usual. It is still starting; if nothing happens after a few more minutes, reload the page.</p>
-  <p class="note">This is the live demo: its answers are real calls to Nemotron 3 Ultra on Nebius Token Factory, with daily spending caps. It keeps no history across a restart.<br />
+  <p role="status" aria-live="polite">It sleeps when idle to save cost. This takes about 20 seconds.</p>
+  <div class="bar" aria-hidden="true"><i></i></div>
+  <p class="note">This page reloads by itself. The live demo answers with real calls to Nemotron 3 Ultra on Nebius Token Factory, under daily spending caps.<br />
     While you wait: <a href="https://docs.ratchet.dualmindlab.tech/" target="_blank" rel="noopener noreferrer">read the docs</a>,
     <a href="https://github.com/harshbhx/ratchet" target="_blank" rel="noopener noreferrer">see the code</a>.</p>
 </main>
 <script>
-  var start = Date.now();
-  var t = document.getElementById("t"), slow = document.getElementById("slow");
-  setInterval(function () {
-    var s = Math.round((Date.now() - start) / 1000);
-    t.textContent = s;
-    if (s > 150) slow.style.display = "block";
-  }, 1000);
   function check() {
     fetch("/__ready", { cache: "no-store" })
       .then(function (r) { return r.json(); })

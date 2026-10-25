@@ -3,6 +3,8 @@ import { ArrowRight, CornerDownLeft, Search, Square } from "lucide-react";
 import type { ScoutExamples } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useWaking } from "@/lib/waking-store";
+import { RUN_WAKING, isWaking } from "@/lib/waking-model";
 
 const MAX = 300;
 
@@ -27,6 +29,8 @@ export function AskBar({
   hint: (msg: string | null) => void;
 }) {
   const freeText = examples?.free_text === true;
+  // A run is never started or retried for the visitor while the live demo starts: Run waits for /healthz.
+  const waking = isWaking(useWaking());
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -37,7 +41,7 @@ export function AskBar({
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (running) return;
+    if (running || waking) return;
     const q = value.trim();
     if (!q) {
       hint(freeText ? "Type a question first, or pick one of the examples." : "Pick one of the example questions below.");
@@ -52,7 +56,7 @@ export function AskBar({
   };
 
   const pick = (q: string) => {
-    if (running) return;
+    if (running || waking) return;
     setValue(q);
     hint(null);
     onRun(q);
@@ -111,8 +115,8 @@ export function AskBar({
               <Square className="fill-current !size-3" aria-hidden /> Stop
             </Button>
           ) : (
-            <Button type="submit" size="lg" className="h-11 px-4 sm:h-12 sm:px-6" disabled={!examples}>
-              Ask <ArrowRight aria-hidden />
+            <Button type="submit" size="lg" className="h-11 px-4 sm:h-12 sm:px-6" disabled={!examples || waking}>
+              {waking ? RUN_WAKING : <>Ask <ArrowRight aria-hidden /></>}
             </Button>
           )}
         </div>
@@ -131,7 +135,7 @@ export function AskBar({
               key={q}
               type="button"
               onClick={() => pick(q)}
-              disabled={running}
+              disabled={running || waking}
               className={cn(
                 "shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-left text-[13.5px] leading-snug transition-[background,border-color,color,opacity] duration-200 sm:whitespace-normal",
                 "disabled:cursor-not-allowed disabled:opacity-50",
@@ -151,7 +155,7 @@ export function AskBar({
             ))}
           </span>
         )}
-        {examplesError && (
+        {examplesError && !waking && (
           <span className="text-[13.5px] text-bad">
             {examplesError}{" "}
             <button type="button" className="font-medium underline underline-offset-2" onClick={onRetryExamples}>

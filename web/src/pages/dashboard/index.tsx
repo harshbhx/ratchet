@@ -25,6 +25,8 @@ import { ResiliencePanel } from "./resilience";
 import { TasksTable, VersionsTable } from "./tables";
 import { TrustPanel } from "./trust";
 import { DetailText, KindChip } from "./ui";
+import { useWaking } from "@/lib/waking-store";
+import { isWaking } from "@/lib/waking-model";
 import { useCostReport, useDashboardStats, useNow, useTaskRegistry } from "./use-dashboard";
 
 const POLL_MS = 15000;
@@ -75,6 +77,17 @@ function errorText(e: unknown, what: string): string {
 }
 
 function Unreachable({ error, onRetry, retrying }: { error: string; onRetry: () => void; retrying: boolean }) {
+  // While the live demo's container starts the banner under the header says so; this is not an outage.
+  if (isWaking(useWaking())) {
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-line bg-surface p-6 text-center shadow-card sm:p-10">
+        <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">Waking up the live demo</h2>
+        <p className="mx-auto mt-2 max-w-md text-pretty text-[14px] leading-6 text-muted">
+          It sleeps when idle to save cost. The dashboard fills in by itself when it is ready.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="mx-auto max-w-xl rounded-2xl border border-line bg-surface p-6 text-center shadow-card sm:p-10">
       <span className="mx-auto grid size-11 place-items-center rounded-full border border-line bg-surface-2 text-muted">
@@ -271,6 +284,7 @@ function Reveal({ children, className, delay = 0 }: { children: ReactNode; class
 
 export default function DashboardPage() {
   const { stats, error, updatedAt, loading, refreshing, refresh } = useDashboardStats(POLL_MS);
+  const waking = isWaking(useWaking());
   const cost = useCostReport(updatedAt);
   const registry = useTaskRegistry(updatedAt);
   // The gateway's clock minus this browser's, measured when this viewer starts an outage drill (for its countdown).
@@ -415,7 +429,7 @@ export default function DashboardPage() {
 
           {stats && (
             <>
-              {error && (
+              {error && !waking && (
                 <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-warn/30 bg-warn-soft/70 px-3 py-2 text-[13px] text-ink-2">
                   <TriangleAlert className="size-4 text-warn" aria-hidden />
                   <span>

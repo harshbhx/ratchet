@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { onRecovered } from "@/lib/waking-store";
 import { ApiError, api, type CostReport, type Stats, type TaskRegistry } from "@/lib/api";
 
 /**
@@ -46,9 +47,11 @@ export function useDashboardStats(intervalMs = 15000) {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", onVis);
+    const off = onRecovered(() => void refresh());
     return () => {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
+      off();
     };
   }, [refresh, intervalMs]);
 

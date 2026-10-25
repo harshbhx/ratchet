@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { onRecovered } from "@/lib/waking-store";
 import { api, streamScout, type ScoutExamples, type ScoutStatus } from "@/lib/api";
 import { pickLive, play as playRecording, type Playback, type RecordingSummary } from "@/lib/recording-model";
 import { hostedServing, whoContext } from "@/lib/who-model";
@@ -47,7 +48,14 @@ export function useScout() {
     void loadExamples();
     void loadStatus();
     void loadRecordings();
+    // The live demo woke up: read what the first calls could not (a Scout run is never retried by itself).
+    const off = onRecovered(() => {
+      void loadExamples();
+      void loadStatus();
+      void loadRecordings();
+    });
     return () => {
+      off();
       cancelRef.current?.();
       playbackRef.current?.cancel();
     };
