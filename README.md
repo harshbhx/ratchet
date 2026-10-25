@@ -24,11 +24,27 @@
   <a href="#try-it">Try it</a> &nbsp;·&nbsp;
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
   <a href="#results">Results</a> &nbsp;·&nbsp;
+  <a href="#open-on-hugging-face">Hugging Face</a> &nbsp;·&nbsp;
   <a href="#what-is-real-what-is-simulation-what-has-not-run">What is real</a> &nbsp;·&nbsp;
   <a href="#where-it-runs-and-how-to-host-it-on-nebius">Nebius</a> &nbsp;·&nbsp;
   <a href="#use-it">Use it</a> &nbsp;·&nbsp;
   <a href="#limitations">Limitations</a> &nbsp;·&nbsp;
   <a href="#repo-map">Repo map</a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/demo-reel-poster.png">
+    <img src="docs/img/anim/ratchet-demo-reel.gif" alt="Demo reel, 15 seconds: 200 exam questions the model never saw, a recorded live Scout run (18 model calls, all answered by the teacher, 13.2 seconds, $0.0223), the 95% precision bar and the real exam numbers: text-to-SQL 12.8% untrained, 25.6% teacher, 39.0% adapter on exam 1." width="100%">
+  </picture>
+  <br><sub><b>Demo reel</b> (from the demo video). Exam numbers are measured; the Scout run is a recorded live run. <!-- full video link --></sub>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/at-a-glance-dark.png">
+    <img src="docs/img/at-a-glance-light.png" alt="At a glance: text-to-SQL 12.8% to 39.0% on an unseen exam and tool calling 62.7% to 90.7% on an unseen exam (both measured, strict scoring); 2 adapters, 6 datasets and 2 demos on Hugging Face; a free live demo with no sign-up." width="100%">
+  </picture>
 </p>
 
 ## In 30 seconds
@@ -56,6 +72,21 @@ Judges get the access code for Scout runs on the Devpost page. It is not in this
 | [Hugging Face collection](https://huggingface.co/collections/harshbhx/ratchet) | The adapters, the synthetic training data, the exams with every saved answer | Real |
 | [Exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) | Browse the tool-calling exam answers question by question | Real |
 | [Your machine](#use-it) | `make demo`: no keys, no GPU | Simulation |
+
+<p align="center">
+  <img src="docs/img/try-it-16x9.png" alt="Try it in 90 seconds, four links in this order: the judges' page, a real request on the live demo, Scout with real searches, and the simulation. The live demo is free, with no sign-up." width="100%">
+</p>
+
+<details>
+<summary>How judges unlock Scout runs</summary>
+
+<p align="center">
+  <img src="docs/img/anim/judge-box-howto.gif" alt="Animation of the judge code box on the Scout page: type the code from the Devpost page into the box and a reserve of live Scout runs unlocks. The code itself is never shown." width="80%">
+</p>
+
+The code is on the Devpost page and is not in this repository.
+
+</details>
 
 ## How it works
 
@@ -106,6 +137,40 @@ On the hard exam the adapter is above the untrained model (the 95% ranges do not
 [Tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-train) · [Hard exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard) · [BFCL exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl)
 
 Every score recomputes from the saved answers: [Check it yourself](docs/VERIFY.md) lists each command and what it does not prove.
+
+## Open on Hugging Face
+
+Two adapters, six datasets and two demos, all public: the adapters, the synthetic training data, the exams with every saved answer, the recorded Scout runs and two viewers.
+
+<p align="center">
+  <a href="https://huggingface.co/collections/harshbhx/ratchet"><img alt="Open the collection on Hugging Face" src="https://img.shields.io/badge/Open%20the%20collection-Hugging%20Face-FFD21E?style=for-the-badge"></a>
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+      <a href="https://huggingface.co/harshbhx/models"><img src="docs/img/hf/hf-models.png" alt="Models: 2 adapters, text-to-SQL and tool calling" width="100%"></a>
+      <br><sub><i>Models: 2 adapters</i></sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://huggingface.co/harshbhx/datasets"><img src="docs/img/hf/hf-datasets.png" alt="Datasets: 6 repos of training data, exams and recorded runs" width="100%"></a>
+      <br><sub><i>Datasets: 6 repos, training data, exams and recorded runs</i></sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://huggingface.co/harshbhx/spaces"><img src="docs/img/hf/hf-demos.png" alt="Demos: 2 Spaces, the exam explorer and the Scout viewer" width="100%"></a>
+      <br><sub><i>Demos: 2 Spaces</i></sub>
+    </td>
+  </tr>
+</table>
+
+<details>
+<summary>Open each repo</summary>
+
+- Models: [text-to-SQL adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) (39.0% and 33.0% on two unseen exams), [tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall) (90.7% on the hard exam, 80.3% on BFCL)
+- Datasets: [text-to-SQL training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) (4,322 synthetic rows labelled by Nemotron 3 Ultra), [text-to-SQL exams](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams) (with every saved answer), [tool-calling training data](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-train), [hard exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard), [BFCL exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl), [recorded Scout runs](https://huggingface.co/datasets/harshbhx/ratchet-scout-runs)
+- Demos: [exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) (browse the tool-calling answers question by question), [Scout viewer](https://huggingface.co/spaces/harshbhx/ratchet-scout) (replays recorded runs)
+
+</details>
 
 ## What is real, what is simulation, what has not run
 
@@ -165,6 +230,9 @@ r = client.chat.completions.create(
 print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage_breakdown ...
 ```
 
+<details>
+<summary>More commands</summary>
+
 | I want to | Run |
 |---|---|
 | Run Scout as an outside client | `python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1` |
@@ -173,6 +241,8 @@ print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage
 | Recompute the tool-calling scores | `python scripts/toolcall_results.py --check` |
 | Run the tests (no network, no GPU) | `make test` |
 | Check everything before a commit | `make lint test reference` |
+
+</details>
 
 **Live mode** (real Token Factory calls): set `NEBIUS_API_KEY` and `RATCHET_API_KEYS`, then `RATCHET_MODE=live uvicorn ratchet.gateway:app --port 8000`. The full setup is in [docs/LIVE_MODE.md](docs/LIVE_MODE.md); every setting is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -204,6 +274,8 @@ flowchart LR
 
 ### How it uses NVIDIA and Nebius
 
+<details>
+<summary>Which model and service does what</summary>
 
 | Role | Model / service | Why |
 |---|---|---|
@@ -215,6 +287,8 @@ flowchart LR
 | Dataset / adapters | **Nebius Object Storage** bucket mounted in jobs and endpoints | |
 | Public demo host | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | The gateway does no inference |
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) | Search tool for the Scout demo only |
+
+</details>
 
 Rows 4 to 6 (the student endpoint, Night School and the object storage) are the design: the scripts are written but have not run on Nebius, and the adapters in [Real results](#results) were trained on rented T4 GPUs. Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the designed home of the student is Nebius AI Cloud.
 
@@ -307,6 +381,9 @@ The git history starts on Oct 19, 2026; every change since then is a dated commi
 
 ## Repo map
 
+<details>
+<summary>Where the code lives</summary>
+
 | Path | What |
 |---|---|
 | `ratchet/gateway.py`, `ratchet/router.py` | The OpenAI-compatible API and the cascade: pinned tasks, audits, shadow arbitration, cost accounting |
@@ -319,6 +396,8 @@ The git history starts on Oct 19, 2026; every change since then is a dated commi
 | `deploy/` | Nebius Serverless Job and Endpoint scripts, the demo VM kit, Cloudflare Workers |
 | `evidence/`, `scripts/` | Saved answers, manifests and results behind every measured number, and the scripts that recompute them |
 | `docs/`, `docs-site/` | The documentation and its site |
+
+</details>
 
 ## Documentation
 
