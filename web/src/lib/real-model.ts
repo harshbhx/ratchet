@@ -52,7 +52,7 @@ export interface RealLinks {
   repo: string;
   docs: string;
   demo: string;
-  /** The demo video, once it is published. */
+  /** The demo video (public on YouTube since 26 Oct 2026); null hides every link to it. */
   video: string | null;
 }
 
