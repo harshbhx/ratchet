@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Owner | Harsh Bhanushali (DualMind Labs) |
-| Status | v0.4.0 tagged; v0.5 in progress (backend features Done, see §6 and [REQUIREMENTS.md](REQUIREMENTS.md)). Measured so far: text-to-SQL and tool-calling exams on adapters trained on rented T4s (§8.3); a live demo on Token Factory where the teacher answers every request. Not run: Nebius Serverless Jobs and Endpoints, and the full live measurement run |
+| Status | v0.4.0 tagged; v0.5.0 versioned Oct 25, 2026 (backend features Done, see §6 and [REQUIREMENTS.md](REQUIREMENTS.md)). Measured so far: text-to-SQL and tool-calling exams on adapters trained on rented T4s (§8.3); a live demo on Token Factory where the teacher answers every request. Not run: Nebius Serverless Jobs and Endpoints, and the full live measurement run |
 | Last updated | 2026-10-25 |
 | Related | [Requirements matrix](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Roadmap](ROADMAP.md) |
 

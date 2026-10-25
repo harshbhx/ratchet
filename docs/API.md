@@ -855,7 +855,7 @@ One table as NDJSON (`application/x-ndjson`, one JSON object per line, in id ord
 Liveness: the process answers. Always public, also when API keys are on. The demo VM's Docker health check uses it. It is a coroutine on the event loop, so it answers while every worker thread is busy (a full thread pool is not a dead process); it asks no dependency, so a restart loop never follows a slow teacher. For "can this gateway serve?", use [`/readyz`](#get-readyz).
 
 ```json
-{"status": "ok", "version": "0.4.0", "mode": "mock"}
+{"status": "ok", "version": "0.5.0", "mode": "mock"}
 ```
 
 ## GET `/livez`
@@ -886,7 +886,7 @@ Mock mode checks the ledger only. The probes run on threads of their own (two fo
 {
   "status": "degraded",
   "mode": "live",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "checks": {
     "ledger": {"ok": true, "ms": 1.2},
     "teacher": {"breaker": "closed", "status": 200, "models": "ok", "ms": 84.0, "model_listed": true, "available": true, "ok": true},
@@ -1351,7 +1351,7 @@ Access level `bom`, like `/ratchet/bom`. The bill of materials of one adapter, w
 {
   "manifest": {
     "schema": "ratchet.bom/v2",
-    "generator": "ratchet 0.4.0",
+    "generator": "ratchet 0.5.0",
     "created_at": "2026-10-20T00:15:12Z",
     "adapter": {"version": 1, "name": "student-v1", "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", "day": 1},
     "training": {"examples": 1029, "dataset_sha256": "478eef…", "tasks": {"ticket-triage": 420, "source-triage": 362, "page-read": 247},
@@ -1817,7 +1817,7 @@ The signed document of day `period`: the gateway's, or `client`'s for an admin; 
 ```json
 {
   "manifest": {
-    "schema": "ratchet.receipt/v1", "generator": "ratchet 0.4.0", "created_at": "2026-10-21T11:39:44Z",
+    "schema": "ratchet.receipt/v1", "generator": "ratchet 0.5.0", "created_at": "2026-10-21T11:39:44Z",
     "label": "simulation (mock models)", "period": {"day": 3}, "client": null,
     "first_id": 3001, "last_id": 4500, "n": 1500,
     "merkle": {"alg": "rfc9162-sha256", "root": "efd10ccd…", "size": 1500, "leaf_keys": ["id", "ts_ms", "…"]},
