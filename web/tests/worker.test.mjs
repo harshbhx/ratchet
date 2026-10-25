@@ -57,6 +57,43 @@ test("GATEWAY_ORIGIN moves everything but scout; scout set to the same origin mo
   assert.equal(origin(await route("/scout/status", { GATEWAY_ORIGIN: g, SCOUT_ORIGIN: g })), g);
 });
 
+test("/video and /video/ are a no-store 302 to the video's counting link (from=site), before any gateway or asset", async () => {
+  const VIDEO = "https://video.ratchet.dualmindlab.tech/?from=site";
+  assert.equal(worker._test.VIDEO_URL, VIDEO);
+  for (const path of ["/video", "/video/", "/video?x=1"]) {
+    for (const method of ["GET", "HEAD", "POST"]) {
+      let assets = 0;
+      const seen = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = async (req) => (seen.push(req), new Response("gateway"));
+      try {
+        const env = { ASSETS: { fetch: async () => (assets++, new Response("asset")) }, GATEWAY_ORIGIN: "https://g.example.com" };
+        const r = await worker.fetch(new Request("https://ratchet.dualmindlab.tech" + path, { method }), env);
+        assert.equal(r.status, 302, `${method} ${path}`);
+        assert.equal(r.headers.get("location"), VIDEO, `${method} ${path}`);
+        assert.equal(r.headers.get("cache-control"), "no-store", `${method} ${path}`);
+        assert.equal(await r.text(), "");
+      } finally {
+        globalThis.fetch = real;
+      }
+      assert.equal(seen.length, 0, `${method} ${path}: no gateway call`);
+      assert.equal(assets, 0, `${method} ${path}: no asset read`);
+    }
+  }
+  // Only the exact paths: anything else that starts with /video is a static page like any other.
+  for (const path of ["/videos", "/video/x"]) {
+    const r = await route(path);
+    assert.equal(r.seen.length, 0, path);
+    assert.equal(r.body, "asset", path);
+  }
+});
+
+test("_routes.json sends /video and /video/ to the worker, so the static site never answers them", () => {
+  const routes = JSON.parse(readFileSync(new URL("../public/_routes.json", import.meta.url), "utf8"));
+  assert.ok(routes.include.includes("/video") && routes.include.includes("/video/"));
+  assert.deepEqual(routes.exclude, []);
+});
+
 test("the judge cookie travels: headers and body pass through unchanged", async () => {
   const r = await route("/scout/judge", {}, { method: "POST", headers: { cookie: "ratchet_judge=abc", "content-type": "application/json" } });
   const req = r.seen[0];

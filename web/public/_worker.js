@@ -10,6 +10,15 @@
 // SCOUT_ORIGIN is a second, separate setting for the paths under /scout/ only (the Scout page's status, examples, stream, recordings
 // and judge calls). It defaults to the live gateway, like GATEWAY_ORIGIN, so the whole site is one live surface; set either to the simulation demo to move that part. Everything else (/ratchet/*, /v1/*, /healthz, /readyz) follows GATEWAY_ORIGIN.
 // No keys here: the simulation demo is keyless, and a live gateway's key is added by its own Worker.
+//
+// /video (and /video/) is the demo video's short link: a 302 to its counting link, tagged from=site, answered here before anything
+// else (no gateway call, nothing counted here) and never cached, so each visit reaches the counter.
+const VIDEO_URL = "https://video.ratchet.dualmindlab.tech/?from=site";
+
+function videoRedirect() {
+  return new Response(null, { status: 302, headers: { location: VIDEO_URL, "cache-control": "no-store" } });
+}
+
 const DEFAULT_GATEWAY = "https://live.ratchet.dualmindlab.tech";
 
 const DEFAULT_SCOUT = "https://live.ratchet.dualmindlab.tech";
@@ -117,10 +126,11 @@ async function forward(request, target, deps = {}) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/video" || url.pathname === "/video/") return videoRedirect();
     if (!API.some((re) => re.test(url.pathname))) return env.ASSETS.fetch(request);
     const target = new URL(url.pathname + url.search, gatewayOf(env, url.pathname));
     return forward(request, target);
   },
   // Exposed for tests/worker.test.mjs only; Cloudflare ignores other keys.
-  _test: { forward, retryable, notReady, RETRY_DELAYS_MS },
+  _test: { forward, retryable, notReady, RETRY_DELAYS_MS, VIDEO_URL },
 };

@@ -2,7 +2,7 @@ import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { RealBadge } from "@/components/ui/real-badge";
 import { REAL_STATUSES, STATUS_TEXT, type RealStatus } from "@/lib/real-model";
 import { LIVE_URL } from "@/lib/utils";
-import { REAL } from "./real";
+import { JUDGES_VIDEO, REAL } from "./real";
 
 /** One hackathon requirement, the status its evidence earns today and where to check it. */
 export interface StageOneItem {
@@ -14,7 +14,9 @@ export interface StageOneItem {
   link: { label: string; href: string } | { label: string; chapter: string } | null;
 }
 
-const { repo, demo, video } = REAL.links;
+const { repo, demo } = REAL.links;
+/** The video's counting link (from=judges), null while there is no video. */
+const video = JUDGES_VIDEO;
 
 /**
  * The Stage One checklist. Statuses follow `src/data/real.json`'s rules: Real only for what ran and can be checked, Measured for

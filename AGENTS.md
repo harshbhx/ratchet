@@ -135,7 +135,7 @@ Always run `make lint test reference` before committing.
 | `ratchet/scout/credits.py` | Tavily credits (ADR 0120): `CreditMeter` (a monthly budget per cycle, paced per UTC day until `RATCHET_TAVILY_PACE_UNTIL`, a judge share, `reserve`/`settle`, `tavily` spend rows, `restore`, an hour's pause after a 432 or 433), `MeteredSearch` (one run's metered Tavily client), `settlement` |
 | `evidence/` | The saved answers, manifests and results behind every measured number (`text2sql-round1`, `-round2`, `-exam2`, `toolcall`, `scout`, `live-smoke-2026-10-23`); `docs/VERIFY.md` has the commands that recompute them |
 | `scripts/text2sql/`, `scripts/measure_adapter.py`, `scripts/toolcall_results.py` | Exam tooling: `exam_numbers.py --check` recomputes the text-to-SQL scores, `measure_adapter.py verify` re-scores one adapter, `toolcall_results.py --check` recomputes the tool-calling results |
-| `docs-site/`, `deploy/cloudflare*` | The docs site; Workers with Containers for the live demo (`cloudflare-live`) and the simulation (`cloudflare`) |
+| `docs-site/`, `deploy/cloudflare*` | The docs site; Workers with Containers for the live demo (`cloudflare-live`) and the simulation (`cloudflare`); the demo video's counted short link (`cloudflare-video`: a Worker with D1, `npm test` there, [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#6-the-demo-video-link)) |
 | `web/` | React app (Vite, Tailwind, motion, recharts) for `/`, `/scout`, `/dashboard`. See [web/AGENTS.md](web/AGENTS.md) and [web/DESIGN.md](web/DESIGN.md) |
 | `ratchet/web/dist/` | The committed build of `web/`, served by the gateway |
 | `ratchet/web/*.html`, `ratchet/dashboard.html` | Lite pages without a build step, served at `/lite*` and as a fallback |
