@@ -13,6 +13,7 @@ export function useScout() {
   const [examples, setExamples] = useState<ScoutExamples | null>(null);
   const [examplesError, setExamplesError] = useState<string | null>(null);
   const [status, setStatus] = useState<ScoutStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
   const cancelRef = useRef<(() => void) | null>(null);
   const playbackRef = useRef<Playback | null>(null);
   const [recordings, setRecordings] = useState<RecordingSummary[]>([]);
@@ -33,6 +34,8 @@ export function useScout() {
       setStatus(await api.scoutStatus());
     } catch {
       /* status is optional */
+    } finally {
+      setStatusLoading(false);
     }
   }, []);
 
@@ -126,5 +129,5 @@ export function useScout() {
   const live = useMemo(() => pickLive(recordings), [recordings]);
   const playing = recording !== null && run.status === "running";
 
-  return { run, derived, examples, examplesError, status, mode, who, start, stop, reloadExamples: loadExamples, refreshStatus: loadStatus, recording, playing, liveRecording: live, play, skip };
+  return { run, derived, examples, examplesError, status, statusLoading, mode, who, start, stop, reloadExamples: loadExamples, refreshStatus: loadStatus, recording, playing, liveRecording: live, play, skip };
 }
