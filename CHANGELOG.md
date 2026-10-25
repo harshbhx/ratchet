@@ -4,6 +4,8 @@ All notable changes are listed here. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-25
+
 - The web app's header no longer shows the "Live on Nebius Token Factory | Simulation" chip (its extra row and the helper behind it are gone); the footer's status line and the menu's "Simulation demo" link stay, and every Simulation label on a simulated number or chart is unchanged.
 
 Links to `docs/lanes/`, `docs/DAY1.md`, `docs/HACKATHON_SUBMISSION.md` and `specs_next/` in the entries below point at working files that are not in this repository.

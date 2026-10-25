@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Ratchet gateway",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "description": "The HTTP API of the Ratchet gateway (`ratchet.gateway:app`), generated from the code with `python docs-site/scripts/export-reference.py`. The chat route speaks OpenAI's format, so any OpenAI SDK works. Examples, error envelopes and access levels are in the [hand-written API guide](https://docs.ratchet.dualmindlab.tech/reference/api/). Mock-only demo controls answer 404 in live mode, and in live mode most `/ratchet/*` routes need an admin or dashboard key unless the dashboard is public.",
     "license": {
       "name": "Apache-2.0",

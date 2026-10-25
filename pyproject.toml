@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ratchet-distill"
-version = "0.4.0"
+version = "0.5.0"
 description = "License-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -21,6 +21,12 @@ yaml = ["PyYAML>=6"]
 # openai: tests/test_openai_compat.py drives the real SDK against the gateway in-process (tests/sdk_bridge.py).
 # jinja2: tests/test_nightschool.py renders the vendored Nemotron chat template as transformers does (FR-8.42).
 dev = ["ruff", "pytest>=8", "pytest-cov>=5", "cryptography>=42", "openai>=1.40", "PyYAML>=6", "jinja2>=3.1"]
+
+[project.urls]
+Homepage = "https://ratchet.dualmindlab.tech"
+Documentation = "https://docs.ratchet.dualmindlab.tech"
+Repository = "https://github.com/harshbhx/ratchet"
+Issues = "https://github.com/harshbhx/ratchet/issues"
 
 [tool.setuptools.packages.find]
 include = ["ratchet*", "sim*"]
