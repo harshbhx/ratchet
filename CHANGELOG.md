@@ -4,9 +4,15 @@ All notable changes are listed here. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-- The contributor guides are now `AGENTS.md` (the root and each folder's `CLAUDE.md`, renamed with every reference updated), a local untracked `CLAUDE.md` that holds `@AGENTS.md` is ignored, and the unused older README animation variants and at-a-glance PNGs are removed from `docs/img`.
-
 ## [0.5.0] - 2026-10-25
+
+- CI runs only the checks for the areas a pull request changed (backend, web, docs, evidence, deploy); a push to `main`, a manual run, a change to `ci.yml` and a file no area names run everything. A `workflows` job parses every workflow file, and `ci-ok` is the one check to require ([docs/TESTING.md](docs/TESTING.md#what-ci-runs)).
+- CI checks the evidence, the links and the history for secrets: the `evidence` job recomputes the headline results from `evidence/` (docs/VERIFY.md), `scripts/check_links.py` fails on a broken repository link or a 404 from our own domains, and `scripts/scan_secrets.py` scans the tree and the history without printing a value. Lint and coverage run once, on Python 3.12, and a newer push to a pull request replaces its running checks. The README shows CI, evidence, release and last-deploy badges.
+- Each deploy workflow (the story site and docs, the live demo, the simulation) ends with a smoke job that checks the site from outside with `scripts/demo_check.py`: pages, `/healthz` mode, `/readyz` and `/scout/status`, with retries for a waking-up demo; it never runs Scout or sends a key or a completion.
+- The live dashboard's empty state (a live gateway with no days, requests or versions yet) links to the simulation demo's dashboard, where the full pipeline runs.
+- The Devpost, Notion and Hugging Face notes are no longer committed under `evidence/toolcall/rendered`: `python scripts/toolcall_results.py --render --notes [DIR]` writes them (default `out/toolcall-notes`, not committed), and `--check-render` compares the committed blocks only.
+- The README uses new banner, at-a-glance, where-it-runs and footer animations.
+- The contributor guides are now `AGENTS.md` (the root and each folder's `CLAUDE.md`, renamed with every reference updated), a local untracked `CLAUDE.md` that holds `@AGENTS.md` is ignored, and the unused older README animation variants and at-a-glance PNGs are removed from `docs/img`.
 
 - The web app's header no longer shows the "Live on Nebius Token Factory | Simulation" chip (its extra row and the helper behind it are gone); the footer's status line and the menu's "Simulation demo" link stay, and every Simulation label on a simulated number or chart is unchanged.
 
