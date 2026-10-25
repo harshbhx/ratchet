@@ -64,7 +64,7 @@ Judges get the access code for Scout runs on the Devpost page. It is not in this
 
 | | What it is | Real or simulation |
 |---|---|---|
-| [For judges](https://ratchet.dualmindlab.tech/judges) | Everything a judge needs on one page, with the checks to run | Real |
+| [For judges](https://ratchet.dualmindlab.tech/judges) | Everything a judge needs on one page, with the checks to run. The main site (story, dashboard, judges) reads the live gateway; its ledger starts empty and resets on restart | Real |
 | [Live demo](https://live.ratchet.dualmindlab.tech) | Send a request, read the `ratchet` block in the reply. Real Token Factory calls under spend limits; the teacher answers every request for now | Real |
 | [Scout](https://live.ratchet.dualmindlab.tech/scout) | A multi-agent research demo with real web searches; every model call is tagged with who answered it | Real |
 | [Simulation](https://demo.ratchet.dualmindlab.tech) | Mock models: run days, break a deploy, watch the rollback | Simulation |

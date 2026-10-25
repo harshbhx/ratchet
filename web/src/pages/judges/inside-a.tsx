@@ -136,13 +136,13 @@ export function CascadeChapter() {
               },
               { label: "Its threshold", value: serving?.threshold != null ? serving.threshold.toFixed(2) : "–" },
               { label: "Requests so far", value: fmtInt(stats.totals.requests) },
-              { label: "Simulated day", value: fmtInt(stats.day) },
+              { label: stats.mode === "mock" ? "Simulated day" : "Day", value: fmtInt(stats.day) },
             ]}
           />
           <div className="grid min-w-0 gap-4 lg:grid-cols-2">
             <Panel title="Routes, all days" aside={status && <RealBadge status={status} />}>
               {routes.length === 0 ? (
-                <p className="text-[13.5px] text-muted">No requests yet. Run a simulated day.</p>
+                <p className="text-[13.5px] text-muted">{stats.mode === "mock" ? "No requests yet. Run a simulated day." : "No requests yet on this live demo."}</p>
               ) : (
                 <ul className="space-y-2.5">
                   {routes.map((r) => (

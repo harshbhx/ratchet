@@ -124,11 +124,11 @@ export function SponsorsChapter() {
 
 const LIMITS = [
   "The adapters are small (Nemotron 3 Nano 4B, LoRA) and were trained on a free Colab T4 and a rented Modal T4, not on Nebius GPUs. At a 95% precision bar the text-to-SQL student answers 1 of 86 questions on exam 1 and none on exam 2, so it does not replace the teacher.",
-  "Every number on the simulation demo and its dashboard comes from mock models (simulation). The live demo's numbers come from real Token Factory calls, and its teacher answers every request.",
+  "The main site's dashboard and chapters read the live gateway: its numbers come from real Token Factory calls, its teacher answers every request, and its ledger lives in the container's /tmp, so a restart empties it. Every number on the separate simulation demo comes from mock models (simulation).",
   "The gateway's live mode has run against Nebius Token Factory (a smoke run and the live demo). The student endpoint and Night School's jobs have not run on Nebius GPUs.",
   "Scout's recorded live runs were all answered by the teacher; no trained student has served a Scout call. The Scout demo page runs on a mock research world unless the gateway is live.",
   "The ledger is a single SQLite file, written by one gateway process.",
-  "The demo is shared: every visitor sees and changes the same simulated state.",
+  "The simulation demo is shared: every visitor sees and changes the same simulated state.",
 ];
 
 export function LimitsChapter() {

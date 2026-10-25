@@ -20,11 +20,11 @@ The pages call their gateway on the same origin (`/ratchet/*`, `/scout/*`, `/v1/
 
 **The gateway is a Cloudflare setting, not code.** In the dashboard, Workers & Pages, the project `ratchet`, Settings, Variables and Secrets, add
 `GATEWAY_ORIGIN` (an `https://` address with no path, for example `https://live.ratchet.dualmindlab.tech`). Production and Preview have separate lists, so a preview can
-point at the simulation demo while production points at the live one. Saving it applies at once: no push, no deploy. Without it the simulation demo is used; a value that
+point at the simulation demo while production points at the live one. Saving it applies at once: no push, no deploy. Without it the live gateway is used (the whole site is one live surface); set it to `https://demo.ratchet.dualmindlab.tech` to send the dashboard and every other gateway-backed page back to the simulation, with no deploy; a value that
 is not a plain https address is ignored, so a typo cannot take the site down.
 
 **Scout is separate.** The paths under `/scout/` (the Scout page's status, examples, stream, recordings and the judge code, whose signed `ratchet_judge` cookie passes through the proxy
 unchanged) go to `SCOUT_ORIGIN`, which has the same rules and defaults to `https://live.ratchet.dualmindlab.tech`. So `/scout` on the story site makes real Token Factory and Tavily
 calls under the live gateway's spend guard, and its label comes from `/scout/status` (`mode`), so it reads Live. The dashboard, the judges' live chapters, `/ratchet/*`, `/v1/*`,
-`/healthz` and `/readyz` follow `GATEWAY_ORIGIN` and stay on the simulation. Set `SCOUT_ORIGIN` to the same value as `GATEWAY_ORIGIN` to send Scout there too; an empty or invalid value
+`/healthz` and `/readyz` follow `GATEWAY_ORIGIN`, which also defaults to the live gateway. The live ledger lives in the container's `/tmp`, so a restart empties it and the dashboard then shows its empty states; the mock-only `/ratchet/demo/*` controls answer 403 there and the pages hide them. Set `SCOUT_ORIGIN` separately to move Scout; an empty or invalid value
 falls back to the default. Like `GATEWAY_ORIGIN`, it applies at once.

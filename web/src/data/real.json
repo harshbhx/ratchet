@@ -163,7 +163,7 @@
       "id": "live-demo",
       "claim": "A public live demo that calls Nebius Token Factory",
       "status": "real",
-      "evidence": "On 24 Oct 2026 the gateway was deployed in live mode on Cloudflare Containers. A request to it is answered by Nemotron 3 Ultra on Nebius Token Factory under daily spend and rate limits, and an admin key and the mock-only demo controls are refused. No trained student is served in it yet, so the teacher answers every request.",
+      "evidence": "On 24 Oct 2026 the gateway was deployed in live mode on Cloudflare Containers. A request to it is answered by Nemotron 3 Ultra on Nebius Token Factory under daily spend and rate limits, and an admin key and the mock-only demo controls are refused. The main site's dashboard and every other gateway-backed page read this gateway; its ledger lives in the container's /tmp, so a restart empties it. No trained student is served in it yet, so the teacher answers every request.",
       "check": {
         "label": "Open it and send a request: the reply carries a ratchet block with who answered",
         "href": "https://live.ratchet.dualmindlab.tech"
@@ -231,9 +231,9 @@
     },
     {
       "id": "demo-numbers",
-      "claim": "The demo and the dashboard numbers",
+      "claim": "The simulation demo and its dashboard numbers",
       "status": "simulation",
-      "evidence": "The demo at demo.ratchet.dualmindlab.tech runs in mock mode on a Cloudflare Container: mock models answer every request, and the story page replays the reference run. None of these numbers measures a real model.",
+      "evidence": "The demo at demo.ratchet.dualmindlab.tech runs in mock mode on a Cloudflare Container: mock models answer every request, and the story page replays the reference run. None of these numbers measures a real model. The main site no longer shows them: its dashboard reads the live gateway.",
       "check": {
         "label": "Run the reference simulation yourself",
         "command": "python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3"
@@ -247,7 +247,7 @@
       "id": "machinery",
       "claim": "The cascade, release gate, signed BOM, certificates and receipts",
       "status": "real",
-      "evidence": "Real as code and tests (more than 1,900 automated tests, no network and no GPU), shown here in simulation.",
+      "evidence": "Real as code and tests (more than 1,900 automated tests, no network and no GPU), shown in simulation at the demo site.",
       "check": {
         "label": "Run the test suite",
         "command": "make test"

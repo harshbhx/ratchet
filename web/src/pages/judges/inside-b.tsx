@@ -73,7 +73,7 @@ export function CertificateChapter() {
       {!stats ? (
         statsRead.state === "error" ? <Unavailable path="/ratchet/stats" read={statsRead} /> : <Loading what="the versions" />
       ) : versions.length === 0 ? (
-        <p className="text-[13.5px] text-muted">No version yet. Run a simulated day to train the first one.</p>
+        <p className="text-[13.5px] text-muted">{stats?.mode === "mock" ? "No version yet. Run a simulated day to train the first one." : "No version yet on this live demo: the teacher answers every request until Night School trains one."}</p>
       ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Which version">
