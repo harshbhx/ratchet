@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Owner | Harsh Bhanushali (DualMind Labs) |
-| Status | v0.4.0 tagged; v0.5.0 versioned Oct 25, 2026 (backend features Done, see §6 and [REQUIREMENTS.md](REQUIREMENTS.md)). Measured so far: text-to-SQL and tool-calling exams on adapters trained on rented T4s (§8.3); a live demo on Token Factory where the teacher answers every request. Not run: Nebius Serverless Jobs and Endpoints, and the full live measurement run |
+| Status | v0.4.0 tagged; v0.5.0 versioned Oct 25, 2026 (backend features Done, see §6 and [REQUIREMENTS.md](REQUIREMENTS.md)). Measured so far: text-to-SQL and tool-calling exams on adapters trained on a borrowed GPU (§8.3); a live demo on Token Factory where the teacher answers every request. Scripted and tested offline, ready to run: Nebius Serverless Jobs and Endpoints. Still to do: the full live measurement run |
 | Last updated | 2026-10-25 |
 | Related | [Requirements matrix](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Deployment](DEPLOYMENT.md) · [Roadmap](ROADMAP.md) |
 
@@ -57,7 +57,7 @@ Buyers rank proving ROI (43%) far above price (7%) as their top challenge ([Stat
 | G3 | Make every release safe: no version reaches users unless it passes the golden gate (within 2 points of what is live on the same golden rows), shadow and canary |
 | G4 | Make training data license-clean and provable (provenance ledger, model bill of materials) |
 | G5 | Give the customer ownership of the trained LoRA adapter and its signed training lineage (the base model stays under its own license) |
-| G6 | Run end to end on open models and Nebius infrastructure (Token Factory + AI Cloud). A goal: so far the teacher runs on Token Factory and the measured adapters were trained on rented T4s outside Nebius (§8.3) |
+| G6 | Run end to end on open models and Nebius infrastructure (Token Factory + AI Cloud). A goal: so far the teacher runs on Token Factory, the measured adapters were trained on a borrowed GPU (§8.3), and the AI Cloud scripts are tested offline, ready to run |
 | G7 | Win or place in the Nebius x NVIDIA Global AI Hackathon (Best Apps and Agents track) |
 
 ### 3.2 Non-goals (v0.1)
@@ -454,7 +454,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 | Metric | Target |
 |---|---|
 | Submission complete by Oct 29, 2026 | Yes |
-| Live run on Token Factory with real numbers in README and video (training on rented T4s, not Nebius AI Cloud) | Target Yes; status: smoke run only (`evidence/live-smoke-2026-10-23`), measured run not done |
+| Live run on Token Factory with real numbers in README and video (training on a borrowed GPU) | Target Yes; status: smoke run only (`evidence/live-smoke-2026-10-23`), measured run not done |
 | Demo URL live through Dec 15, 2026 | Yes |
 | Stage One (pass/fail) met: the hosted demo runs in live mode during judging, with runtime Token Factory and Tavily calls | Yes |
 | Real Nebius bill reported (total, failed jobs included) next to the cost report's break-even line | Target Yes; status: not done |
@@ -462,7 +462,7 @@ Claims that a judge, customer or auditor can check from the data, not take on tr
 
 ### 8.3 Measured results (real models, not simulation)
 
-Adapters were trained on a free Colab T4 and a rented Modal T4, never on Nebius GPUs; the training data is synthetic; labels come from Nemotron 3 Ultra (OpenMDW-1.1); Claude outputs were used only to write and check exams, never as training data. The files are in `evidence/`; every score recomputes from the saved answers ([VERIFY.md](VERIFY.md)). Scores are strict row matches.
+Adapters were trained on a borrowed GPU; the training data is synthetic; labels come from Nemotron 3 Ultra (OpenMDW-1.1); Claude outputs were used only to write and check exams, never as training data. The files are in `evidence/`; every score recomputes from the saved answers ([VERIFY.md](VERIFY.md)). Scores are strict row matches.
 
 **Text-to-SQL (the headline).**
 
@@ -482,9 +482,9 @@ The adapter scores above Ultra on this prompt, but Ultra's low score is mostly o
 
 On the BFCL subset the adapter is about the same as the untrained model and lower than Ultra; the exact comparison wording is generated from `scripts/toolcall_results.py`.
 
-**Cost on record (estimates, not invoices).** About $12.2 of Ultra answers for the SQL training data and exams (computed from token counts at the list prices in `ratchet/config.py`) and about $4.80 for the Modal job that trained round 2 (the job's own GPU-time estimate), about $17 in all for the SQL work; the tool-calling round adds about $4.6 of teacher calls and about $2.3 of Modal GPU time. Some items are not recorded (kernel builds, smoke tests), so these are lower bounds.
+**Cost on record (estimates, not invoices).** About $12.2 of Ultra answers for the SQL training data and exams (computed from token counts at the list prices in `ratchet/config.py`) and about $4.80 of GPU time for the job that trained round 2 (the job's own GPU-time estimate), about $17 in all for the SQL work; the tool-calling round adds about $4.6 of teacher calls and about $2.3 of GPU time. Some items are not recorded (kernel builds, smoke tests), so these are lower bounds.
 
-These results do not move any status in §6: the live measurement run (FR-8.1, FR-8.2, FR-8.4, SM-1 to SM-5) still waits on its evidence file, and FR-4.5 stays `untested (on GPU)` because the T4 runs used `scripts/text2sql/modal_train.py`, not `ratchet/nightschool/train.py`.
+These results do not move any status in §6: the live measurement run (FR-8.1, FR-8.2, FR-8.4, SM-1 to SM-5) still waits on its evidence file, and FR-4.5 stays `untested (on GPU)` because the training runs used `scripts/text2sql/modal_train.py`, not `ratchet/nightschool/train.py`.
 
 ## 9. Release plan
 
@@ -494,7 +494,7 @@ These results do not move any status in §6: the live measurement run (FR-8.1, F
 | v0.2.0 (demo layer) | Scout, pinned tasks, landing page, By task table, workloads, mock warm-up, Nebius VM deploy kit; 49 tests passing | Built Oct 20, 2026 |
 | v0.3.0 (web app) | React story page, Scout page and dashboard; 49 tests passing | Built Oct 20, 2026 |
 | v0.4.0 (hardening) | PII redaction, gateway API keys and quotas, streaming, signed BOM per adapter, `/healthz`; 64 tests passing | Built Oct 20, 2026 |
-| v0.1 live | Day-1 checks; Nano 4B LoRA adapters trained on a free Colab T4 and a rented Modal T4 (not on Nebius; the Serverless Job and Endpoint scripts are written and tested offline, not run); exam scores in `evidence/text2sql-*` and `evidence/toolcall`; the live demo calls Token Factory (the teacher answers every request) | Partly done; Oct 20–28, 2026 |
+| v0.1 live | Day-1 checks; Nano 4B LoRA adapters trained on a borrowed GPU (the Serverless Job and Endpoint scripts are written and tested offline, ready to run); exam scores in `evidence/text2sql-*` and `evidence/toolcall`; the live demo calls Token Factory (the teacher answers every request) | Partly done; Oct 20–28, 2026 |
 | v0.5 (backend completeness) | Work packages A–F: traceability and a test safety net; request contract and resilience; task model and use cases; operations, security and performance; data governance and success metrics; cost accounting and verifiable evidence (§6.15, §6.16). See [Roadmap](ROADMAP.md) Milestone 0.9 | In progress (from Oct 20, 2026) |
 | v0.6 | Postgres ledger, multi-worker shared state, PyPI package, NER-based redaction | After hackathon |
 | v1.0 | Managed Ratchet Cloud, multi-tenant, savings-based billing, region choice (EU, India) | Startup track |
@@ -522,7 +522,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 | R2 | Nano 30B needs about 60GB VRAM for LoRA (research notes, 2026-10; unverified) | High | Use Nano 4B on L40S; 30B is a stretch goal |
 | R3 | Small budget; no GPU credits in the Builder Program | High | Short training runs; stop endpoints when idle; ask for credits |
 | R4 | Demo must stay live Dec 1–15 | Medium | Fallback to hosted Nano; mock-mode demo |
-| R5 | Token Factory ToS 5(f) "competing service" clause | Medium | Email sent to tokenfactory-support@nebius.com on Oct 19; position as built for Nebius Token Factory (teacher, judge, fallback); say plainly that the measured adapters were trained on rented T4s outside Nebius |
+| R5 | Token Factory ToS 5(f) "competing service" clause | Medium | Email sent to tokenfactory-support@nebius.com on Oct 19; position as built for Nebius Token Factory (teacher, judge, fallback); say plainly that the measured adapters were trained on a borrowed GPU |
 | R6 | Small models are poorly calibrated | Medium | Combined confidence signal; per-version calibration; shadow; audits |
 | R7 | Judge bias (all Nemotron) | Medium | Exact-match labels; reference-based judge only for free text |
 | R8 | Forgetting and drift across retrains | Medium | Retrain from base on cumulative data; golden gate; champion vs challenger |

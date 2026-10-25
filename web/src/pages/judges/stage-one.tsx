@@ -56,7 +56,7 @@ export const STAGE_ONE: StageOneItem[] = [
     requirement: "NVIDIA Nemotron models in the product",
     status: "real",
     evidence:
-      "Nemotron 3 Ultra is the teacher. Nemotron 3 Nano 4B is the student, with a LoRA adapter trained on rented T4 GPUs, not on Nebius GPUs.",
+      "Nemotron 3 Ultra is the teacher. Nemotron 3 Nano 4B is the student, with a LoRA adapter trained on a borrowed GPU.",
     link: { label: "Adapter", href: "https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql" },
   },
   {

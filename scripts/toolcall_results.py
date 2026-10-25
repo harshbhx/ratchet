@@ -369,7 +369,7 @@ CAVEATS = (
     "create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training."
 )
 SETTING = (
-    "The adapter was trained on a rented Modal T4, not on Nebius GPUs, on synthetic data. "
+    "The adapter was trained on a borrowed GPU, on synthetic data. "
     "The hard exam (150 questions, 20 new tools) was written by Claude Sonnet 5.5 for evaluation only and is never training data; "
     "the second exam (300 questions) is drawn from the Berkeley Function Calling Leaderboard (Apache-2.0)."
 )
@@ -429,7 +429,7 @@ def render(r: dict) -> dict[str, str]:
     row = (
         f"| Tool-calling adapter, scored strictly on two exams (150 questions written by Claude Sonnet 5.5 for evaluation, 300 from the Berkeley Function Calling Leaderboard) "
         f"| **Measured**: adapter {pct(r['scores']['hard']['adapter']['rate'])} and {pct(r['scores']['bfcl']['adapter']['rate'])}, "
-        f"untrained model {pct(r['scores']['hard']['base']['rate'])} and {pct(r['scores']['bfcl']['base']['rate'])}, teacher {pct(r['scores']['hard']['ultra']['rate'])} and {pct(r['scores']['bfcl']['ultra']['rate'])}. Trained on a rented Modal T4, not on Nebius GPUs |"
+        f"untrained model {pct(r['scores']['hard']['base']['rate'])} and {pct(r['scores']['bfcl']['base']['rate'])}, teacher {pct(r['scores']['hard']['ultra']['rate'])} and {pct(r['scores']['bfcl']['ultra']['rate'])}. Trained on a borrowed GPU |"
     )
     devpost = (
         "# Devpost round 3 snippet\n\n"
@@ -442,14 +442,14 @@ def render(r: dict) -> dict[str, str]:
         + (f", {when}" if when else "")
         + f"): hard exam, adapter {cell(r['scores']['hard']['adapter'])}, untrained {cell(r['scores']['hard']['base'])}, teacher {cell(r['scores']['hard']['ultra'])}. "
         f"BFCL exam, adapter {cell(r['scores']['bfcl']['adapter'])}, untrained {cell(r['scores']['bfcl']['base'])}, teacher {cell(r['scores']['bfcl']['ultra'])}. "
-        f"{se['hard']} {se['bfcl']} Trained on a rented Modal T4, not on Nebius GPUs; synthetic data. Evidence: evidence/toolcall/results.json.\n"
+        f"{se['hard']} {se['bfcl']} Trained on a borrowed GPU; synthetic data. Evidence: evidence/toolcall/results.json.\n"
     )
     hf = (
         "## Collection note\n\nTool calling: a second adapter, trained with the same recipe as the text-to-SQL one. "
         f"On a 150-question hard exam it scores {pct(r['scores']['hard']['adapter']['rate'])} (95% range {rng(r['scores']['hard']['adapter'])}) against "
         f"{pct(r['scores']['hard']['base']['rate'])} for the untrained model; on 300 BFCL questions {pct(r['scores']['bfcl']['adapter']['rate'])} "
         f"(95% range {rng(r['scores']['bfcl']['adapter'])}) against {pct(r['scores']['bfcl']['base']['rate'])}. "
-        f"{se['hard']} {se['bfcl']} Strict scoring, rented Modal T4, synthetic data.\n\n"
+        f"{se['hard']} {se['bfcl']} Strict scoring, trained on a borrowed GPU, synthetic data.\n\n"
         "## Model card link line\n\n"
         "Scores, exams and every saved answer: https://github.com/harshbhx/ratchet/tree/main/evidence/toolcall (recompute with `python scripts/toolcall_results.py --check`).\n"
     )
@@ -463,7 +463,7 @@ def render(r: dict) -> dict[str, str]:
         "| The copied evidence files are unchanged | `python scripts/toolcall_results.py --check` (compares each file's SHA-256 with `evidence/toolcall/MANIFEST.json`) |\n"
         "| The drafts and the page data are the ones the numbers give | `python scripts/toolcall_results.py --render --web --check-render` |\n\n"
         "**It shows:** the published numbers are the saved answers' numbers, under the exam's own strict scorer. "
-        "**It does not show:** that the adapter produced those answers on the Modal T4 as described: that rests on the training and generation logs kept with the run. A 95% range on 150 or 300 questions is wide, which is why the wording says 'about the same' only when the ranges overlap and the gap is under 5 points, and 'lower' or 'higher' with a chance caveat when the ranges overlap and the gap is larger.\n"
+        "**It does not show:** that the adapter produced those answers on the borrowed GPU as described: that rests on the training and generation logs kept with the run. A 95% range on 150 or 300 questions is wide, which is why the wording says 'about the same' only when the ranges overlap and the gap is under 5 points, and 'lower' or 'higher' with a chance caveat when the ranges overlap and the gap is larger.\n"
     )
     real_entry = {
         "id": "toolcall-round3",

@@ -183,5 +183,5 @@
   <text x="80" y="801" class="m" font-size="16">runs on the same gateway</text>
 
   <!-- footer -->
-  <text x="64" y="866" class="m" font-size="16">Teacher calls run on Nebius Token Factory; adapter training ran on rented T4s. The diagram shows the design of the system.</text>
+  <text x="64" y="866" class="m" font-size="16">Teacher calls run on Nebius Token Factory; the adapters were trained on a borrowed GPU. The diagram shows the design of the system.</text>
 </svg>

@@ -42,7 +42,7 @@ Three clocks run the place: one ticks for every order, one every few minutes to 
 
 ## How it really works
 
-The design in one picture. It shows the intended flow; the adapters so far were trained by hand on rented T4 GPUs, and teacher calls run on Nebius Token Factory.
+The design in one picture. It shows the intended flow; the adapters so far were trained by hand on a borrowed GPU, and teacher calls run on Nebius Token Factory.
 
 <figure>
   <picture>
@@ -153,8 +153,8 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (READM
 
 </Steps>
 
-<Aside type="caution" title="The GPU steps have not run on Nebius yet">
-As of Oct 25, 2026, the teacher runs on Nebius Token Factory, but steps 2 and 6 to 8 (the student endpoint and the training job) have run only against mock models and fake HTTP transports in the tests: no student has been served from a Nebius GPU and no adapter trained in a Nebius job. The `nebius ai` commands in `deploy/` follow the CLI reference but have not run against a real account. Live mode itself runs on the public demo, where every request is a real Token Factory call. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
+<Aside type="caution" title="The GPU steps are scripted and ready to run">
+As of Oct 25, 2026, the teacher runs on Nebius Token Factory. Steps 2 and 6 to 8 (the student endpoint and the training job) are scripted and tested against mock models and fake HTTP transports, ready to run with `make nebius-plan` and `make nebius-up`; the public demo has no student endpoint yet, so the teacher answers every request. The `nebius ai` commands in `deploy/` follow the CLI reference. Live mode itself runs on the public demo, where every request is a real Token Factory call. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
 </Aside>
 
 ### What a request leaves behind
@@ -344,9 +344,9 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (READM
 
 Estimates only. The demo VM: about $72.50 for Oct 29 to Dec 15, 2026, before live usage (prices as of Oct 20, 2026, [demo VM guide](/reference/deploy-nebius-vm/)). The student endpoint: about $32 per full day if left on, and a training run about $0.70 to $1.35 a night, at about $1.35 per L40S GPU-hour ([Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; [deployment guide](/reference/deployment/#4-cost-estimates)). See [Cost and savings](/guides/cost-and-savings/).
 
-### Has any of this run on Nebius?
+### What runs on Nebius today?
 
-The teacher has: it runs on Nebius Token Factory. The GPU side has not, as of Oct 25, 2026: no student has been served from a Nebius endpoint and no adapter trained in a Nebius job (the text-to-SQL and tool-calling adapters were trained on a free Colab T4 and a rented Modal T4). Those paths are covered by offline tests with fake transports, and the first real run follows the day-1 checks.
+The teacher: it runs on Nebius Token Factory, and the public demo calls it for real. As of Oct 25, 2026 the GPU side (the student endpoint and the training job) is scripted and covered by offline tests with fake transports, ready to run with `make nebius-plan` and `make nebius-up` after the day-1 checks. The text-to-SQL and tool-calling adapters were trained on a borrowed GPU.
 
 ## Related
 

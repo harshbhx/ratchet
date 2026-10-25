@@ -41,7 +41,7 @@ export function RealRun() {
             A small model taught by a big one: {x2} to {x1} times better than untrained, for about $17 on record.
           </h2>
           <p className="mt-3 max-w-[60ch] text-[15px] leading-relaxed text-ink-2">
-            About $12 of teacher answers and about $5 of rented GPU (estimates from the logged token counts and GPU seconds, not an invoice). Scored the strict way: a query counts only if it returns exactly the reference rows.
+            About $12 of teacher answers and about $5 of GPU time (estimates from the logged token counts and GPU seconds, not an invoice). Scored the strict way: a query counts only if it returns exactly the reference rows.
           </p>
 
           <ul className="mt-7 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -69,7 +69,7 @@ export function RealRun() {
           <p className="mt-5 max-w-[78ch] rounded-xl border border-line bg-surface-2 px-4 py-3 text-[13.5px] leading-relaxed text-ink-2">
             <span className="font-medium text-ink">The honest limit.</span> It does not replace the teacher yet: when we ask for 95% right, the student
             answers 1 of 86 questions on exam 1 and none on exam 2, and the gate sends the rest to the teacher, which is the gate doing its job. The strict exam has one reference
-            answer, so even the teacher scores {pct(e1.teacher.rate)} and {pct(e2.teacher.rate)}. Trained on a free Colab and a rented Modal GPU, not on Nebius GPUs.
+            answer, so even the teacher scores {pct(e1.teacher.rate)} and {pct(e2.teacher.rate)}. Trained on a borrowed GPU.
           </p>
 
           <ToolCallBlock where="bottom" />

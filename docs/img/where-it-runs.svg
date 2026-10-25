@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="wir-t wir-d" font-family="'Inter', system-ui, sans-serif">
   <title id="wir-t">Where everything runs</title>
-  <desc id="wir-d">Where each part of Ratchet runs. Real today: development and tests on the owner's laptop in mock mode with no GPU; the adapters were trained on a free Colab T4 and a rented Modal T4; the public live demo and the simulation demo run on Cloudflare Workers with Containers, CPU only, and the live demo has no student endpoint, so the teacher answers every call; the teacher, Nemotron 3 Ultra, runs on Nebius Token Factory. Designed for Nebius AI Cloud, scripted and tested offline but not yet run on a real account: a CPU virtual machine for the gateway, ledger and Caddy, a serverless endpoint for the student with vLLM and a LoRA adapter, a serverless job for Night School training, and an object storage bucket. One command, make nebius-plan, prints every step.</desc>
+  <desc id="wir-d">Where each part of Ratchet runs. Real today: development and tests on the owner's laptop in mock mode with no GPU; the adapters were trained on a borrowed GPU; the public live demo and the simulation demo run on Cloudflare Workers with Containers, CPU only, and the live demo has no student endpoint, so the teacher answers every call; the teacher, Nemotron 3 Ultra, runs on Nebius Token Factory. Designed for Nebius AI Cloud, scripted and tested offline and ready to run: a CPU virtual machine for the gateway, ledger and Caddy, a serverless endpoint for the student with vLLM and a LoRA adapter, a serverless job for Night School training, and an object storage bucket. One command, make nebius-plan, prints every step.</desc>
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mk" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mkb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -79,7 +79,7 @@
   </style>
   <rect class="bg" width="1600" height="900"/>
   <text x="64" y="76" class="mo bi" font-size="16" letter-spacing="2.5">WHERE EVERYTHING RUNS</text>
-  <text x="64" y="128" class="t h" font-size="40" letter-spacing="-0.8">What runs today, and what is only designed for Nebius.</text>
+  <text x="64" y="128" class="t h" font-size="40" letter-spacing="-0.8">What runs today, and what is ready to run on Nebius.</text>
   <rect class="grp" x="64" y="176" width="320" height="378" rx="24"/>
   <text x="88" y="208" class="mo m" font-size="14" letter-spacing="1.5">YOUR LAPTOP · REAL</text>
   <rect class="card" x="84" y="224" width="280" height="150" rx="16"/>
@@ -98,14 +98,14 @@
   <text x="104" y="474" class="t2" font-size="16">No network, no GPU.</text>
   <text x="104" y="496" class="t2" font-size="16">Same checks on GitHub.</text>
   <rect class="grp" x="64" y="578" width="320" height="212" rx="24"/>
-  <text x="88" y="610" class="mo m" font-size="14" letter-spacing="1.5">RENTED GPUS · REAL</text>
+  <text x="88" y="610" class="mo m" font-size="14" letter-spacing="1.5">BORROWED GPU · REAL</text>
   <rect class="card" x="84" y="626" width="280" height="140" rx="16"/>
   <text x="104" y="660" class="t h" font-size="21">Adapter training</text>
   <rect class="pillG" x="284" y="640" width="64" height="28" rx="14"/>
   <text x="316.0" y="659" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">GPU</text>
-  <text x="104" y="688" class="t2" font-size="16">Free Colab T4 and a rented</text>
-  <text x="104" y="710" class="t2" font-size="16">Modal T4: LoRA training only.</text>
-  <text x="104" y="732" class="t2" font-size="16">Nothing is served from them.</text>
+  <text x="104" y="688" class="t2" font-size="16">A borrowed GPU: LoRA</text>
+  <text x="104" y="710" class="t2" font-size="16">training only.</text>
+  <text x="104" y="732" class="t2" font-size="16">Nothing is served from it.</text>
   <rect class="grp" x="424" y="176" width="372" height="614" rx="24"/>
   <text x="448" y="208" class="mo m" font-size="14" letter-spacing="1.5">CLOUDFLARE · REAL, CPU ONLY</text>
   <rect class="card" x="444" y="224" width="332" height="190" rx="16"/>
@@ -139,8 +139,8 @@
   <text x="876" y="312" class="t2" font-size="16">Real API calls from the</text>
   <text x="876" y="334" class="t2" font-size="16">live demo, billed per token.</text>
   <text x="876" y="356" class="t2" font-size="16"></text>
-  <text x="876" y="378" class="t2" font-size="16">The only part that runs</text>
-  <text x="876" y="400" class="t2" font-size="16">on Nebius today.</text>
+  <text x="876" y="378" class="t2" font-size="16">Every teacher answer comes</text>
+  <text x="876" y="400" class="t2" font-size="16">from Nebius today.</text>
   <rect class="zoneD" x="1236" y="176" width="300" height="300" rx="24"/>
   <text x="1260" y="208" class="mo m" font-size="14" letter-spacing="1.5">HOST IT ALL ON NEBIUS</text>
   <text x="1260" y="250" class="t2" font-size="16">Print every step with:</text>
@@ -149,9 +149,9 @@
   <text x="1260" y="350" class="t2" font-size="16">Then, with a flag and a</text>
   <text x="1260" y="372" class="t2" font-size="16">confirmation: make nebius-up.</text>
   <text x="1260" y="414" class="t h" font-size="16">Scripted and tested offline.</text>
-  <text x="1260" y="436" class="t h" font-size="15">Not yet run on a real account.</text>
+  <text x="1260" y="436" class="t h" font-size="15">Ready to run.</text>
   <rect class="zoneD" x="836" y="506" width="700" height="284" rx="24"/>
-  <text x="860" y="538" class="mo m" font-size="14" letter-spacing="1.5">NEBIUS AI CLOUD · NOT RUN YET</text>
+  <text x="860" y="538" class="mo m" font-size="14" letter-spacing="1.5">NEBIUS AI CLOUD · READY TO RUN</text>
   <rect class="planC" x="856" y="546" width="312" height="100" rx="16"/>
   <text x="876" y="580" class="t h" font-size="21">CPU VM</text>
   <rect class="pill" x="1088" y="560" width="64" height="28" rx="14"/>
@@ -183,9 +183,9 @@
   <rect class="card" x="64" y="818" width="26" height="20" rx="6"/>
   <text x="100" y="834" class="t h" font-size="16">Real today</text>
   <rect class="planS" x="236" y="818" width="26" height="20" rx="6"/>
-  <text x="272" y="834" class="t h" font-size="16">Scripted and tested offline, not yet run on a real account</text>
+  <text x="272" y="834" class="t h" font-size="16">Scripted and tested offline, ready to run</text>
   <rect class="pillG" x="760" y="816" width="50" height="24" rx="12"/>
   <text x="785" y="833" class="pillT mo" font-size="13" text-anchor="middle" letter-spacing="1" fill="#fff">GPU</text>
   <text x="822" y="834" class="t2" font-size="16">= training and the student endpoint. All else is CPU.</text>
-  <text x="64" y="874" class="m" font-size="16">The public demos have no student endpoint. None of our own code has been deployed to Nebius AI Cloud yet.</text>
+  <text x="64" y="874" class="m" font-size="16">The public live demo has no student endpoint yet, so the teacher answers every request. make nebius-plan prints every step.</text>
 </svg>

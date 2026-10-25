@@ -1,4 +1,4 @@
-"""Runs ON the Colab T4: compile or install the Mamba kernels, train a LoRA adapter in 4-bit fp16, then answer the
+"""Runs ON the training GPU: compile or install the Mamba kernels, train a LoRA adapter in 4-bit fp16, then answer the
 held-out rows with the base model and the adapter (scripts/measure_adapter.py generate). Writes /content/package.zip.
 
 Env: MODE=real|pipeline-test, EPOCHS (default 2), MAX_STEPS (default 0 = use epochs), MAX_SEQ (default 768).

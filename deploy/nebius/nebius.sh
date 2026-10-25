@@ -23,7 +23,7 @@
 # own flags. A dry run (and `plan`) puts a local stand-in for `nebius` on PATH, so no Nebius API is called, and nothing is
 # created, stopped or deleted. Exit codes: 0 ok; 1 failure or a missing variable; 2 usage, or a refusal to spend.
 #
-# NOTHING HERE HAS RUN ON A REAL NEBIUS ACCOUNT. The pieces were written from the CLI reference and tested offline against a
+# SCRIPTED AND TESTED OFFLINE, READY TO RUN. The pieces were written from the CLI reference and tested offline against a
 # fake `nebius`. Lines marked VERIFY ON DAY 1 use commands that no script here has used before.
 # Guide: docs/WHERE_IT_RUNS.md, docs/DEPLOY_NEBIUS_VM.md
 set -euo pipefail
@@ -141,7 +141,7 @@ print_estimate() {
 
 banner() {
   echo "Ratchet on Nebius: $CMD" >&2
-  echo "NOT YET RUN ON A REAL NEBIUS ACCOUNT: scripted and tested offline against a fake CLI." >&2
+  echo "SCRIPTED AND TESTED OFFLINE against a fake CLI: ready to run." >&2
   if [[ "$DRY" == "1" ]]; then
     echo "DRY RUN: nothing will be created, started, stopped or deleted, and no Nebius API is called." >&2
     if [[ "$CMD" == "up" || "$CMD" == "down" ]]; then

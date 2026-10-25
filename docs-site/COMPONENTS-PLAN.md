@@ -247,7 +247,7 @@ import CountUp from '../../../components/ui/CountUp.astro';
 1. **`### The order of work`**: keep `<Steps>`; it is a procedure to follow, not to click through.
 2. **`### The pieces and how they connect`**: keep the table; add a `<PathGrid cols={3}>` of the Nebius pieces only if each
    card links to its section below.
-3. Keep the caution `<Aside>` "Not run on Nebius yet" until it is no longer true.
+3. Keep the caution `<Aside>` on what is scripted and ready to run until it changes.
 
 ### `guides/security.mdx`
 
@@ -294,7 +294,7 @@ import CountUp from '../../../components/ui/CountUp.astro';
    every answer; the student trains on kept rows (`owned`); the exam on unseen databases.
 2. **`## The problem`**: `<Compare before="A large model for every question" after="A small model you run">` using the
    page's "Cost" and "Exposure" bullets.
-3. Training hardware is a free Colab T4: say so in a `rt-callout--note` if the page shows a training run; never imply a
+3. Training hardware is a borrowed GPU: say so in a `rt-callout--note` if the page shows a training run; never imply a
    Nebius GPU for it.
 
 ### `guides/results.mdx`

@@ -23,7 +23,7 @@ reference:
 demo-check:
 	python scripts/demo_check.py $(URL) $(ARGS)
 
-# One command to host Ratchet on Nebius (scripted and tested offline, never run on a real account; docs/WHERE_IT_RUNS.md).
+# One command to host Ratchet on Nebius (scripted and tested offline, ready to run; docs/WHERE_IT_RUNS.md).
 # nebius-plan prints every command and changes nothing. nebius-up and nebius-down are dry runs unless you set
 # RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 and pass YES=1; GPU parts need ARGS="--with-student" (and --with-training).
 nebius-plan:

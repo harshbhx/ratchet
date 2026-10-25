@@ -302,8 +302,8 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 | Prompt injection from search results (T15) | Results are data in a user message, never a system prompt; the writer is pinned to the teacher; no agent runs tools or code from model output | Stricter delimiting, shorter excerpts |
 | Stolen BOM signing key (T21) | Read from the environment only; only the public half is served | A secrets manager, signing on a separate machine |
 
-<Aside type="caution" title="What has not run yet">
-As of Oct 25, 2026, the teacher runs on Nebius Token Factory, but the student endpoint and the training job have not run on a Nebius GPU; live mode runs on the public demo, where every request is a real Token Factory call. As of Oct 21, 2026, items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, had not been checked on a real VM.
+<Aside type="caution" title="What runs where today">
+As of Oct 25, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are scripted and tested offline, ready to run with `make nebius-up`; live mode runs on the public demo, where every request is a real Token Factory call. As of Oct 21, 2026, items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, had not been checked on a real VM.
 </Aside>
 
 ### The safety rules the loop never breaks

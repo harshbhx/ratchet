@@ -4,7 +4,7 @@ The same gateway image as the simulation demo (`../cloudflare`), but in **live m
 Nemotron 3 Ultra on Nebius Token Factory, behind a Worker at `live.ratchet.dualmindlab.tech`. The simulation demo stays at
 `demo.ratchet.dualmindlab.tech`, labelled as simulation.
 
-What it is, honestly: a fresh live gateway has no trained student yet (training needs a GPU, and none has run on Nebius), so the
+What it is, honestly: the public demo has no student endpoint yet (serving the student needs a GPU endpoint), so the
 teacher answers every request, each one logged with its provenance, cost and request id. The student's real results are on the story
 page and the judges' page; the cascade's behaviour with a student is the simulation demo.
 

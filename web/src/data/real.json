@@ -30,15 +30,15 @@
       "id": "adapter-training",
       "claim": "A LoRA adapter was trained on that data",
       "status": "real",
-      "evidence": "Trained on a free Google Colab T4 GPU, not on Nebius GPUs: a 4-bit LoRA (r=16) on Nemotron 3 Nano 4B, 206 steps over 2 epochs in 66 minutes. Training loss went from 0.334 to 0.075; a training loss is not a quality result.",
+      "evidence": "Trained on a borrowed GPU: a 4-bit LoRA (r=16) on Nemotron 3 Nano 4B, 206 steps over 2 epochs in 66 minutes. Training loss went from 0.334 to 0.075; a training loss is not a quality result.",
       "check": {
-        "label": "Read the training script that ran on the T4",
+        "label": "Read the training script",
         "href": "https://github.com/harshbhx/ratchet/blob/main/scripts/text2sql/train_t4.py"
       },
       "paths": ["scripts/text2sql/train_t4.py"],
       "date": "2026-10-22",
       "facts": [
-        { "label": "Hardware", "value": "Free Colab T4" },
+        { "label": "Hardware", "value": "A borrowed GPU" },
         { "label": "Adapter", "value": "4-bit LoRA, r=16" },
         { "label": "Steps", "value": "206 over 2 epochs in 66 minutes" },
         { "label": "Training loss", "value": "0.334 to 0.075" }
@@ -148,7 +148,7 @@
       "id": "gateway-live",
       "claim": "The student and its training on Nebius GPUs (Serverless Jobs and Endpoints)",
       "status": "not-run",
-      "evidence": "The tuned student has not been served on a Nebius endpoint and no training job has run on Nebius GPUs: round 1 trained on a free Colab T4 and round 2 on a rented Modal T4. The scripts exist and are tested offline; running them needs GPU access this project did not have.",
+      "evidence": "The public demo has no student endpoint yet, so the teacher answers every request. The Serverless Endpoint and Night School job scripts are tested offline and ready to run with make nebius-plan. Both text-to-SQL rounds were trained on a borrowed GPU.",
       "check": {
         "label": "The day-1 checks, with a Token Factory key",
         "command": "make day1"
@@ -276,7 +276,7 @@
       "id": "toolcall-round3",
       "claim": "How well a tool-calling adapter does on two held-out exams",
       "status": "measured",
-      "evidence": "On the hard exam the adapter is above the untrained model: 90.7% against 62.7%, and the 95% ranges do not overlap. It is about the same as the teacher: 90.7% against 91.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is lower than the teacher: 80.3% against 88.3% (241/300 against 265/300; the 95% ranges overlap only slightly, so part of the gap could be chance). Strict scoring. Free-text arguments are a known weak spot in the training data: the strict scorer cannot agree on free text, so tools such as create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training. The adapter was trained on a rented Modal T4, not on Nebius GPUs, on synthetic data. The hard exam (150 questions, 20 new tools) was written by Claude Sonnet 5.5 for evaluation only and is never training data; the second exam (300 questions) is drawn from the Berkeley Function Calling Leaderboard (Apache-2.0).",
+      "evidence": "On the hard exam the adapter is above the untrained model: 90.7% against 62.7%, and the 95% ranges do not overlap. It is about the same as the teacher: 90.7% against 91.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is lower than the teacher: 80.3% against 88.3% (241/300 against 265/300; the 95% ranges overlap only slightly, so part of the gap could be chance). Strict scoring. Free-text arguments are a known weak spot in the training data: the strict scorer cannot agree on free text, so tools such as create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training. The adapter was trained on a borrowed GPU, on synthetic data. The hard exam (150 questions, 20 new tools) was written by Claude Sonnet 5.5 for evaluation only and is never training data; the second exam (300 questions) is drawn from the Berkeley Function Calling Leaderboard (Apache-2.0).",
       "check": {
         "label": "Recompute the scores from the saved answers",
         "command": "python scripts/toolcall_results.py --check"

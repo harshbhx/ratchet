@@ -320,8 +320,8 @@ When the student's GPU endpoint is off (`RATCHET_STUDENT_BASE` unset), a trained
 
 That model never sat the exam, so no calibrated threshold or per-task record applies to it. `Ratchet.threshold` returns the fixed `Settings.confidence_threshold` (`RATCHET_CONFIDENCE_THRESHOLD`, default 0.80) for it, and its answers are **not covered by the adapter's certificate**. The same 0.80 is used for a version whose eval has no calibrated threshold.
 
-<Aside type="caution" title="No student has run on a Nebius GPU yet">
-As of Oct 25, 2026, the teacher runs on Nebius Token Factory, but no student has been served from a Nebius GPU endpoint and Night School has not calibrated a threshold on a live ledger. The scoring, calibration and certificate code is tested offline, and every threshold, precision and coverage figure from the simulator comes from mock models (simulation). The text-to-SQL adapter, trained on a free Colab T4 and a rented Modal T4, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
+<Aside type="caution" title="Calibrated in simulation and offline so far">
+As of Oct 25, 2026, the teacher runs on Nebius Token Factory; the public demo has no student endpoint yet, so the teacher answers every request, and Night School has not calibrated a threshold on a live ledger. The scoring, calibration and certificate code is tested offline, and every threshold, precision and coverage figure from the simulator comes from mock models (simulation). The text-to-SQL adapter, trained on a borrowed GPU, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
 </Aside>
 
 ## For engineers

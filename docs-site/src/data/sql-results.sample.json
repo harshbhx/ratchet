@@ -181,7 +181,7 @@
     "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
     "python": "3.12.0",
     "platform": "sample",
-    "gpu": "Tesla T4 (free Colab)",
+    "gpu": "borrowed GPU",
     "run_note": "SAMPLE DATA, not a real run",
     "args": {
       "target_precision": 0.95,

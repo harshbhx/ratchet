@@ -11,7 +11,7 @@ const ICON: Record<RealStatus, LucideIcon> = {
 };
 
 /**
- * What a claim or a number rests on: Real, Measured, Simulation, Pending or Not run (`src/lib/real-model.ts`). The word
+ * What a claim or a number rests on: Real, Measured, Simulation, Pending or Ready to run (`src/lib/real-model.ts`). The word
  * is always shown; the icon and colour only repeat it. Its accessible name says what the status means.
  */
 export function RealBadge({ status, className, label }: { status: RealStatus; className?: string; label?: string }) {

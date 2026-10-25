@@ -37,7 +37,7 @@ The picture shows the design. The diagram below names the files and services.
           Night School driver: python -m ratchet.live night | tick   (ratchet/live.py, cron)
 ```
 
-Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested but have not been run on Nebius. The adapters behind the measured numbers in [evidence/](../evidence/) were trained on a free Colab T4 and a rented Modal T4, never on Nebius GPUs. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
+Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested, ready to run with `make nebius-plan`. The adapters behind the measured numbers in [evidence/](../evidence/) were trained on a borrowed GPU. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
 
 | Module | Responsibility |
 |---|---|

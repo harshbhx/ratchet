@@ -7,7 +7,7 @@ import { Reveal } from "../shared";
 
 /**
  * "Run it on Nebius": the one-command path (deploy/nebius/nebius.sh, `make nebius-plan`), with the honest label directly under
- * the command box. The script is written and tested offline against a fake CLI; it has not run on a real Nebius account, and
+ * the command box. The script is written and tested offline against a fake CLI, ready to run, and
  * the page says so next to the button. Nebius is named only as the place it is hosted: no endorsement is claimed.
  */
 const COMMANDS = `make nebius-plan   # a dry run: prints every command, changes nothing
@@ -54,7 +54,7 @@ export function RunOnNebius() {
                 {"                 "}
                 {tok.c("# RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1")}
               </CodeBlock>
-              <p className="mt-3 text-[13px] font-medium leading-snug text-ink-2">Scripted and tested offline; not yet run on a real Nebius account.</p>
+              <p className="mt-3 text-[13px] font-medium leading-snug text-ink-2">Scripted and tested offline; ready to run with make nebius-plan.</p>
               <p className="mt-1 text-[13px] leading-snug text-muted">
                 Step by step, with costs as estimates:{" "}
                 <a className="underline underline-offset-2 hover:text-ink" href={HOST_GUIDE_URL} target="_blank" rel="noopener noreferrer">

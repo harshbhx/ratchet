@@ -6,7 +6,7 @@ import { PHONE_URL, STATUS_URL, duration, lossPath, runView, type RunStatus, typ
 /**
  * A live card for the training job that is running now, read from the job's small public status service every 30 seconds.
  * It shows nothing at all when no run is under way (or one ended more than a day ago), and nothing when the service cannot be
- * reached, so a quiet day leaves no empty widget. Spend is an estimate from GPU time at Modal's list price.
+ * reached, so a quiet day leaves no empty widget. Spend is an estimate from GPU time at the list price.
  */
 export function TrainingStatus() {
   const [view, setView] = useState<RunView | null>(null);

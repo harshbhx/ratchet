@@ -145,9 +145,9 @@ Ratchet also reports the bill honestly: savings per token and by GPU-hours actua
 |---|---|
 | Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,922 tests that need no network and no GPU |
 | Teacher calls | <span class="rt-badge rt-badge--live">Real</span> Nemotron 3 Ultra on Nebius Token Factory. Real teacher calls built the text-to-SQL data on Oct 22, 2026 |
-| Student endpoint | **Not served on a Nebius GPU yet.** On the live demo no trained student exists yet, so the teacher answers every request. If a trained version were live without a GPU endpoint, its calls would go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages would say so |
-| A text-to-SQL adapter | Trained on a free Colab T4 (round 1) and a rented Modal T4 (round 2), not on Nebius. Its measured results are on [Results](/guides/results/) |
-| A tool-calling adapter | Trained on a rented Modal T4, not on Nebius. Hard exam 136 of 150 (90.7%) against 94 of 150 (62.7%) untrained and 137 of 150 (91.3%) for Ultra; BFCL exam 241 of 300 (80.3%) against 232 (77.3%) untrained and 265 (88.3%) for Ultra. SQL stays the headline result. See [Results](/guides/results/) |
+| Student endpoint | **Scripted and tested offline, ready to run with `make nebius-up`.** The public demo has no student endpoint yet, so the teacher answers every request. If a trained version were live without a GPU endpoint, its calls would go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages would say so |
+| A text-to-SQL adapter | Trained on a borrowed GPU. Its measured results are on [Results](/guides/results/) |
+| A tool-calling adapter | Trained on a borrowed GPU. Hard exam 136 of 150 (90.7%) against 94 of 150 (62.7%) untrained and 137 of 150 (91.3%) for Ultra; BFCL exam 241 of 300 (80.3%) against 232 (77.3%) untrained and 265 (88.3%) for Ultra. SQL stays the headline result. See [Results](/guides/results/) |
 | Savings and precision figures from `sim.simulate` and the story page | <span class="rt-badge rt-badge--sim">Simulation</span> Mock models show how the loop behaves, not real model quality |
 | Live mode, model ids and prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
 | Token Factory Terms of Service §5(f) ("competing service") | **Open question.** Asked Nebius support in writing on Oct 19, 2026; no final answer. Not legal advice |

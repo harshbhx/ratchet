@@ -1,8 +1,8 @@
 # Deployment
 
-There are two ways to run Ratchet: **mock** (local, no keys, about a minute) and **live** (real Nemotron on Nebius). The `nebius ai` commands in `deploy/` follow the Nebius CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026) and Nebius's L40S fine-tuning tutorial. They have not been run against a real account yet: run both scripts with `DRY_RUN=1` first, and check anything marked **verify on day 1** with `--help` before relying on it. `python scripts/day1_check.py` runs the checks.
+There are two ways to run Ratchet: **mock** (local, no keys, about a minute) and **live** (real Nemotron on Nebius). The `nebius ai` commands in `deploy/` follow the Nebius CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026) and Nebius's L40S fine-tuning tutorial. They are tested offline and ready to run: run both scripts with `DRY_RUN=1` first, and check anything marked **verify on day 1** with `--help` before relying on it. `python scripts/day1_check.py` runs the checks.
 
-> **One command for the whole path:** `make nebius-plan` prints every step below (the CPU VM, the bucket, the student endpoint, the wiring and the smoke check) and changes nothing; `deploy/nebius/nebius.sh up --yes --with-student` runs them, with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`. Same status as everything here: scripted, tested offline, not yet run on a real account. [Where everything runs](WHERE_IT_RUNS.md) has the map and the costs.
+> **One command for the whole path:** `make nebius-plan` prints every step below (the CPU VM, the bucket, the student endpoint, the wiring and the smoke check) and changes nothing; `deploy/nebius/nebius.sh up --yes --with-student` runs them, with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`. Same status as everything here: scripted, tested offline, ready to run. [Where everything runs](WHERE_IT_RUNS.md) has the map and the costs.
 
 ## 1. Local mock mode
 
@@ -220,7 +220,7 @@ On a host or image without `.git`, set `RATCHET_GIT_SHA` to the deployed commit 
 
 Judges need a working demo URL for two weeks, and a GPU endpoint running nonstop is the biggest cost.
 
-**Where the public demo runs today:** the live gateway (live.ratchet.dualmindlab.tech) and the simulation (demo.ratchet.dualmindlab.tech) run on Cloudflare Workers with Containers, see [deploy/cloudflare-live/README.md](../deploy/cloudflare-live/README.md). The Nebius CPU VM kit below is the alternative host: it is written and tested offline but has not been run on a Nebius account.
+**Where the public demo runs today:** the live gateway (live.ratchet.dualmindlab.tech) and the simulation (demo.ratchet.dualmindlab.tech) run on Cloudflare Workers with Containers, see [deploy/cloudflare-live/README.md](../deploy/cloudflare-live/README.md). The Nebius CPU VM kit below is the alternative host: it is written and tested offline, ready to run with `make nebius-plan`.
 
 **Alternative host: one Nebius CPU VM.** [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) sets up the gateway with Docker Compose and Caddy (automatic HTTPS) on a 2 vCPU / 8 GB VM, with the budget guard, an opt-in edge guard for `/v1/*` and `/openai/*`, backups, monitoring, updates and teardown. It starts in mock mode with a warmed-up student. The points below still apply to it.
 

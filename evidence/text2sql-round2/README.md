@@ -12,7 +12,7 @@ Measured on 23 Oct 2026. Everything needed to recompute the numbers without a GP
 2. **Leakage check.** 0 of 172 exam prompts, questions, stored queries or table-name sets appear in the merged training data
    (`results/leakage_check_round2.txt`).
 3. **Training.** The same recipe as round 1 (Nemotron-3-Nano-4B, 4-bit LoRA r=16, 2 epochs), with the sequence limit raised
-   from 1024 to 1536 tokens so that no row is cut off. 1,080 steps in 5.2 hours on a rented T4 on Modal, **not on Nebius GPUs**;
+   from 1024 to 1536 tokens so that no row is cut off. 1,080 steps in 5.2 hours on a **borrowed GPU**;
    loss 0.345 to 0.087 (`adapter/run_info.json`, `logs/final_status.json`). The job is `scripts/text2sql/modal_train.py`. The weights
    (40.5 MB) are not in git; their SHA-256 is in `MANIFEST.json`.
 4. **Exam.** The adapter answered the same 172 questions (`answers/raw_r2.jsonl`, written by `scripts/text2sql/fast_generate.py`). An
@@ -55,5 +55,5 @@ It prints `OK: every number in results.json was recomputed from raw.jsonl and ma
 - One reference query per question, so a correct query with other columns counts as a miss; that is why even the teacher scores 25.6%.
 - The exam is small: a 7-point half-width. The point estimate is above the teacher's, but the exam's reference queries are the teacher's own, so we do
   not claim the adapter beats the teacher.
-- Not kept: the full raw API responses of the teacher calls (only the text and token totals), and the Modal container logs (the job's own progress
+- Not kept: the full raw API responses of the teacher calls (only the text and token totals), and the GPU job's container logs (the job's own progress
   record, `logs/final_status.json`, is kept).

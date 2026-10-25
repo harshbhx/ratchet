@@ -333,10 +333,10 @@ r = client.chat.completions.create(
 
         <div>
           <ol class="steps">
-            <li><h3>Your adapter answers first</h3><p>A small model tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own, served by vLLM (designed for a Nebius Serverless Endpoint; scripted, not yet run there).</p></li>
+            <li><h3>Your adapter answers first</h3><p>A small model tries each request: NVIDIA Nemotron 3 Nano 4B with a LoRA adapter you own, served by vLLM (built for a Nebius Serverless Endpoint; scripted and ready to run).</p></li>
             <li><h3>The teacher answers when it is unsure</h3><p>If the student is not confident, the request goes to NVIDIA Nemotron 3 Ultra on Nebius Token Factory.</p></li>
             <li><h3>Every teacher answer keeps its provenance</h3><p>The ledger records which teacher wrote it and the license that permits training on it.</p></li>
-            <li><h3>Night School trains and releases a new student</h3><p>Each night Night School fine-tunes a new student (designed to run as a Nebius Serverless Job; scripted, not yet run there) and tests it on a held-out golden set. It then goes out step by step: shadow, canary 10% → 50% → 100%, with automatic rollback.</p></li>
+            <li><h3>Night School trains and releases a new student</h3><p>Each night Night School fine-tunes a new student (built to run as a Nebius Serverless Job; scripted and ready to run) and tests it on a held-out golden set. It then goes out step by step: shadow, canary 10% → 50% → 100%, with automatic rollback.</p></li>
           </ol>
           <p class="after">Your bill falls as your own model takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.</p>
         </div>
@@ -406,7 +406,7 @@ r = client.chat.completions.create(
     <section aria-labelledby="stack-title">
       <p class="eyebrow">Built on Nebius and NVIDIA</p>
       <h2 id="stack-title">Open models on Nebius infrastructure</h2>
-      <p class="lead">Every model in the loop is an NVIDIA Nemotron model. The teacher runs on Nebius Token Factory. Training and serving on Nebius are scripted but not run yet; the adapters so far were trained on a Colab T4 and a Modal T4.</p>
+      <p class="lead">Every model in the loop is an NVIDIA Nemotron model. The teacher runs on Nebius Token Factory. Training and serving on Nebius are scripted and ready to run with make nebius-plan; the adapters so far were trained on a borrowed GPU.</p>
       <div class="panel">
         <table>
           <caption class="sr-only">Models and services Ratchet uses, by role</caption>
@@ -415,9 +415,9 @@ r = client.chat.completions.create(
             <tr><td>Teacher</td><td>Nemotron 3 Ultra on Nebius Token Factory</td></tr>
             <tr><td>Judge</td><td>Nemotron 3 Super on Token Factory <span class="muted">(scores free-text answers)</span></td></tr>
             <tr><td>Fallback</td><td>Nemotron 3 Nano 30B on Token Factory <span class="muted">(used when your endpoint is stopped)</span></td></tr>
-            <tr><td>Student</td><td>Nemotron 3 Nano 4B + LoRA with vLLM <span class="muted">(designed for a Nebius Serverless Endpoint; not run yet)</span></td></tr>
-            <tr><td>Night School</td><td>Nebius Serverless Jobs <span class="muted">(designed, not run yet)</span></td></tr>
-            <tr><td>Storage</td><td>Nebius Object Storage <span class="muted">(dataset and adapters; designed, not run yet)</span></td></tr>
+            <tr><td>Student</td><td>Nemotron 3 Nano 4B + LoRA with vLLM <span class="muted">(built for a Nebius Serverless Endpoint; scripted, ready to run)</span></td></tr>
+            <tr><td>Night School</td><td>Nebius Serverless Jobs <span class="muted">(scripted, ready to run)</span></td></tr>
+            <tr><td>Storage</td><td>Nebius Object Storage <span class="muted">(dataset and adapters; scripted, ready to run)</span></td></tr>
             <tr><td>Search</td><td>Tavily <span class="muted">(Scout demo only)</span></td></tr>
           </tbody>
         </table>

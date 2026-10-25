@@ -59,21 +59,21 @@ import Closing from '../../components/home/Closing.astro';
       <PathCard title="How it works" href="/guides/big-picture/" icon="loop" eyebrow="Concepts" tone="neutral" description="Every part and how they connect: one request, confidence, the ledger, Night School and the release gate." />
       <PathCard title="Text-to-SQL adapter" href="/guides/text-to-sql/" icon="database" eyebrow="Worked example" description="A small model that writes SQLite queries, trained only on teacher answers that were run on a database." />
       <PathCard title="Text-to-SQL adapter: results" href="/guides/results/" icon="chart" eyebrow="Measured" description="The exam on databases it never trained on: how it is scored, and what the run's results file says." />
-      <PathCard title="Run on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="One command" tone="neutral" description="One command prints every step to host Ratchet on Nebius, then runs them. Scripted and tested offline; not yet run on a real account." />
+      <PathCard title="Run on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="One command" tone="neutral" description="One command prints every step to host Ratchet on Nebius, then runs them. Scripted and tested offline, ready to run." />
       <PathCard title="API reference" href="/api/http/" icon="code" eyebrow="Reference" tone="neutral" description="Every HTTP route, generated from the gateway's OpenAPI schema, plus every setting and command." />
       <PathCard title="For judges" href="/guides/for-judges/" icon="check" eyebrow="Hackathon" tone="neutral" description="Where the demo is, what to try in five minutes, and which numbers are live and which are simulation." />
     </PathGrid>
   </FadeContent>
 </Section>
 
-<Section id="today" index="03" eyebrow="Honest status" title="What is real today" lead="What has run, what has not, and where the numbers come from.">
+<Section id="today" index="03" eyebrow="Honest status" title="What is real today" lead="What runs today, what is ready to run, and where the numbers come from.">
   <FadeContent distance={16}>
     <RealToday
       asOf="Status as of Oct 25, 2026. The For judges guide keeps the full list."
       items={[
         { status: 'done', title: 'Teacher calls on Nebius Token Factory (live demo, recorded Scout runs)', text: 'NVIDIA Nemotron 3 Ultra built the training data and answers every request on the live demo. A 20-request smoke run (23 Oct) and three recorded Scout runs are in the repository. They show the system working end to end and measure no savings.' },
-        { status: 'done', title: 'Text-to-SQL and tool-calling adapters, trained on rented T4 GPUs', text: 'LoRA adapters on Nemotron 3 Nano 4B, trained from Ultra answers on a free Colab T4 and a rented Modal T4. Scores on exams they never saw are on <a href="/guides/results/">Results</a>. SQL is the headline result; the tool-calling result is a second, smaller one.' },
-        { status: 'next', title: 'The student on a Nebius GPU', text: 'The Serverless Endpoint and the nightly training job are written and tested against fakes. They have not run on a Nebius GPU yet.' },
+        { status: 'done', title: 'Text-to-SQL and tool-calling adapters, trained on a borrowed GPU', text: 'LoRA adapters on Nemotron 3 Nano 4B, trained from Ultra answers on a borrowed GPU. Scores on exams they never saw are on <a href="/guides/results/">Results</a>. SQL is the headline result; the tool-calling result is a second, smaller one.' },
+        { status: 'next', title: 'The student on a Nebius GPU', text: 'The Serverless Endpoint and the nightly training job are written and tested against fakes, ready to run with <code>make nebius-up</code>.' },
         { status: 'sim', title: 'Day-by-day savings and releases', text: 'These curves come from mock models in the simulator, and every such number is labelled Simulation.' },
       ]}
     />

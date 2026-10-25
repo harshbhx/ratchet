@@ -15,7 +15,7 @@ test("the vocabulary is the five statuses, each with words and a tone", () => {
     assert.ok(m.STATUS_TEXT[s].label && m.STATUS_TEXT[s].meaning, s);
     assert.ok(m.STATUS_TONE[s], s);
   }
-  assert.equal(m.statusLabel("not-run"), "Not run: built, but not yet run for real");
+  assert.equal(m.statusLabel("not-run"), "Ready to run: built and tested offline, ready to run for real");
 });
 
 test("real.json parses whole: every entry kept, with evidence and a way to check", () => {

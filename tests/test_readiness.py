@@ -320,7 +320,7 @@ def test_misspelled_variable_warns_with_a_suggestion_and_strict_mode_stops(gw, m
 def test_warnings_for_settings_that_do_nothing(tmp_path):
     """Warnings, never errors: a mock-only variable set in live mode, a 0/1 switch spelled otherwise, a student endpoint
     without a token, an audit rate too low for a canary to decide, an unpriced model, and an empty teacher key for a
-    teacher that is not on Nebius. Messages never repeat a value."""
+    teacher on another host. Messages never repeat a value."""
 
     def warnings(s: Settings, environ: dict[str, str] | None = None) -> dict[str, str]:
         issues = s.validate(environ or {})

@@ -301,8 +301,8 @@ The same run's cost report (simulation, the endpoint up 24 hours a day, token li
 
 Recomputed at the $1.35 per GPU-hour these docs use (estimates, from the formulas above): the 240 endpoint hours would cost $324.00 instead of $372.00, the break-even would be about 1,370 student answers per endpoint hour and the hosted crossover about 44,900. The recommendation would not change: 66 answers an hour is still far below break-even.
 
-<Aside type="caution" title="Not run on Nebius yet">
-As of Oct 25, 2026, no student endpoint has been run on Nebius. Every cost figure on this page is either a simulation output or an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured numbers will come from a published live run and replace the `[LIVE NUMBER]` placeholders.
+<Aside type="caution" title="Simulation and estimates so far">
+As of Oct 25, 2026, the student endpoint is scripted and tested offline, ready to run with `make nebius-up`, and the public demo has no student endpoint yet. Every cost figure on this page is either a simulation output or an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured numbers will come from a published live run and replace the `[LIVE NUMBER]` placeholders.
 </Aside>
 
 ### Spend and rate limits
@@ -384,7 +384,7 @@ Then the report does not know the GPU cost. Student answers in hours with no rec
 
 ### Are these real numbers?
 
-Not yet. The prices are list prices, unverified until the day-1 checks pass, and every figure on this page comes from the simulation or from estimates. As of Oct 25, 2026 the teacher runs on Nebius Token Factory, but no student endpoint has run on a Nebius GPU; the live-run harness will publish measured numbers, including the Nebius bill.
+Not yet. The prices are list prices, unverified until the day-1 checks pass, and every figure on this page comes from the simulation or from estimates. As of Oct 25, 2026 the teacher runs on Nebius Token Factory and the public demo has no student endpoint yet, so the teacher answers every request; the live-run harness will publish measured numbers, including the Nebius bill.
 
 ### Does the baseline overstate savings?
 

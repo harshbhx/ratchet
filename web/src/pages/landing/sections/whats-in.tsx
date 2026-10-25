@@ -47,7 +47,7 @@ const ITEMS: Item[] = [
   { icon: Scale, title: "License rule", line: "Closed models are refused as teachers", entry: "license-rule", to: "/judges#ledger" },
   { icon: Bot, title: "Scout", line: "An agent demo on the gateway", entry: "scout-tavily", to: "/scout" },
   { icon: LayoutDashboard, title: "Dashboard", line: "Costs, routes, releases, receipts", entry: "demo-numbers", to: "/dashboard" },
-  { icon: Server, title: "Student on Nebius GPUs", line: "Endpoint and Night School jobs (scripted, not run)", entry: "gateway-live", to: "/judges#real" },
+  { icon: Server, title: "Student on Nebius GPUs", line: "Endpoint and Night School jobs (scripted, ready to run)", entry: "gateway-live", to: "/judges#real" },
   { icon: BookOpen, title: "Docs", line: "Guides, API, evidence, how to verify", status: "real", href: DOCS_URL },
   { icon: Code, title: "Open source", line: "Apache-2.0, 1,900+ tests", status: "real", href: REPO_URL },
 ];
@@ -98,7 +98,7 @@ export function WhatsIn() {
             Everything in the box, and what is real.
           </h2>
           <p className="mt-3 max-w-[60ch] text-[15px] leading-relaxed text-ink-2">
-            Each tile says whether it is real, measured, simulation or not run yet. Click any one.
+            Each tile says whether it is real, measured, simulation or ready to run. Click any one.
           </p>
           <ul className="mt-7 grid grid-cols-1 gap-3 min-[520px]:grid-cols-2 lg:grid-cols-4">
             {ITEMS.map((it) => (
