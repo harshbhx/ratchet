@@ -53,7 +53,7 @@ function useCurrentSection(ids: string[]) {
   return current;
 }
 
-/** The site header's height (it grows a row when the gateway reports a live/simulation switch), for the sticky offset. */
+/** The site header's height, measured, for the sticky offset. */
 function useHeaderHeight(): number {
   const [h, setH] = useState(64);
   useEffect(() => {

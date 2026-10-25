@@ -2089,7 +2089,7 @@ Three additive blocks, content-free, under `/ratchet/stats`'s access and scrubbi
 
 | Block | Fields |
 |---|---|
-| `links` | `live`, `sim`: `RATCHET_LIVE_URL` and `RATCHET_SIM_URL` as set, else `null`. The header switch reads them |
+| `links` | `live`, `sim`: `RATCHET_LIVE_URL` and `RATCHET_SIM_URL` as set, else `null`. The menu link to the simulation and the footer read them |
 | `demo` | `surface` (`simulation` in mock mode, else `live`), `controls` and `shared` (true in mock mode), `max_days`, `max_requests`, `idle_reset_s`, `actions_per_minute` (`null` when off), `auto_resets` (since the process started), `last_reset_at` (epoch seconds or `null`) |
 | `upstream` | `recording` (true in live mode), `since` (epoch seconds the record started, `null` in mock mode), `token_factory` (whether `RATCHET_TEACHER_BASE` is Token Factory's host, which decides if a page may say "Live on Nebius Token Factory"), `calls`: the newest call per role called since start, in the order teacher, fallback_teacher, student, tavily |
 
