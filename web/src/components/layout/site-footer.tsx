@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import { FOOTER_COLUMNS, HF_MODEL, REACT_BITS_PERMISSION, type NavItem } from "./nav-model";
 import { REPO_URL } from "@/lib/utils";
 import { ThemeToggle } from "./site-header";
+import { useWaking } from "@/lib/waking-store";
+import { FOOTER_WAKING, isWaking } from "@/lib/waking-model";
 
 function FooterLink({ item }: { item: NavItem }) {
   const cls = "group inline-flex items-center gap-1 whitespace-nowrap rounded-md text-[14px] text-muted transition-colors hover:text-ink";
@@ -34,9 +36,12 @@ function FooterLink({ item }: { item: NavItem }) {
 
 /** What this gateway said about itself on the one stats call the layout makes: a word and a dot, never colour alone. */
 function GatewayStatus({ stats, error }: { stats: Stats | null; error: string | null }) {
-  if (!stats && !error) return null;
-  const up = !!stats;
-  const text = !stats
+  const waking = isWaking(useWaking());
+  if (!stats && !error && !waking) return null;
+  const up = !!stats && !waking;
+  const text = waking
+    ? FOOTER_WAKING
+    : !stats
     ? "Gateway not reachable from this page"
     : stats.mode === "live"
       ? stats.upstream?.token_factory
@@ -45,7 +50,7 @@ function GatewayStatus({ stats, error }: { stats: Stats | null; error: string | 
       : "Gateway up · simulation (mock models)";
   return (
     <p className="inline-flex items-center gap-2 text-[13px] text-muted">
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", up ? "bg-good" : "bg-muted")} />
+      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", up ? "bg-good" : waking ? "bg-warn" : "bg-muted")} />
       {text}
     </p>
   );

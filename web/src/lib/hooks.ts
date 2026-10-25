@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { animate, useInView, useReducedMotion } from "motion/react";
 import { api, type Stats } from "./api";
+import { onRecovered } from "./waking-store";
 
 /** Poll /ratchet/stats. `stats` stays null if the gateway is unreachable (static preview). */
 export function useStats(intervalMs = 15000) {
@@ -16,9 +17,13 @@ export function useStats(intervalMs = 15000) {
   }, []);
   useEffect(() => {
     void refresh();
-    if (!intervalMs) return;
+    const off = onRecovered(() => void refresh());
+    if (!intervalMs) return off;
     const id = window.setInterval(() => void refresh(), intervalMs);
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearInterval(id);
+      off();
+    };
   }, [refresh, intervalMs]);
   return { stats, error, refresh };
 }

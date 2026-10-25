@@ -54,3 +54,5 @@ The public demo currently runs on Cloudflare (Workers with Containers: `deploy/c
 
 The story site (Cloudflare Pages) proxies all its data calls (the dashboard, the judges' live chapters, `/ratchet/*`, `/v1/*`, `/healthz`, and the paths under `/scout/`) to this live gateway by default (`GATEWAY_ORIGIN`, `SCOUT_ORIGIN`, [DEPLOY_PAGES.md](DEPLOY_PAGES.md)): Scout there is real, under the live spend guard, and every label follows the gateway's reported mode. Setting `GATEWAY_ORIGIN` to the simulation demo switches the pages back with no deploy.
 
+When nobody has used the live demo for 30 minutes its container sleeps; the next visitor waits about 20 seconds for it to start. The live Worker holds API requests for up to 25 seconds while it starts (reads are tried again, a Scout run or a `/v1` call is sent once, after `/healthz` answers) and then answers `503` with `{"warming_up": true}`; a browser opening the live address directly sees a "Waking up the live demo" page that reloads itself every 3 seconds. On the story site the same wait shows as a banner and a disabled Run button, and no request that costs money is sent on the visitor's behalf.
+

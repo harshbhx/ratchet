@@ -64,3 +64,107 @@ test("the judge cookie travels: headers and body pass through unchanged", async 
   assert.equal(req.method, "POST");
   assert.equal(req.redirect, "manual");
 });
+
+// ---- the retry while the live container starts ----
+const { forward, retryable } = worker._test;
+
+/** Run `forward` against a scripted gateway: each entry is a Response, or an Error to throw. Returns what was sent and the waits. */
+async function scripted(method, path, script, init = {}) {
+  const sent = [];
+  const waits = [];
+  const answers = [...script];
+  const fetchImpl = async (req) => {
+    sent.push(req);
+    const a = answers.shift() ?? new Response("late", { status: 200 });
+    if (a instanceof Error) throw a;
+    return a;
+  };
+  const req = new Request("https://ratchet.dualmindlab.tech" + path, { method, ...init });
+  const res = await forward(req, new URL(path, "https://live.ratchet.dualmindlab.tech"), { fetch: fetchImpl, sleep: async (ms) => void waits.push(ms) });
+  return { res, sent, waits };
+}
+const down = () => new Response("error code: 502", { status: 502 });
+
+test("a 200 passes through untouched: same object, one call, no wait", async () => {
+  const ok = new Response('{"a":1}', { status: 200, headers: { "set-cookie": "ratchet_judge=abc; HttpOnly", "x-k": "v" } });
+  const { res, sent, waits } = await scripted("GET", "/ratchet/stats", [ok]);
+  assert.equal(res, ok);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(waits, []);
+  assert.equal(res.headers.get("set-cookie"), "ratchet_judge=abc; HttpOnly");
+});
+
+test("a GET is retried up to three times with 0.7 s, 1.5 s and 3 s waits, then succeeds", async () => {
+  const { res, sent, waits } = await scripted("GET", "/ratchet/stats", [down(), new Error("Network connection lost"), down(), new Response("fine")]);
+  assert.equal(await res.text(), "fine");
+  assert.equal(sent.length, 4);
+  assert.deepEqual(waits, [700, 1500, 3000]);
+});
+
+test("a GET that never recovers gets 503 warming_up with Retry-After 5 after four tries", async () => {
+  const { res, sent } = await scripted("GET", "/healthz", [down(), down(), down(), down(), new Response("never")]);
+  assert.equal(sent.length, 4);
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get("retry-after"), "5");
+  const body = await res.json();
+  assert.equal(body.warming_up, true);
+  assert.equal(body.error.code, "warming_up");
+  assert.match(body.error.message, /waking up/);
+});
+
+test("the container's own texts count as not ready, even at status 500", async () => {
+  for (const text of ["Container suddenly disconnected", "The container is not running", "Network connection lost."]) {
+    const { res, sent } = await scripted("GET", "/ratchet/stats", [new Response(text, { status: 500 }), new Response("up")]);
+    assert.equal(await res.text(), "up", text);
+    assert.equal(sent.length, 2, text);
+  }
+});
+
+test("a real gateway answer is never retried or changed: 404, 429, and a JSON 503 such as /readyz", async () => {
+  for (const [status, body] of [[404, "{}"], [429, '{"error":{"code":"rate_limited"}}'], [503, '{"status":"unavailable","checks":{"ledger":false}}'], [500, '{"error":"boom"}']]) {
+    const r = new Response(body, { status });
+    const { res, sent } = await scripted("GET", "/readyz", [r]);
+    assert.equal(res, r, String(status));
+    assert.equal(sent.length, 1);
+  }
+});
+
+test("POST to /v1/* and /scout/run is never retried, whatever the failure", async () => {
+  for (const path of ["/v1/chat/completions", "/v1/embeddings", "/scout/run"]) {
+    for (const first of [down(), new Error("Network connection lost")]) {
+      const { res, sent, waits } = await scripted("POST", path, [first, new Response("paid twice")], { body: "{}" });
+      assert.equal(sent.length, 1, path);
+      assert.deepEqual(waits, []);
+      assert.equal(res.status, 503);
+      assert.equal((await res.json()).warming_up, true);
+    }
+  }
+});
+
+test("reads that could start a paid run or a demo action are never retried either", async () => {
+  for (const path of ["/scout/stream?q=x", "/scout/run", "/ratchet/demo/day"]) {
+    const { sent } = await scripted("GET", path, [down(), new Response("again")]);
+    assert.equal(sent.length, 1, path);
+  }
+  assert.equal(retryable("GET", "/v1/models"), false);
+});
+
+test("the free POSTs are retried with their body intact; others are not", async () => {
+  const { sent, res } = await scripted("POST", "/scout/judge", [down(), new Response("ok")], { body: '{"code":"x"}', headers: { cookie: "a=b" } });
+  assert.equal(sent.length, 2);
+  assert.equal(await sent[1].text(), '{"code":"x"}');
+  assert.equal(sent[1].headers.get("cookie"), "a=b");
+  assert.equal(await res.text(), "ok");
+  assert.equal(retryable("POST", "/ratchet/redact"), true);
+  assert.equal(retryable("POST", "/ratchet/admin/promote"), false);
+  assert.equal(retryable("DELETE", "/scout/judge"), false);
+});
+
+test("cookies and headers go through unchanged on every try", async () => {
+  const { sent } = await scripted("GET", "/scout/status", [down(), new Response("ok")], { headers: { cookie: "ratchet_judge=abc", "cf-connecting-ip": "1.2.3.4" } });
+  for (const req of sent) {
+    assert.equal(req.headers.get("cookie"), "ratchet_judge=abc");
+    assert.equal(req.headers.get("x-forwarded-for"), "1.2.3.4");
+    assert.equal(req.redirect, "manual");
+  }
+});

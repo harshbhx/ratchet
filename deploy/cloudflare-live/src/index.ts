@@ -12,7 +12,7 @@
 // Spending is capped three ways by default: the demo key's own limits, the gateway's daily budget and a per-IP rate. The container keeps its ledger
 // on its own disk, so a restart resets the day's counters: the defaults are low for that reason, and the Token Factory balance is the last limit.
 import { Container, getContainer, type StopParams } from "@cloudflare/containers";
-import { WAKING_HTML } from "./waking";
+import { API_WAIT_MS, READ_RETRY_MS, WAKE_AFTER_MS, isRetryableRead, warmingFor, warmingJson, warmingPage, wantsPage } from "./waking";
 
 interface Env {
   RATCHET_LIVE: DurableObjectNamespace<RatchetLive>;
@@ -83,8 +83,6 @@ export class RatchetLive extends Container<Env> {
   }
 }
 
-/** A page that answers within this time is passed straight through; a slower one means the container is waking. */
-const WAKE_AFTER_MS = 2000;
 /** How long the readiness check waits for one answer. */
 const READY_CHECK_MS = 2500;
 
@@ -114,16 +112,50 @@ export default {
       return Response.json({ ready: ok === true }, { headers: { "cache-control": "no-store" } });
     }
 
-    const wantsPage = request.method === "GET" && (request.headers.get("accept") ?? "").includes("text/html");
-    const pending = live.fetch(withDemoKey(request, env)); // starts the container if it is asleep
-    if (!wantsPage) return pending;
+    const page = wantsPage(request.method, request.headers.get("accept"));
+    if (page) {
+      const pending = live.fetch(withDemoKey(request, env)); // starts the container if it is asleep
+      const first = await Promise.race([pending.catch(() => null), sleep(WAKE_AFTER_MS)]);
+      if (first) return first;
+      ctx.waitUntil(pending.then(() => undefined).catch(() => undefined));
+      return warmingPage();
+    }
 
-    const first = await Promise.race([pending.catch(() => null), sleep(WAKE_AFTER_MS)]);
-    if (first) return first;
-    ctx.waitUntil(pending.then(() => undefined).catch(() => undefined));
-    return new Response(WAKING_HTML, {
-      status: 200,
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-    });
+    const deadline = Date.now() + API_WAIT_MS;
+    if (isRetryableRead(request.method, url.pathname)) {
+      // A read may be sent again if the container drops while it starts; the wait is bounded, then the visitor gets the warming-up JSON.
+      const attempts = (async (): Promise<Response | null> => {
+        while (Date.now() < deadline) {
+          try {
+            return await live.fetch(withDemoKey(request, env));
+          } catch {
+            await sleep(READ_RETRY_MS);
+          }
+        }
+        return null;
+      })();
+      const answer = await Promise.race([attempts, sleep(Math.max(0, deadline - Date.now()))]);
+      if (answer) return answer;
+      ctx.waitUntil(attempts.then(() => undefined).catch(() => undefined));
+      return warmingJson();
+    }
+
+    // Anything that may cost money or change state is sent exactly once, and only after the container answers /healthz.
+    while (Date.now() < deadline) {
+      const left = deadline - Date.now();
+      const ok = await Promise.race([
+        live.fetch(new Request(new URL("/healthz", url.origin))).then((r) => r.ok).catch(() => false),
+        sleep(left).then(() => false),
+      ]);
+      if (ok) {
+        try {
+          return await live.fetch(withDemoKey(request, env));
+        } catch {
+          return warmingJson();
+        }
+      }
+      await sleep(READ_RETRY_MS);
+    }
+    return warmingFor(request.method, request.headers.get("accept"));
   },
 };

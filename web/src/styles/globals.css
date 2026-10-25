@@ -327,6 +327,13 @@
   100% { opacity: 0; }
 }
 
+/* The waking-up banner's indeterminate bar (reduced motion gets a still bar instead). */
+@keyframes waking-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.waking-bar { animation: waking-slide 1.6s ease-in-out infinite; }
+
 @layer utilities {
   /* Faint engineering grid used behind hero and story sections. */
   .bg-grid {

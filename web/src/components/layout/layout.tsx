@@ -3,6 +3,7 @@ import { Outlet, useLocation } from "react-router";
 import { motion, useReducedMotion } from "motion/react";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
+import { WakingBanner } from "./waking-banner";
 import { useStats } from "@/lib/hooks";
 
 const TITLES: Record<string, string> = {
@@ -89,6 +90,7 @@ export function Layout() {
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
       <SiteHeader />
+      <WakingBanner />
       <main id="main" className="flex-1">
         {/* A page fades in on a route change. Opacity only: a transform here would break the dashboard's sticky jump bar. */}
         <motion.div key={pathname} initial={reduce ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.35, ease: "easeOut" }}>

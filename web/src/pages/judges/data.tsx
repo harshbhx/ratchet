@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Stats } from "@/lib/api";
+import { gatewayFetch, onRecovered, useWaking } from "@/lib/waking-store";
 import { gatewayStatus, type RealStatus } from "@/lib/real-model";
 import { errorMessage, type Fetched } from "./judges-model";
 
@@ -10,7 +11,7 @@ import { errorMessage, type Fetched } from "./judges-model";
 export async function getJson<T>(path: string, init?: RequestInit): Promise<Fetched<T>> {
   let r: Response;
   try {
-    r = await fetch(path, { ...init, headers: { "content-type": "application/json", ...(init?.headers ?? {}) } });
+    r = await gatewayFetch(path, { ...init, headers: { "content-type": "application/json", ...(init?.headers ?? {}) } });
   } catch {
     return { state: "error", status: 0, message: "" };
   }
@@ -30,7 +31,7 @@ export async function getJson<T>(path: string, init?: RequestInit): Promise<Fetc
 /** The same, for a body that is text (NDJSON). */
 export async function getText(path: string): Promise<Fetched<string>> {
   try {
-    const r = await fetch(path);
+    const r = await gatewayFetch(path);
     const text = await r.text();
     if (!r.ok) {
       let body: unknown = null;
@@ -126,7 +127,14 @@ export function JudgesProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
     const id = window.setInterval(() => void refresh(), 15000);
-    return () => window.clearInterval(id);
+    const off = onRecovered(() => {
+      lastRequests.current = null;
+      void refresh();
+    });
+    return () => {
+      window.clearInterval(id);
+      off();
+    };
   }, [refresh]);
 
   const act = useCallback(
@@ -179,6 +187,7 @@ export function JudgesProvider({ children }: { children: ReactNode }) {
  */
 export function useGateway<T>(path: string | null): Fetched<T> {
   const { generation } = useJudges();
+  const recovered = useWaking().recoveries;
   const [res, setRes] = useState<Fetched<T>>({ state: path ? "loading" : "idle" });
   useEffect(() => {
     if (!path) {
@@ -192,13 +201,14 @@ export function useGateway<T>(path: string | null): Fetched<T> {
     return () => {
       live = false;
     };
-  }, [path, generation]);
+  }, [path, generation, recovered]);
   return res;
 }
 
 /** The same for a text body. */
 export function useGatewayText(path: string | null): Fetched<string> {
   const { generation } = useJudges();
+  const recovered = useWaking().recoveries;
   const [res, setRes] = useState<Fetched<string>>({ state: path ? "loading" : "idle" });
   useEffect(() => {
     if (!path) {
@@ -212,6 +222,6 @@ export function useGatewayText(path: string | null): Fetched<string> {
     return () => {
       live = false;
     };
-  }, [path, generation]);
+  }, [path, generation, recovered]);
   return res;
 }
