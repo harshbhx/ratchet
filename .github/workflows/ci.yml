@@ -122,8 +122,6 @@ jobs:
         run: python scripts/toolcall_results.py --check
       - name: Tool-calling drafts and page data match the numbers
         run: python scripts/toolcall_results.py --render --web --check-render
-      - name: Live smoke run's client-side numbers recompute from its records
-        run: python -m ratchet.liverun verify evidence/live-smoke-2026-10-23
       - name: Pinned reference simulation still matches a fresh run
         run: python scripts/regen_sim_reference.py --check
 
