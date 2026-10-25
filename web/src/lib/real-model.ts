@@ -54,6 +54,28 @@ export interface RealLinks {
   demo: string;
   /** The demo video (public on YouTube since 26 Oct 2026); null hides every link to it. */
   video: string | null;
+  /**
+   * The video's counting link (video.ratchet.dualmindlab.tech): it counts the `from` tag and redirects to `video`. The page's own
+   * links use it through `videoHref`; null (or anything but an https address) links straight to `video`.
+   */
+  videoShort: string | null;
+}
+
+/**
+ * Where a "watch the video" link on the site points: the counting link tagged with where the click came from (`?from=site`,
+ * `?from=judges`), else the video itself; null when there is no video, which hides the link.
+ */
+export function videoHref(links: Pick<RealLinks, "video" | "videoShort">, from: string): string | null {
+  if (!links.video) return null;
+  if (!links.videoShort) return links.video;
+  try {
+    const u = new URL(links.videoShort);
+    if (u.protocol !== "https:") return links.video;
+    u.searchParams.set("from", from);
+    return u.href;
+  } catch {
+    return links.video;
+  }
 }
 
 export interface RealData {
@@ -130,7 +152,7 @@ export function parseReal(text: string): RealData {
   }
   return {
     updated: str(o.updated),
-    links: { repo: str(l.repo), docs: str(l.docs), demo: str(l.demo), video: str(l.video) || null },
+    links: { repo: str(l.repo), docs: str(l.docs), demo: str(l.demo), video: str(l.video) || null, videoShort: str(l.videoShort) || null },
     entries,
   };
 }

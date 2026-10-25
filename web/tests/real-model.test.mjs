@@ -70,6 +70,29 @@ test("a malformed entry is dropped, an unknown status reads as pending", () => {
   assert.deepEqual(m.parseReal("not json").entries, []);
 });
 
+test("the video: YouTube in links.video, the counting link in links.videoShort, tagged by where the click came from", () => {
+  const data = m.parseReal(text);
+  assert.equal(data.links.video, "https://youtu.be/GIeSmDtopfs");
+  assert.equal(data.links.videoShort, "https://video.ratchet.dualmindlab.tech/");
+  assert.equal(m.videoHref(data.links, "site"), "https://video.ratchet.dualmindlab.tech/?from=site");
+  assert.equal(m.videoHref(data.links, "judges"), "https://video.ratchet.dualmindlab.tech/?from=judges");
+  const yt = "https://youtu.be/x";
+  // No counting link, or a bad one: straight to the video. No video: no link at all.
+  for (const videoShort of [null, "", "not a url", "http://video.example.com/"]) assert.equal(m.videoHref({ video: yt, videoShort }, "site"), yt, String(videoShort));
+  assert.equal(m.videoHref({ video: null, videoShort: "https://video.ratchet.dualmindlab.tech/" }, "site"), null);
+  assert.equal(m.videoHref({ video: yt, videoShort: "https://v.example.com/?from=old" }, "judges"), "https://v.example.com/?from=judges");
+  assert.equal(m.parseReal("{}").links.videoShort, null);
+});
+
+test("the site's video links go through videoHref: the hero tagged site, the judges page tagged judges", () => {
+  const src = (p) => readFileSync(new URL(`../src/${p}`, import.meta.url), "utf8");
+  assert.match(src("pages/landing/sections/hero.tsx"), /videoHref\(REAL\.links, "site"\)/);
+  assert.match(src("pages/judges/real.ts"), /JUDGES_VIDEO = videoHref\(REAL\.links, "judges"\)/);
+  for (const p of ["pages/landing/sections/hero.tsx", "pages/judges/check.tsx", "pages/judges/stage-one.tsx"]) {
+    assert.doesNotMatch(src(p), /links\.video\b/, p);
+  }
+});
+
 test("a gateway's numbers: simulation on the mock demo, measured on a live gateway", () => {
   assert.equal(m.gatewayStatus("mock"), "simulation");
   assert.equal(m.gatewayStatus("live"), "measured");

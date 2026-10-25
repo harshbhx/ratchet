@@ -12,6 +12,7 @@
 // Spending is capped three ways by default: the demo key's own limits, the gateway's daily budget and a per-IP rate. The container keeps its ledger
 // on its own disk, so a restart resets the day's counters: the defaults are low for that reason, and the Token Factory balance is the last limit.
 import { Container, getContainer, type StopParams } from "@cloudflare/containers";
+import { videoRedirect } from "./video";
 import { API_WAIT_MS, READ_RETRY_MS, WAKE_AFTER_MS, isRetryableRead, warmingFor, warmingJson, warmingPage, wantsPage } from "./waking";
 
 interface Env {
@@ -103,6 +104,10 @@ function withDemoKey(request: Request, env: Env): Request {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    // The demo video's short link, answered here: it never wakes the container.
+    const video = videoRedirect(url.pathname);
+    if (video) return video;
+
     const live = getContainer(env.RATCHET_LIVE);
 
     if (url.pathname === "/__ready") {
