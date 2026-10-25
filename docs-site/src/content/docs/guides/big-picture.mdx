@@ -154,7 +154,7 @@ Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (READM
 </Steps>
 
 <Aside type="caution" title="The GPU steps have not run on Nebius yet">
-As of Oct 25, 2026, the teacher runs on Nebius Token Factory, but steps 2 and 6 to 8 (the student endpoint and the training job) have run only against mock models and fake HTTP transports in the tests: no student has been served from a Nebius GPU and no adapter trained in a Nebius job. The `nebius ai` commands in `deploy/` follow the CLI reference but have not run against a real account, and live mode stays unverified until `scripts/day1_check.py` passes with a real key. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
+As of Oct 25, 2026, the teacher runs on Nebius Token Factory, but steps 2 and 6 to 8 (the student endpoint and the training job) have run only against mock models and fake HTTP transports in the tests: no student has been served from a Nebius GPU and no adapter trained in a Nebius job. The `nebius ai` commands in `deploy/` follow the CLI reference but have not run against a real account. Live mode itself runs on the public demo, where every request is a real Token Factory call. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
 </Aside>
 
 ### What a request leaves behind
