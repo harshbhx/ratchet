@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-banner-dark.gif">
-    <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-banner-light.gif">
-    <img src="docs/img/banner.svg" alt="Ratchet: rent intelligence today, own it tomorrow" width="100%">
-  </picture>
+  <img src="docs/img/anim/readme-banner.gif" alt="Ratchet: rent intelligence today, own it tomorrow" width="100%">
 </p>
 
 <p align="center">
@@ -41,10 +37,7 @@
 </p>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/at-a-glance-dark.png">
-    <img src="docs/img/at-a-glance-light.png" alt="At a glance: text-to-SQL 12.8% to 39.0% on an unseen exam and tool calling 62.7% to 90.7% on an unseen exam (both measured, strict scoring); 2 adapters, 6 datasets and 2 demos on Hugging Face; a free live demo with no sign-up." width="100%">
-  </picture>
+  <img src="docs/img/anim/readme-stats.gif" alt="At a glance: text-to-SQL 12.8% to 39.0% on an unseen exam and tool calling 62.7% to 90.7% on an unseen exam (both measured, strict scoring); 2 adapters, 6 datasets and 2 demos on Hugging Face; a free live demo with no sign-up." width="100%">
 </p>
 
 ## In 30 seconds
@@ -186,10 +179,7 @@ Two adapters, six datasets and two demos, all public: the adapters, the syntheti
 The gateway does no inference, so it runs anywhere a container does. Only training and the student endpoint need a GPU. Today the public demos run on Cloudflare Workers with Containers, and the teacher runs on Nebius Token Factory.
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/where-it-runs-dark.png">
-    <img src="docs/img/where-it-runs-light.png" alt="Where everything runs. Real today: your laptop, rented T4 GPUs for adapter training, Cloudflare for the live and simulation demos and the docs, Nebius Token Factory for the teacher. Scripted and tested offline, not yet run on a real account: a Nebius CPU VM, a Serverless Endpoint for the student, a Serverless Job for Night School and a bucket." width="100%">
-  </picture>
+  <img src="docs/img/anim/readme-runs.gif" alt="Where everything runs. Real today: your laptop, rented T4 GPUs for adapter training, Cloudflare for the live and simulation demos and the docs, Nebius Token Factory for the teacher. Scripted and tested offline, not yet run on a real account: a Nebius CPU VM, a Serverless Endpoint for the student, a Serverless Job for Night School and a bucket." width="100%">
   <br><sub>What runs where, today and as designed. <a href="docs/WHERE_IT_RUNS.md">Where everything runs</a> has the table.</sub>
 </p>
 
@@ -428,9 +418,5 @@ Keep `NOTICE.md` with the adapter wherever you copy, share or deploy it, and kee
 GitHub's "Cite this repository" button reads [`CITATION.cff`](CITATION.cff).
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/anim/ratchet-footer-dark.gif">
-    <source media="(prefers-color-scheme: light)" srcset="docs/img/anim/ratchet-footer-light.gif">
-    <img src="docs/img/anim/ratchet-footer-dark.gif" alt="Ratchet. Built by Harsh Bhanushali. NVIDIA Nemotron, Nebius Token Factory, Apache-2.0." width="100%">
-  </picture>
+  <img src="docs/img/anim/readme-footer.gif" alt="Ratchet. Built by Harsh Bhanushali. NVIDIA Nemotron, Nebius Token Factory, Apache-2.0." width="100%">
 </p>
