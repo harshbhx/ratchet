@@ -28,7 +28,7 @@ Read [CLAUDE.md](CLAUDE.md) first. The invariants there are non-negotiable, espe
 1. Branch from `main`.
 2. Keep the PR to one change. Describe what and why.
 3. Fill in the PR template checklist.
-4. CI runs ruff, pytest on Python 3.10–3.13, the requirements traceability check, the startup config check, the reference workloads, a simulation smoke test, a web job (type check, `npm test`, build, and a check that the committed build matches), a docs job and a Docker build.
+4. CI runs ruff, pytest on Python 3.10–3.13, the requirements traceability check, the startup config check, the reference workloads, a simulation smoke test, a web job (type check, `npm test`, build, and a check that the committed build matches), a docs job, a Docker build, the evidence, link and secret checks. A pull request runs only the checks for the areas it changed; `main` runs all of them ([docs/TESTING.md](docs/TESTING.md#what-ci-runs)). The `ci-ok` check sums them up.
 
 ## Commit messages
 
