@@ -38,7 +38,7 @@ export default function LandingPage() {
         <ChapterRail />
         <Hero />
         <RealRun />
-        <TryIt />
+        <TryIt mode={stats?.mode ?? null} />
         <WhatsIn />
         <LiveStrip stats={stats} />
         <Rent />

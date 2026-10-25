@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useWaking } from "@/lib/waking-store";
 import { RUN_WAKING, isWaking } from "@/lib/waking-model";
+import { chipQuestions } from "./scout-model";
 
 const MAX = 300;
 
@@ -128,7 +129,7 @@ export function AskBar({
         aria-label="Example questions"
       >
         <span className="mr-1 hidden shrink-0 font-mono text-[11.5px] uppercase tracking-[0.14em] text-muted sm:inline">Try</span>
-        {examples?.examples.map((q) => {
+        {chipQuestions(examples).map((q) => {
           const active = q === current;
           return (
             <button

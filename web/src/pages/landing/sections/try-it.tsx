@@ -4,7 +4,9 @@ import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container, Eyebrow, H2 } from "@/components/ui/section";
 import { DEMO_URL, LIVE_URL, REPO_URL } from "@/lib/utils";
+import type { Mode } from "@/lib/api";
 import { Reveal } from "../shared";
+import { LiveRequest } from "./live-request";
 
 /**
  * "Try it in a minute": the shortest path from this page to a working request, for someone judging many projects. Three ways in
@@ -31,7 +33,7 @@ function Step({ n, title, children }: { n: string; title: string; children: Reac
   );
 }
 
-export function TryIt() {
+export function TryIt({ mode = null }: { mode?: Mode | null }) {
   return (
     <section id="try" aria-labelledby="try-title" className="relative scroll-mt-16 border-t border-line bg-bg-sunken/50 py-14 sm:py-16">
       <Container>
@@ -81,6 +83,7 @@ export function TryIt() {
               </CodeBlock>
             </Step>
           </ol>
+          <LiveRequest mode={mode} />
           <p className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-muted">
             <Terminal className="size-3.5" aria-hidden />
             <span>The simulation and a local install use mock models: their numbers are simulation. The measured results are above.</span>

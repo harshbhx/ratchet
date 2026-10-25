@@ -16,6 +16,7 @@ import { PlannerLane, ReaderLane, SearcherLane, TriageLane } from "./lanes";
 import { JudgeCode } from "./judge-code";
 import { ErrorAlert, RunSummary, WriterCard } from "./summary";
 import { announceText, phaseText } from "./state";
+import { runsLeftText, runsLeftToday } from "./scout-model";
 import { TotalsBar } from "./totals-bar";
 import { useScout } from "./use-scout";
 
@@ -33,12 +34,28 @@ function BudgetLine({ status }: { status: NonNullable<ReturnType<typeof useScout
           <span className={cn("block h-full rounded-full", share > 0.2 ? "bg-good" : "bg-warn")} style={{ width: `${share * 100}%` }} />
         </span>
       </span>
-      {status.max_runs_per_day != null && (
-        <span className="tabular">
-          {status.runs_today} of {status.max_runs_per_day} demo runs used today
-        </span>
-      )}
       {status.runs_per_hour_per_ip > 0 && <span>Up to {status.runs_per_hour_per_ip} runs per hour per visitor</span>}
+    </div>
+  );
+}
+
+/** "N runs left today", from the status fields the gateway already sends; hidden when either is missing. */
+function RunsLeft({ status }: { status: NonNullable<ReturnType<typeof useScout>["status"]> }) {
+  const r = runsLeftToday(status);
+  if (!r) return null;
+  return (
+    <Badge tone={r.left <= 3 ? "warn" : "neutral"} className="text-[12.5px] tabular" title={`${r.used} of ${r.max} demo runs used today`}>
+      {runsLeftText(r)}
+    </Badge>
+  );
+}
+
+/** Placeholder for the budget line while /scout/status loads for the first time. */
+function StatusSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading the demo budget" className="flex flex-wrap items-center gap-3 sm:justify-center">
+      <span className="h-4 w-56 animate-pulse rounded bg-surface-2" />
+      <span className="h-4 w-28 animate-pulse rounded bg-surface-2" />
     </div>
   );
 }
@@ -74,7 +91,7 @@ export default function ScoutPage() {
 }
 
 function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
-  const { run, derived, examples, examplesError, status, mode, start, stop, reloadExamples, refreshStatus, recording, playing, liveRecording, play, skip } = scout;
+  const { run, derived, examples, examplesError, status, statusLoading, mode, start, stop, reloadExamples, refreshStatus, recording, playing, liveRecording, play, skip } = scout;
   const [hint, setHint] = useState<string | null>(null);
   const graphRef = useRef<HTMLDivElement | null>(null);
   const running = run.status === "running";
@@ -147,6 +164,8 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
               </p>
             )}
             {status && <BudgetLine status={status} />}
+            {status && <RunsLeft status={status} />}
+            {!status && statusLoading && <StatusSkeleton />}
           </div>
 
           <div className="mx-auto mt-8 max-w-3xl text-left">
