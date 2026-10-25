@@ -12,6 +12,9 @@
 
 <p align="center">
   <a href="https://github.com/harshbhx/ratchet/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/harshbhx/ratchet/ci.yml?branch=main&label=CI"></a>
+  <a href="https://github.com/harshbhx/ratchet/actions/workflows/ci.yml"><img alt="Evidence verified" src="https://img.shields.io/github/check-runs/harshbhx/ratchet/main?nameFilter=evidence&label=evidence%20verified"></a>
+  <a href="https://github.com/harshbhx/ratchet/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/harshbhx/ratchet?label=release"></a>
+  <a href="https://github.com/harshbhx/ratchet/actions/workflows/deploy-pages-production.yml"><img alt="Last deploy" src="https://img.shields.io/github/actions/workflow/status/harshbhx/ratchet/deploy-pages-production.yml?label=last%20deploy"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="https://huggingface.co/collections/harshbhx/ratchet"><img alt="Hugging Face collection" src="https://img.shields.io/badge/Hugging%20Face-collection-FFD21E"></a>
   <a href="https://live.ratchet.dualmindlab.tech"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-Token%20Factory-1f6feb"></a>
