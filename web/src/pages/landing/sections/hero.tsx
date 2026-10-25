@@ -10,9 +10,13 @@ import { tok } from "@/components/ui/code-block";
 import { LogoMark } from "@/components/ui/logo";
 import { Container } from "@/components/ui/section";
 import { enter } from "@/lib/motion";
+import { videoHref } from "@/lib/real-model";
 import { REPO_URL } from "@/lib/utils";
 import { REAL } from "@/pages/judges/real";
 import { HeroFlow } from "./hero-flow";
+
+/** "Watch the 3-minute demo": the video's counting link, tagged from=site; null hides the link. */
+const VIDEO_HREF = videoHref(REAL.links, "site");
 
 // The aurora is a WebGL shader: it loads after the hero's text has painted, and the page is complete without it.
 const Aurora = lazy(() => import("@/components/fx/aurora"));
@@ -138,9 +142,9 @@ export function Hero() {
               <Link to="/dashboard" className="rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink">
                 Dashboard
               </Link>
-              {REAL.links.video && (
+              {VIDEO_HREF && (
                 <a
-                  href={REAL.links.video}
+                  href={VIDEO_HREF}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"

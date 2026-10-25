@@ -1,0 +1,4 @@
+# Cloudflare Pages redirects for the docs site (copied as is into dist/).
+# /video is the demo video's short link: a 302 to its counting link, tagged from=docs.
+/video  https://video.ratchet.dualmindlab.tech/?from=docs  302
+/video/ https://video.ratchet.dualmindlab.tech/?from=docs  302

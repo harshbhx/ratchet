@@ -3,6 +3,7 @@
 // goes back to sleep 20 minutes after the last request, so it costs nothing while nobody is looking.
 // While it wakes, a page that opens the demo itself when it is ready replaces the blank wait.
 import { Container, getContainer } from "@cloudflare/containers";
+import { videoRedirect } from "./video";
 import { WAKING_HTML } from "./waking";
 
 export class RatchetDemo extends Container {
@@ -35,6 +36,10 @@ const sleep = (ms: number) => new Promise<null>((resolve) => setTimeout(() => re
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    // The demo video's short link, answered here: it never wakes the container.
+    const video = videoRedirect(url.pathname);
+    if (video) return video;
+
     const demo = getContainer(env.RATCHET_DEMO);
 
     // The waiting page asks this every two seconds. It also keeps the start going if the visitor's own request has ended.
