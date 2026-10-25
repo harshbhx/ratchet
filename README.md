@@ -158,7 +158,9 @@ from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
 r = client.chat.completions.create(
-    model="ratchet", messages=[{"role": "user", "content": "My order never arrived"}], extra_headers={"X-Ratchet-Task": "ticket-triage"}
+    model="ratchet",
+    messages=[{"role": "user", "content": "My order never arrived"}],
+    extra_headers={"X-Ratchet-Task": "ticket-triage"},
 )
 print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage_breakdown ...
 ```
