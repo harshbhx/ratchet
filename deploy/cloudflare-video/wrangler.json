@@ -27,7 +27,7 @@
     }
   ],
   "vars": {
-    "EMAIL_ENABLED": "0",
+    "EMAIL_ENABLED": "1",
     "EMAIL_FROM": "video-alerts@mail.dualmindlab.tech",
     "EMAIL_TO": "bhanushaliharsh434@gmail.com"
   },

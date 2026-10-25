@@ -27,8 +27,9 @@ test("one D1 database with its migrations, a 03:30 UTC cron, and no stored reque
   assert.equal(config.observability.enabled, false);
 });
 
-test("email is off in the committed config; the stats key is a secret, never a variable", () => {
-  assert.equal(config.vars.EMAIL_ENABLED, "0");
+test("email is a plain on/off switch in the config; the stats key is a secret, never a variable", () => {
+  // "1" sends; "0", or the variable missing, sends nothing (worker.test.mjs checks the Worker's side).
+  assert.ok(["0", "1"].includes(config.vars.EMAIL_ENABLED), config.vars.EMAIL_ENABLED);
   assert.deepEqual(config.send_email, [{ name: "EMAIL" }]);
   assert.match(config.vars.EMAIL_FROM, /@mail\.dualmindlab\.tech$/);
   assert.ok(!("STATS_KEY" in config.vars));
