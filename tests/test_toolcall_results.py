@@ -149,6 +149,12 @@ def test_collect_check_render_round_trip(strong, capsys):
     assert "above the untrained model" in text and "rented Modal T4, not on Nebius GPUs" in text and "create_ticket" in text
     assert "2,718 training rows" in text
     assert json.loads((ev / "web.json").read_text(encoding="utf-8"))["variant"] == "B"
+    assert not (ev / "rendered" / "NOTION_ROUND3.md").exists()
+    notes = ev / "notes"
+    assert tc.main(["--render", "--notes", str(notes), "--evidence", str(ev)]) == 0
+    for name in tc.NOTE_FILES:
+        t = (notes / name).read_text(encoding="utf-8")
+        assert "Headline ordering" not in t and "branch round3" not in t and "do not paste" not in t
 
 
 def test_weak_adapter_keeps_sql_as_the_headline(tmp_path):
