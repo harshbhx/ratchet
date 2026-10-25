@@ -3007,6 +3007,8 @@ def test_live_targets_stay_out_of_test_and_ci():
     assert re.search(r"^\.PHONY:.*\blive-plan live-smoke live-run\b", make, re.M)
     for wf in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
         text = wf.read_text(encoding="utf-8")
+        # CI recomputes the saved smoke run offline: no call, no cost
+        text = text.replace("python -m ratchet.liverun verify evidence/live-smoke-2026-10-23", "")
         assert "live-smoke" not in text and "live-run" not in text and "ratchet.liverun" not in text, wf
 
 
