@@ -2084,7 +2084,7 @@ def test_endpoint_args_carry_the_model_card_flags(tmp_path):
 def test_deploy_scripts_never_say_cost_nothing():
     """A stopped endpoint is not billed for compute or its own storage, but a mounted bucket is, also while it is
     stopped (docs.nebius.com/serverless/overview, read Oct 21, 2026): no deploy script or deploy doc says otherwise."""
-    for rel in ("deploy/student_endpoint.sh", "deploy/train_job.sh", "deploy/CLAUDE.md", "docs/DEPLOYMENT.md"):
+    for rel in ("deploy/student_endpoint.sh", "deploy/train_job.sh", "deploy/AGENTS.md", "docs/DEPLOYMENT.md"):
         text = " ".join((ROOT / rel).read_text(encoding="utf-8").lower().split())
         assert "cost nothing" not in text and "costs nothing" not in text, rel
     script = " ".join((ROOT / "deploy" / "student_endpoint.sh").read_text(encoding="utf-8").split())

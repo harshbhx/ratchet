@@ -9,7 +9,7 @@ Up to v0.4 the PRD said what was "Done" and the tests said what was checked, but
 
 ## Decision
 
-- **Ids live where the text lives.** FR, NFR and SM rows in `docs/PRD.md` (an ID and a Status column), US stories in their bold paragraphs, and invariants as INV-n, the number in the `## Invariants` list of `CLAUDE.md`. Ids never change, so invariants are never renumbered.
+- **Ids live where the text lives.** FR, NFR and SM rows in `docs/PRD.md` (an ID and a Status column), US stories in their bold paragraphs, and invariants as INV-n, the number in the `## Invariants` list of `AGENTS.md`. Ids never change, so invariants are never renumbered.
 - **A closed status grammar** (PRD §6): `Done (vX)`, `Done (vX), untested (live|on GPU|on Nebius)`, `Done (vX); <text> planned`, `Partial: <text>`, `Planned`, `Replaced by FR-a.b`, and for metrics `Met in simulation (<text>)`, `Not met (<text>)`, `Not checked`. Anything else is an error, so a typo cannot quietly turn "done" into "not done".
 - **Tests name what they prove** with `@pytest.mark.req("FR-2.1", "INV-7")`, registered in `pyproject.toml` with `--strict-markers`.
 - **One stdlib script**, `scripts/reqtrace.py`, holds the rest: `CODE` (where each done requirement and invariant is implemented, resolved by import or file path), `EXEMPT` (checked by hand or only live, with the file that holds the check) and `KNOWN_GAPS` (done but untested). It generates `docs/REQUIREMENTS.md` and, with `--check`, fails on the rules listed in [TESTING.md](../TESTING.md#traceability). It runs in `make lint`, as a CI step and as `tests/test_traceability.py`.

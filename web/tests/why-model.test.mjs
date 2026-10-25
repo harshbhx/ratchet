@@ -1,5 +1,5 @@
 // "Why it is different" (src/pages/landing/why-model.ts) names files and invariants. This test holds it to the repo:
-// every file exists, and every cited invariant in CLAUDE.md begins with the words the card attributes to it.
+// every file exists, and every cited invariant in AGENTS.md begins with the words the card attributes to it.
 // Run with `npm test`.
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -18,13 +18,13 @@ test("every file a card names exists in the repo", () => {
 });
 
 test("every invariant a card cites says what the card says", () => {
-  const claude = readFileSync(REPO + "CLAUDE.md", "utf-8");
+  const claude = readFileSync(REPO + "AGENTS.md", "utf-8");
   const invariants = new Map();
   for (const line of claude.split("\n")) {
     const hit = /^(\d+)\. \*\*(.+?)\*\*/.exec(line);
     if (hit) invariants.set(Number(hit[1]), hit[2]);
   }
-  assert.ok(invariants.size >= 20, "CLAUDE.md lists the invariants");
+  assert.ok(invariants.size >= 20, "AGENTS.md lists the invariants");
   for (const w of m.WHY) {
     if (!w.invariant) continue;
     const text = invariants.get(w.invariant.n);

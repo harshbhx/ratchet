@@ -13,7 +13,7 @@ to this world, which picks a sub-world from what a model is sent:
 - text: `[mock teacher] ` and a restatement of the prompt, or after a tool result, of that result (`final`).
 
 Labels come from sha256 of the request's text (`_seed`), never from a stream's RNG, so the ticket draws never move
-(sim/CLAUDE.md) and one request gets the same answer in the gateway, the simulator and Night School. A template, what
+(sim/AGENTS.md) and one request gets the same answer in the gateway, the simulator and Night School. A template, what
 the mock student's skill grows on, is keyed by what a model is sent (the sub-world and the schema name, the tool set or
 the system prompt), never by the task name, which no model sees.
 

@@ -1,6 +1,6 @@
 # Component inventory (v2)
 
-Added or changed in this pass. Everything else is listed in `web/CLAUDE.md` and `web/DESIGN.md`.
+Added or changed in this pass. Everything else is listed in `web/AGENTS.md` and `web/DESIGN.md`.
 
 ## Effects: `web/src/components/fx/`
 

@@ -1,6 +1,6 @@
-# CLAUDE.md: Ratchet
+# AGENTS.md: Ratchet
 
-Guidance for Claude (and humans) working in this repo. Read this first; per-folder CLAUDE.md files add detail.
+Guidance for Claude (and humans) working in this repo. Read this first; per-folder AGENTS.md files add detail.
 
 ## What this is
 
@@ -136,7 +136,7 @@ Always run `make lint test reference` before committing.
 | `evidence/` | The saved answers, manifests and results behind every measured number (`text2sql-round1`, `-round2`, `-exam2`, `toolcall`, `scout`, `live-smoke-2026-10-23`); `docs/VERIFY.md` has the commands that recompute them |
 | `scripts/text2sql/`, `scripts/measure_adapter.py`, `scripts/toolcall_results.py` | Exam tooling: `exam_numbers.py --check` recomputes the text-to-SQL scores, `measure_adapter.py verify` re-scores one adapter, `toolcall_results.py --check` recomputes the tool-calling results |
 | `docs-site/`, `deploy/cloudflare*` | The docs site; Workers with Containers for the live demo (`cloudflare-live`) and the simulation (`cloudflare`) |
-| `web/` | React app (Vite, Tailwind, motion, recharts) for `/`, `/scout`, `/dashboard`. See [web/CLAUDE.md](web/CLAUDE.md) and [web/DESIGN.md](web/DESIGN.md) |
+| `web/` | React app (Vite, Tailwind, motion, recharts) for `/`, `/scout`, `/dashboard`. See [web/AGENTS.md](web/AGENTS.md) and [web/DESIGN.md](web/DESIGN.md) |
 | `ratchet/web/dist/` | The committed build of `web/`, served by the gateway |
 | `ratchet/web/*.html`, `ratchet/dashboard.html` | Lite pages without a build step, served at `/lite*` and as a fallback |
 | `sim/` | Synthetic tickets, mock research world (`research.py`), the generic mock world for any other request (`generic.py`: free text, schema instances, tool calls; the `schema` and `tools` workloads; `RATCHET_MOCK_STRICT=1` restores the 400), workloads (`world.py`), mock teacher/student/trainer (and the embeddings model, `MockEmbedder`) for demos and tests (the mock teacher's reasoning optionally varies around a mean, for the receipts' demo) |
@@ -147,7 +147,7 @@ Always run `make lint test reference` before committing.
 | `scripts/regen_sim_reference.py` | Regenerates (or `--check`s) `tests/fixtures/sim_reference_seed7.json`, the pinned reference simulation that `test_reference_simulation_unchanged` compares exactly |
 | `scripts/reference_check.py` | Checks (or `--write`s) `tests/fixtures/reference.json`: three workloads (tickets seed 7, mixed seed 1, research seed 7) captured from v0.4.0 and run with `RATCHET_PER_TASK_CALIBRATION=0` (`LEGACY_ENV`, ADR 0040), compared on every v0.4 day stat, the totals, the versions and the event log (`make reference`, CI) |
 | `scripts/reqtrace.py` | Requirements traceability: PRD rows and invariants → code (`CODE`) and `@pytest.mark.req` tests; writes and checks `docs/REQUIREMENTS.md` (generated, never edit by hand) |
-| `tests/conftest.py`, `tests/fakes.py`, `tests/sdk_bridge.py` | Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_check`, `reference_run`; the `slow` marker and `--runslow`), test doubles (`RecordingProvider`, `RecordingTrainer`, `RecordingEvaluator`, `FakeClock`, ledger builders) and `make_openai_client(app)` (the real OpenAI SDK against the gateway in-process). See [tests/CLAUDE.md](tests/CLAUDE.md) |
+| `tests/conftest.py`, `tests/fakes.py`, `tests/sdk_bridge.py` | Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_check`, `reference_run`; the `slow` marker and `--runslow`), test doubles (`RecordingProvider`, `RecordingTrainer`, `RecordingEvaluator`, `FakeClock`, ledger builders) and `make_openai_client(app)` (the real OpenAI SDK against the gateway in-process). See [tests/AGENTS.md](tests/AGENTS.md) |
 | `docs/` | PRD, the generated requirements matrix (`REQUIREMENTS.md`), architecture, API, config, Scout, deployment (incl. the demo VM), runbook, threat model, testing, ADRs, business docs |
 
 ## Invariants (do not break these)

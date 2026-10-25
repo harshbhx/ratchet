@@ -402,7 +402,7 @@ Start at [docs/README.md](docs/README.md). Highlights:
 - [Testing and simulation](docs/TESTING.md), [Architecture decisions](docs/adr/README.md)
 - [Business](docs/BUSINESS.md), [Competitive analysis](docs/COMPETITIVE_ANALYSIS.md), [Roadmap](docs/ROADMAP.md)
 
-Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md). Working with Claude? Read [CLAUDE.md](CLAUDE.md). Security reports: [SECURITY.md](SECURITY.md).
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md). Working with Claude? Read [AGENTS.md](AGENTS.md). Security reports: [SECURITY.md](SECURITY.md).
 
 ## License
 

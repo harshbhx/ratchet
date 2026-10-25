@@ -77,7 +77,7 @@ export function TaskRegistryPanel({ state, mode, onChanged }: { state: RegistryS
   const [query, setQuery] = useState("");
   const [all, setAll] = useState(false);
   const [drawer, setDrawer] = useState<DrawerState>(null);
-  // Memory only: never written to storage, a cookie or a URL (CLAUDE.md invariant 18).
+  // Memory only: never written to storage, a cookie or a URL (AGENTS.md invariant 18).
   const [adminKey, setAdminKey] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const searchId = useId();

@@ -1,4 +1,4 @@
-# CLAUDE.md: `sim/` (offline simulation)
+# AGENTS.md: `sim/` (offline simulation)
 
 Mock models that let the whole loop run in seconds with no keys or GPUs. Used by `make sim`, the mock gateway (dashboard and Scout), `tests/test_system.py`, `tests/test_scout.py` and `tests/test_mock_world.py`.
 
@@ -26,7 +26,7 @@ Rules:
 
 - These parameters are assumptions, not measurements. Never present simulation output as real model quality.
 - If you change mock parameters, re-run `make sim` (and `--workload research`, `--workload mixed`) with seeds 1, 2, 3, 7, 11 and update [docs/TESTING.md](../docs/TESTING.md) if the trend changes.
-- `make sim` (seed 7, 10 days × 2,000, drift day 5, corrupted v3) is pinned exactly by `tests/fixtures/sim_reference_seed7.json` and `test_reference_simulation_unchanged`. Any change to the mock models, the streams or the loop that moves it fails that test. If the move is intended, run `python scripts/regen_sim_reference.py` and add a CHANGELOG line that says why ([tests/CLAUDE.md](../tests/CLAUDE.md#the-reference-simulation-fixture)).
+- `make sim` (seed 7, 10 days × 2,000, drift day 5, corrupted v3) is pinned exactly by `tests/fixtures/sim_reference_seed7.json` and `test_reference_simulation_unchanged`. Any change to the mock models, the streams or the loop that moves it fails that test. If the move is intended, run `python scripts/regen_sim_reference.py` and add a CHANGELOG line that says why ([tests/AGENTS.md](../tests/AGENTS.md#the-reference-simulation-fixture)).
 - Keep it deterministic: all randomness goes through seeded `random.Random` or `_rng(...)`.
 - **The generic world draws nothing from a stream.** Its labels come from sha256 of the request's text (`generic._seed`), each schema instance from its own `random.Random` seeded that way, so the same request gets the same answer in the gateway, the simulator, the trainer and the golden eval, and no ticket or research draw moves. Its templates are keyed by what a model is sent (the schema name, the sorted tool names, a digest of the system prompt), never by the task name, which no model sees. Generic paths are reached only for texts outside the registries; keep it that way, or `make sim` and the reference fixtures move.
 - **Do not change the order of random draws for tickets.** `TicketStream.sample`, the key order of `Ticket.label_space` (`category`, then `priority`) and the draw order in `MockStudent.complete` decide every ticket number. With them unchanged, `make sim` still reproduces the v0.1 table in README and TESTING exactly. Give new workloads their own RNG (as `ResearchStream` and `MixedStream` do) instead of drawing from the ticket stream's.
