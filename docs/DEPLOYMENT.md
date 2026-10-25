@@ -250,3 +250,25 @@ Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (o
 3. Run `python -m ratchet.live night` once you have at least 50 new examples. Expect a `trained` event and either `canary` or `rejected`, and a bill of materials at `data/boms/student-v1.json` (also at `GET /ratchet/versions/1/bom`), with `ratchet_bom.json` and `NOTICE.md` in the bucket's `adapters/student-v1/` next to the weights. With `RATCHET_BOM_SIGNING_KEY` set, `python -m ratchet.bom verify data/boms/student-v1.json --public-key <yours>` prints `OK`.
 4. Check that `curl $RATCHET_STUDENT_BASE/models` lists `student-v1` after the night.
 5. Watch the `canary` → `live` events over the next requests. Audits need traffic: at a 5% audit rate and 10% canary, reaching 20 audits takes roughly 4,000+ requests, so for a demo raise `RATCHET_AUDIT_RATE`, or lower `RATCHET_MIN_AUDITS` (the default is 20).
+
+## 6. The demo video link
+
+`video.ratchet.dualmindlab.tech` is a short, counted link to the demo video (`https://youtu.be/GIeSmDtopfs`): a small Cloudflare Worker with a D1 database, in `deploy/cloudflare-video/`. Only the manual workflow `deploy-cloudflare-video` deploys it (Actions, Run workflow, type `deploy-video`; the same two repository secrets as the other deploys). It runs the Worker's tests, applies the D1 migrations, deploys, and then checks the link from outside with HEAD requests only, so a deploy adds no click.
+
+- **Every GET or HEAD**, on any path, is a `302` to the video with `Cache-Control: no-store`. A GET is counted; a HEAD (link checkers, the deploy smoke) is not, and neither are `/robots.txt`, `/favicon.ico` and `/.well-known/*`. The count is written after the answer has gone out (`ctx.waitUntil`), so a slow or failing D1 never delays or breaks the redirect.
+- **Where a link was posted** goes in `?from=`: `devpost`, `readme`, `site`, `live`, `demo`, `docs`, `hf`, `youtube`, `x`, `linkedin`, `discord`, `email`, `release`, `judges` or `other`. A link without it counts as `direct` and any other value as `other`; the raw query is never stored.
+- **Human or bot.** A user agent that names a bot, crawler, spider or preview (Slackbot, Twitterbot, Discordbot, facebookexternalhit, LinkedInBot, WhatsApp, TelegramBot, Googlebot, bingbot, Applebot and the like), a script or library (curl, python-requests, Go-http-client, ...), a headless browser, this repository's link check or the deploy smoke, an empty user agent, or a browser prefetch counts as `bot`; anything else as `human`. So a chat app's link preview is a bot, and the person who then clicks the link is a human.
+- **What is stored** in D1 (`ratchet-video`): a count per UTC day, source and kind (`clicks`); for each counted visit its time, source, kind and the two-letter country Cloudflare reports (`events`, deleted after 30 days by the daily cron); and how many alert emails went out per UTC day (`mail`). **Never** an IP address, a user agent, a cookie, the path, the query or any other identifier. Workers Logs are off for this Worker, so request details are not kept there either; `npx wrangler tail ratchet-video` shows its failure lines live.
+
+**Reading the stats.** `GET /stats` with the Worker secret `STATS_KEY` as a bearer token returns totals per day and source (human and bot apart), per source, per country over the last 30 days, and the emails sent; add `?format=html` for the same as tables. Without the key, or with a wrong one, `/stats` is a 404. The key is kept outside the repository; to replace it, pipe a new random value into `npx wrangler secret put STATS_KEY --name ratchet-video` from `deploy/cloudflare-video/`.
+
+```bash
+curl -s -H "Authorization: Bearer $(cat "$STATS_KEY_FILE")" https://video.ratchet.dualmindlab.tech/stats
+```
+
+**Email alerts (off until switched on).** With `EMAIL_ENABLED` set to `"1"` in `deploy/cloudflare-video/wrangler.json`, each human visit sends a short plain-text email from `EMAIL_FROM` to `EMAIL_TO` through the Worker's `send_email` binding (Cloudflare Email Routing): the source, the country, the time in IST and the day's human clicks so far, never an IP address or a user agent. At most 40 visit emails go out per UTC day; past that, visits are still counted. A daily cron at 03:30 UTC (09:00 IST) emails a summary of the previous UTC day (clicks per source, human and bot apart, and countries; nothing for a day without clicks) and prunes the old events, also while email is off. To switch email on:
+
+1. The destination address must be verified in Cloudflare Email Routing (dashboard: the `dualmindlab.tech` zone, Email, Email Routing, Destination addresses; Cloudflare emails it a confirmation link). The sender is on `mail.dualmindlab.tech`, which already has Cloudflare's Email Routing and Email Sending records; the root domain's own mail records are not touched.
+2. Set `EMAIL_ENABLED` to `"1"` in `wrangler.json`, merge, and run `deploy-cloudflare-video`.
+
+Setting it back to `"0"` stops every email at the next deploy. The redirect and the counts never depend on email: a missing binding, a bad address or a failed send only skips the email.

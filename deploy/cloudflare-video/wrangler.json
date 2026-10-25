@@ -1,0 +1,37 @@
+{
+  "name": "ratchet-video",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "video.ratchet.dualmindlab.tech",
+      "custom_domain": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ratchet-video",
+      "database_id": "78624a31-b3db-4bd2-b55f-82de063b3eca",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["30 3 * * *"]
+  },
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
+  "vars": {
+    "EMAIL_ENABLED": "0",
+    "EMAIL_FROM": "video-alerts@mail.dualmindlab.tech",
+    "EMAIL_TO": "bhanushaliharsh434@gmail.com"
+  },
+  "observability": {
+    "enabled": false
+  }
+}

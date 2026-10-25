@@ -4,6 +4,8 @@ All notable changes are listed here. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+- **A counted short link to the demo video**, `video.ratchet.dualmindlab.tech` (`deploy/cloudflare-video/`, [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#6-the-demo-video-link)): a Cloudflare Worker that answers every GET or HEAD with a 302 (`no-store`) to the video and counts each GET in D1 by UTC day, source (`?from=`, an allowlist; missing is `direct`, unknown `other`) and kind (human, or a preview, crawler, script or checker by its user agent), keeps each visit's time, source and two-letter country for 30 days, and never stores an IP address, user agent, cookie or the raw query. `GET /stats` needs the `STATS_KEY` secret and is a 404 without it. Email alerts through Email Routing (one per human visit, at most 40 per UTC day, and a 09:00 IST summary of the previous day) are built in and off until `EMAIL_ENABLED` is `"1"`. Deployed only by the manual `deploy-cloudflare-video` workflow, whose smoke check sends HEAD requests only; CI's new `workers` job runs its Node tests against a fake D1, the type check and a dry-run bundle.
+
 ## [0.5.0] - 2026-10-25
 
 - CI runs only the checks for the areas a pull request changed (backend, web, docs, evidence, deploy); a push to `main`, a manual run, a change to `ci.yml` and a file no area names run everything. A `workflows` job parses every workflow file, and `ci-ok` is the one check to require ([docs/TESTING.md](docs/TESTING.md#what-ci-runs)).

@@ -28,8 +28,9 @@ CLAUDE.md
 *.db-shm
 out/
 
-# Cloudflare local emulator state
+# Cloudflare local emulator state and the Workers' installed packages
 .wrangler/
+deploy/**/node_modules/
 
 # Working notes kept on the author's machine, not in the repository
 docs/DAY1.md

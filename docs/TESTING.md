@@ -98,7 +98,7 @@ A push to `main` and a manual run (Actions, CI, Run workflow) run every check. A
 | web | `web/`, `ratchet/web/`, `ratchet/dashboard.html` | `web`: type check, `npm test`, build, the committed build is current. The Python tests that read the pages |
 | docs | `docs/`, `docs-site/`, any `.md` file, `design/`, `LICENSE`, `NOTICE`, `CITATION.cff` | `docs`, `links`. The Python tests that read the docs |
 | evidence | `evidence/`, the exam and tool-calling scripts, the exam and tool-calling data files in `web/src/data/` and `docs-site/src/data/` | `evidence`. The Python tests that read `evidence/` |
-| deploy | `deploy/`, `Dockerfile`, `.dockerignore`, `.github/` | `docker`, `workflows` (every workflow file parses). The Python tests that read the deploy kit and the workflows |
+| deploy | `deploy/`, `Dockerfile`, `.dockerignore`, `.github/` | `docker`, `workers` (the video link Worker in `deploy/cloudflare-video/`: `npm test` against a fake D1 that runs its migrations, the type check, a Wrangler dry-run bundle), `workflows` (every workflow file parses). The Python tests that read the deploy kit and the workflows |
 
 - `secrets` always runs.
 - A change to `ci.yml` itself, or to a file no area names, runs everything.

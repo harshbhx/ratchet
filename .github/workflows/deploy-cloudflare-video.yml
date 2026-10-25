@@ -1,0 +1,80 @@
+# Deploys the demo video's short link (deploy/cloudflare-video) to video.ratchet.dualmindlab.tech. MANUAL ONLY: it never runs on a
+# push, a merge or a schedule. Run it from the Actions tab (Run workflow) and type "deploy-video".
+# It needs the same two repository secrets as the other deploys: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. The Worker's own
+# secret STATS_KEY is set once with `wrangler secret put` (docs/DEPLOYMENT.md, "The demo video link"), never here.
+name: deploy-cloudflare-video
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy-video" to publish the video link to video.ratchet.dualmindlab.tech'
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ inputs.confirm == 'deploy-video' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: deploy/cloudflare-video
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Tests
+        run: npm test
+      - name: Apply the D1 migrations
+        # The redirect does not need D1, so a token without D1 access warns here instead of blocking the deploy (counting then
+        # waits until the migrations are applied, for example with the same command from a laptop).
+        run: |
+          if ! npx wrangler d1 migrations apply ratchet-video --remote; then
+            echo "::warning::D1 migrations were not applied (does the token have D1 Edit?). The link still redirects; counts fail until they are."
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Deploy
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  smoke:
+    # Final check from outside with HEAD requests only: a HEAD is never counted, so a deploy adds no click and sends no email.
+    # GET /stats without a key must be a 404 (it is never counted either). A new custom domain can take a few minutes to get its DNS
+    # record and certificate, so the check is retried for about five minutes.
+    needs: deploy
+    if: ${{ inputs.confirm == 'deploy-video' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check https://video.ratchet.dualmindlab.tech (HEAD only)
+        run: |
+          check() {
+            headers=$(curl --silent --show-error --head --max-time 20 --user-agent "ratchet-video-smoke/1" "https://video.ratchet.dualmindlab.tech/?from=smoke" | tr -d '\r') || return 1
+            status=$(printf '%s\n' "$headers" | awk 'NR == 1 {print $2}')
+            location=$(printf '%s\n' "$headers" | awk 'tolower($1) == "location:" {print $2}')
+            cache=$(printf '%s\n' "$headers" | awk 'tolower($1) == "cache-control:" {print $2}')
+            echo "HEAD /?from=smoke: status=$status location=$location cache-control=$cache"
+            [ "$status" = 302 ] && [ "$location" = "https://youtu.be/GIeSmDtopfs" ] && [ "$cache" = "no-store" ]
+          }
+          closed() {
+            code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 --user-agent "ratchet-video-smoke/1" "https://video.ratchet.dualmindlab.tech/stats")
+            echo "GET /stats without a key: $code"
+            [ "$code" = 404 ]
+          }
+          for attempt in $(seq 1 15); do
+            if check && closed; then exit 0; fi
+            echo "attempt $attempt failed; waiting 20 s for the custom domain"
+            sleep 20
+          done
+          echo "the video link did not pass its smoke check" >&2
+          exit 1
