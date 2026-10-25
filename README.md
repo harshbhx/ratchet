@@ -14,6 +14,7 @@
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="https://huggingface.co/collections/harshbhx/ratchet"><img alt="Hugging Face collection" src="https://img.shields.io/badge/Hugging%20Face-collection-FFD21E"></a>
   <a href="https://live.ratchet.dualmindlab.tech"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-Token%20Factory-1f6feb"></a>
+  <a href="https://youtu.be/GIeSmDtopfs"><img alt="Demo video, 2:59" src="https://img.shields.io/badge/demo%20video-2%3A59-475569"></a>
   <a href="https://docs.ratchet.dualmindlab.tech"><img alt="Docs" src="https://img.shields.io/badge/docs-guides-64748b"></a>
   <a href="docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius"><img alt="Run on Nebius (scripted, not yet run on a real account)" src="docs/img/run-on-nebius.svg"></a>
 </p>
@@ -36,7 +37,7 @@
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/demo-reel-poster.png">
     <img src="docs/img/anim/ratchet-demo-reel.gif" alt="Demo reel, 15 seconds: 200 exam questions the model never saw, a recorded live Scout run (18 model calls, all answered by the teacher, 13.2 seconds, $0.0223), the 95% precision bar and the real exam numbers: text-to-SQL 12.8% untrained, 25.6% teacher, 39.0% adapter on exam 1." width="100%">
   </picture>
-  <br><sub><b>Demo reel</b> (from the demo video). Exam numbers are measured; the Scout run is a recorded live run. <!-- full video link --></sub>
+  <br><sub><b>Demo reel</b> (from the demo video). Exam numbers are measured; the Scout run is a recorded live run. <a href="https://youtu.be/GIeSmDtopfs">Watch the full demo video (2:59)</a></sub>
 </p>
 
 <p align="center">
