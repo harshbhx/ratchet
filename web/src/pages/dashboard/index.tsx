@@ -18,6 +18,8 @@ import { Group, JumpBar, SECTIONS, type SectionId } from "./sections";
 import { armedFault, eventKey, fmtTime, newEvents, stateLabel } from "./model";
 import { skipInfo, skipSentence } from "./night-model";
 import { Pipeline } from "./pipeline";
+import { PipelineLink } from "./pipeline-link";
+import { showPipelineLink } from "./pipeline-link-model";
 import { Provenance } from "./provenance";
 import { TaskRegistryPanel } from "./registry";
 import { ReleaseLog } from "./release-log";
@@ -150,7 +152,7 @@ function LastCalls({ stats }: { stats: Stats }) {
   );
 }
 
-function ColdStart({ mock, onRun, busy }: { mock: boolean; onRun: () => void; busy: boolean }) {
+function ColdStart({ mock, onRun, busy, link }: { mock: boolean; onRun: () => void; busy: boolean; link?: boolean }) {
   return (
     <div className="relative overflow-hidden rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
       <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:linear-gradient(to_left,black,transparent_70%)]" />
@@ -171,6 +173,7 @@ function ColdStart({ mock, onRun, busy }: { mock: boolean; onRun: () => void; bu
               </>
             )}
           </p>
+          {link && <PipelineLink />}
         </div>
         {mock && (
           <Button onClick={onRun} disabled={busy} className="shrink-0">
@@ -413,6 +416,7 @@ export default function DashboardPage() {
   const onOutageEnd = useCallback(() => void refresh(), [refresh]);
   const mock = stats?.mode === "mock";
   const cold = stats != null && stats.days.length === 0;
+  const link = showPipelineLink(stats);
   const fault = stats ? armedFault(stats) : null;
   const shown: SectionId[] = SECTIONS.map((x) => x.id);
 
@@ -462,14 +466,14 @@ export default function DashboardPage() {
               )}
 
               <div className={cn("space-y-4 transition-opacity duration-500 ease-out", busy === "day" || busy === "reset" ? "opacity-60" : "opacity-100")} aria-busy={busy != null}>
-                {cold && <ColdStart mock={mock} onRun={() => void runDay()} busy={busy != null} />}
+                {cold && <ColdStart mock={mock} onRun={() => void runDay()} busy={busy != null} link={link} />}
 
                 <Group id="overview" title="Overview" hint={mock ? "Simulation" : "Live"}>
                   <Reveal>
                     <Kpis stats={stats} />
                   </Reveal>
                   <Reveal delay={0.05}>
-                    <Pipeline versions={stats.versions} faultId={fault?.id} />
+                    <Pipeline versions={stats.versions} faultId={fault?.id} demoLink={link} />
                   </Reveal>
                 </Group>
 

@@ -4,6 +4,7 @@ import type { Version } from "@/lib/api";
 import { cn, fmtPct } from "@/lib/utils";
 import { POLICY, stateLabel } from "./model";
 import { Panel } from "./ui";
+import { PipelineLink } from "./pipeline-link";
 
 type StageId = "candidate" | "shadow" | "canary10" | "canary50" | "live";
 
@@ -81,7 +82,7 @@ function ExitBin({ icon: Icon, label, rule, items, tone, className }: { icon: Lu
   );
 }
 
-export function Pipeline({ versions, faultId }: { versions: Version[]; faultId?: number | null }) {
+export function Pipeline({ versions, faultId, demoLink }: { versions: Version[]; faultId?: number | null; demoLink?: boolean }) {
   const byStage = new Map<StageId, Version[]>(STAGES.map((s) => [s.id, []]));
   for (const v of versions) {
     const s = stageOf(v);
@@ -171,6 +172,7 @@ export function Pipeline({ versions, faultId }: { versions: Version[]; faultId?:
           <ExitBin icon={Archive} tone="muted" label="Retired" rule="Replaced by a newer version" items={retired} />
         </div>
       </LayoutGroup>
+      {demoLink && <PipelineLink />}
     </Panel>
   );
 }

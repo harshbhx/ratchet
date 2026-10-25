@@ -58,3 +58,14 @@ test("the dashboard's pure helpers take empty arrays", () => {
   assert.equal(fallbackTotals(stats.tasks).degraded ?? 0, 0);
   assert.deepEqual(routeTotals(stats.tasks), []);
 });
+
+test("the demo pipeline link shows only on an empty live gateway", async () => {
+  const { showPipelineLink, PIPELINE_LINK } = await import("../src/pages/dashboard/pipeline-link-model.ts");
+  assert.equal(showPipelineLink(stats), true);
+  assert.equal(showPipelineLink({ ...stats, mode: "mock" }), false);
+  assert.equal(showPipelineLink({ ...stats, totals: { ...stats.totals, requests: 5 } }), false);
+  assert.equal(showPipelineLink({ ...stats, days: [{}] }), false);
+  assert.equal(showPipelineLink({ ...stats, versions: [{}] }), false);
+  assert.equal(showPipelineLink(null), false);
+  assert.ok(!/simulation/i.test(PIPELINE_LINK.title + PIPELINE_LINK.line));
+});
