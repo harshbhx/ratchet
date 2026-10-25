@@ -19,7 +19,7 @@ export const SITE_URL = 'https://docs.ratchet.dualmindlab.tech';
 
 /** Files never published: per-folder instructions for contributors, not documentation. */
 export function skipped(rel) {
-  return posix.basename(rel) === 'CLAUDE.md';
+  return posix.basename(rel) === 'AGENTS.md';
 }
 
 /**

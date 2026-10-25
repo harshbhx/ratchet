@@ -82,7 +82,7 @@ There are three layers:
 
 Across the first two layers, the **contract tests** (`tests/test_contract.py`) pin what clients, the dashboard and the license rules depend on, so a rewrite of `Ratchet.handle` or `gateway.chat` cannot change it unnoticed ([Contract tests](#contract-tests)).
 
-Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_check`, `reference_run`) and the `slow` marker (`--runslow`) are in `tests/conftest.py`; `make_openai_client(app)` (the OpenAI SDK wired to the gateway in-process) is in `tests/sdk_bridge.py`; the recording provider, trainer and evaluator, `FakeClock`, the live-mode doubles (`FakeOpenAIServer`, `RecordingRun`, `AppTransport`) and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/CLAUDE.md](../tests/CLAUDE.md) lists them.
+Shared fixtures (`gw`, `gw_env`, `day1_check`, `reference_check`, `reference_run`) and the `slow` marker (`--runslow`) are in `tests/conftest.py`; `make_openai_client(app)` (the OpenAI SDK wired to the gateway in-process) is in `tests/sdk_bridge.py`; the recording provider, trainer and evaluator, `FakeClock`, the live-mode doubles (`FakeOpenAIServer`, `RecordingRun`, `AppTransport`) and the ledger builders (`_version`, `_audit`, `_shadow`, `_examples`) are in `tests/fakes.py`. [tests/AGENTS.md](../tests/AGENTS.md) lists them.
 
 Every test names the requirements it proves with `@pytest.mark.req`, and `tests/test_traceability.py` checks that the PRD, the invariants, the code and the tests agree ([Traceability](#traceability)).
 
@@ -591,11 +591,11 @@ Every test here carries `NFR-10` through a module-level `pytestmark`.
 | `test_doc_test_counts_match` | Every "N tests" claim and per-file count in the docs equals the parametrize-expanded count |
 | `test_ast_count_matches_pytest_collection` | `pytest --collect-only` in a subprocess collects exactly the AST count per file |
 | `test_check_cli_passes_and_writes_the_committed_matrix` | `--check` exits 0 and prints `OK`; writing to `--out` reproduces the committed matrix |
-| `test_mini_world_is_clean_and_renders` | A tiny PRD, CLAUDE.md and test file pass every core rule and render the expected rows, an empty section, xfail tests and a live check; a table inside a code block is not parsed |
+| `test_mini_world_is_clean_and_renders` | A tiny PRD, AGENTS.md and test file pass every core rule and render the expected rows, an empty section, xfail tests and a live check; a table inside a code block is not parsed |
 | `test_each_mistake_gives_exactly_one_error` (23 cases) | Bad status wording, a cited replaced id, a duplicate id, an unknown marker id, a malformed id, an FR row in the wrong section, a metric status on an FR row, a missing replacement target, a done row without a test, a planned id without strict xfail, a `Not met` metric without one, a cited `Not checked` metric, a known gap that has a test, a grown `KNOWN_GAPS`, a tested manual exemption, missing evidence, a live row without a live exemption or without an offline test, a broken or missing `CODE` ref, a non-literal marker, an untested invariant and a requirement proved only by a skipped test each give exactly one error |
 | `test_status_grammar` | Each status form gives its flags; the old wording (`untested live`), free text after `Done (vX);` that does not end in `planned`, a metric status on an FR row and an empty status are errors |
 | `test_scan_reads_markers_and_counts_cases` | The AST scan reads module, class and function marks, nested classes, stacked and name-referenced `parametrize`, skips fixtures and classes with `__init__`, reports an uncountable `parametrize`, and treats a `@pytest.mark.skip` test as no proof |
-| `test_missing_sources_are_findings_not_crashes` | With no PRD, CLAUDE.md, API.md or CONFIGURATION.md, every rule reports what is missing instead of raising |
+| `test_missing_sources_are_findings_not_crashes` | With no PRD, AGENTS.md, API.md or CONFIGURATION.md, every rule reports what is missing instead of raising |
 | `test_doc_rules_catch_drift` | A wrong "N tests" line and a wrong per-file count are reported with file and line; a route documented without its method is reported; the env-var scan finds `os.environ.get`, `getenv`, `_env`, `os.environ[...]` and `_int` reads and skips non-literal names and writes |
 | `test_invariants_keep_their_list_numbers` | INV-n is the list number; a gap in the numbering is one error; continuation lines join the item |
 | `test_metric_targets_match_the_prd` | FR-7.9: rule (j) on the repo: every SM row's Target equals `ratchet.kpis.SM_TARGETS` |
@@ -651,7 +651,7 @@ The live-path tests ([Live-path tests](#live-path-tests)). Each runs offline: mo
 | `test_endpoint_stop_and_start_use_the_id` | FR-8.2, FR-15.2 (W0): `stop` and `start` call `ai endpoint list --format json`, then `ai endpoint stop\|start --id <id from tests/fixtures/nebius_endpoint_list.json>`; `start` is the default; `RATCHET_ENDPOINT_ID` skips the lookup; with no endpoint of that name `start` creates one and `stop` exits 1; nothing to do in the state already reached; `status` prints `<id> <state>` (by name, or by `RATCHET_ENDPOINT_ID`); `DRY_RUN=1` prints start and stop instead of running them; a start or stop that nebius refuses fails the script. A stub `ratchet.cost` shows exactly which uptime records were made (`up` after create or start, `down` after stop, none in a dry run or after a refused call). Skipped where bash is missing |
 | `test_endpoint_lookup_never_guesses` | FR-8.2 (W0): `create` refuses an existing name; output that is not JSON, `items` that is not a list, two endpoints with the name, an id that is empty or has a space, a name missing from a list with more pages, or a failing `list` stop `start` (and `stop` and `create` where it matters) before anything else runs; an empty list printed as nothing, `{}`, `{"items": null}`, `[]` and the like means `start` creates; `STOPPING` and `DELETING` refuse, a lower-case, numeric, missing or `ERROR` state lets Nebius decide; an unknown action or `DRY_RUN` value and a missing Python stop first. Skipped where bash is missing |
 | `test_endpoint_args_carry_the_model_card_flags` | FR-8.2, NFR-5 (W0): `create`'s flags (image `vllm/vllm-openai:v0.18.0-cu130`, platform, preset, port 8000, `--shm-size 16Gi`, the bucket volume, token auth, runtime LoRA) and its vLLM arguments in order, split as the container does: the model card's `--mamba_ssm_cache_dtype float32`, `--max-model-len 8192`, `--max-num-seqs 64` and `--default-chat-template-kwargs` with JSON that parses to `{"enable_thinking": false}`; the token never printed; `RATCHET_VLLM_IMAGE`, `RATCHET_SERVE_MAX_LEN`, `RATCHET_SERVE_MAX_SEQS`, `RATCHET_REASONING_PARSER_PLUGIN` (adds `--reasoning-parser nano_v3`), `RATCHET_SUBNET_ID` and an empty `RATCHET_SERVE_TEMPLATE_KWARGS` take effect; `DRY_RUN=1` adds `--dry-run` and records nothing; values that would break the one `--args` string or that vLLM would refuse after the GPU is up (not a whole number, not a JSON object, a relative plugin path, a single quote) and a missing token or bucket stop before `create`. Skipped where bash is missing |
-| `test_deploy_scripts_never_say_cost_nothing` | FR-15.2 (W0): neither deploy script, `deploy/CLAUDE.md` nor `docs/DEPLOYMENT.md` says a stopped endpoint costs nothing (the mounted bucket is still billed); the endpoint script says so |
+| `test_deploy_scripts_never_say_cost_nothing` | FR-15.2 (W0): neither deploy script, `deploy/AGENTS.md` nor `docs/DEPLOYMENT.md` says a stopped endpoint costs nothing (the mounted bucket is still billed); the endpoint script says so |
 | `test_deploy_variables_are_listed_and_documented` | NFR-10 (W0): every `RATCHET_*` variable the two Nebius scripts read is read by `config.py` or listed in `config.DEPLOY_ENV` (part of `KNOWN_ENV`, which the traceability check holds to a row in CONFIGURATION.md), with no stale or duplicate name; all of them and `DRY_RUN` are documented |
 | `test_liverun_plan_refuses_over_budget` | FR-8.20: `python -m ratchet.liverun plan --max-usd 0.01` exits 3 and makes no call at all; the plan lists requests per release stage at the configured canary audit rate, 0.5 and 1.0, the audit rates as set, the gate profile and whether it is in force, the golden-size line and a USD row per round; at the default rates the 10% canary stage needs 7,398 requests against 737 at 0.5; `plan_stage_requests` equals a brute-force scan with `binom_sf` |
 | `test_liverun_refuses_mock_gateway_and_wrong_ledger` | FR-8.20, INV-8: a mock gateway exits 2 after `/healthz` alone (no demo route); `RATCHET_DB` on another file than the gateway's exits 2 after the one probe; a gateway without `RATCHET_API_KEYS` exits 2 naming `liverun:<key>`; no `RATCHET_LIVERUN_KEY`, a training command not on PATH or a script that is not there, and no open endpoint interval exit 2 before any paid call |
@@ -1644,7 +1644,7 @@ Rules:
 - **The task API keys only grow.** `tests/fixtures/tasks_keys.json` does the same for the task API and the dashboard's Task registry panel (it mirrors `TaskRegistry`, `TaskEntry`, `FieldDoc` and the write results in `web/src/lib/api.ts`), checked by `test_task_registry_contract`. The Resilience panel's event grammar is not a fixture: the test reads it from the panel's source, so the event text and the parser change together.
 - **Known bugs are strict xfails that name the fixing item**, a v0.5 work item (none today: `API-VALIDATE-NORMALIZE` removed its four and `TASK-COMPARATORS` its one). When the fix lands the test passes, strict mode turns that into a failure, and the fix removes the marker in the same change. Write the mark literally (`@pytest.mark.xfail(strict=True, reason=...)`, or `marks=pytest.mark.xfail(...)` in a `pytest.param`): the traceability scan reads marks from the source, so a mark held in a variable would make an xfail count as proof.
 - Cost assertions are token-exact: each model gets distinct token counts, and the expected cost is built from `Settings.price(...)`, so a term billed with the wrong tokens, price or multiplicity fails.
-- The dashboard's rendering is still checked by hand ([web/CLAUDE.md](../web/CLAUDE.md)); `test_stats_contract` proves the data it renders. FR-7.6 (light and dark mode, phone width) stays a manual check.
+- The dashboard's rendering is still checked by hand ([web/AGENTS.md](../web/AGENTS.md)); `test_stats_contract` proves the data it renders. FR-7.6 (light and dark mode, phone width) stays a manual check.
 
 ## Simulation methodology
 
@@ -1759,7 +1759,7 @@ Simulation, mock models ([ADR 0032](adr/0032-label-free-drift-alarm.md)). With t
 
 The reference run (seed 7, with the corrupted v3) alarms on v1 on day 5 as well; the corrupted v3 is no traffic change and raises none (its rollback is the audits' job). At 600 requests a day seeds 7 and 11 do not alarm within two days of the launch, and the mixed and research workloads (seed 7, 1,500 a day) raise none in 8 days: power depends on the volume per stream and on how far confidence falls.
 
-The ticket numbers above are the same as in v0.1. Adding the research world did not change the random draws for tickets ([sim/CLAUDE.md](../sim/CLAUDE.md)).
+The ticket numbers above are the same as in v0.1. Adding the research world did not change the random draws for tickets ([sim/AGENTS.md](../sim/AGENTS.md)).
 
 ### The teacher watch (10 days, 2,000/day, ticket workload, launch on day 5)
 
@@ -1897,14 +1897,14 @@ The rules: floats agree within a relative 1e-9 (an index may add the same number
 
 ## Traceability
 
-[REQUIREMENTS.md](REQUIREMENTS.md) maps every requirement to the code that implements it and the tests that prove it. `scripts/reqtrace.py` generates it (`make trace`) and checks it (`python scripts/reqtrace.py --check`, part of `make lint` and a CI step after pytest). It uses only the standard library, reads the PRD, CLAUDE.md and the tests with regular expressions and `ast`, and finishes in about half a second.
+[REQUIREMENTS.md](REQUIREMENTS.md) maps every requirement to the code that implements it and the tests that prove it. `scripts/reqtrace.py` generates it (`make trace`) and checks it (`python scripts/reqtrace.py --check`, part of `make lint` and a CI step after pytest). It uses only the standard library, reads the PRD, AGENTS.md and the tests with regular expressions and `ast`, and finishes in about half a second.
 
 Sources of truth:
 
 | Source | What it holds |
 |---|---|
 | [PRD.md](PRD.md) | FR, NFR and SM rows (id, text, Status) and the US stories. Statuses follow the grammar in [PRD §6](PRD.md#6-functional-requirements) |
-| [CLAUDE.md](../CLAUDE.md) `## Invariants` | INV-n is the list number, so invariants are never renumbered |
+| [AGENTS.md](../AGENTS.md) `## Invariants` | INV-n is the list number, so invariants are never renumbered |
 | `@pytest.mark.req("FR-2.1", "INV-7")` in `tests/` | Which tests prove which ids. A module- or class-level `pytestmark` works too. Registered in `pyproject.toml`, and `--strict-markers` makes a misspelled marker an error |
 | `CODE` in `scripts/reqtrace.py` | Where each done requirement and each invariant lives: `ratchet.router:Ratchet._sample` (imported and resolved) or a repo path for UI, shell and Docker files |
 | `EXEMPT` in `scripts/reqtrace.py` | Requirements checked outside the offline suite: `manual` (the dashboard UI, the CI simulation smoke test) or `live` (needs Nebius, a GPU or a real key), each with the file that holds the check |
@@ -1922,12 +1922,12 @@ The check fails when:
 | (f) | An `untested (live)` row has no `live` exemption, or no offline test and is not a known gap |
 | (g) | A `Not met` metric has no strict-xfail test (so the test fails loudly once the target is met) |
 | (h) | `docs/REQUIREMENTS.md` differs from a fresh render |
-| (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md) or from `config.KNOWN_ENV` (or `KNOWN_ENV` lists one nothing reads, `rule_env_known`); or an "N tests" claim in `CLAUDE.md`, `tests/CLAUDE.md`, this file, `README.md`, or `DEPLOYMENT.md` differs from the parametrize-expanded count |
+| (i) | A gateway route (from `ratchet.gateway.app.routes`, imported in mock mode) is missing from [API.md](API.md); an environment variable read under `ratchet/` is missing from [CONFIGURATION.md](CONFIGURATION.md) or from `config.KNOWN_ENV` (or `KNOWN_ENV` lists one nothing reads, `rule_env_known`); or an "N tests" claim in `AGENTS.md`, `tests/AGENTS.md`, this file, `README.md`, or `DEPLOYMENT.md` differs from the parametrize-expanded count |
 | (j) | An SM row's Target in PRD §8.1 differs from `ratchet.kpis.SM_TARGETS` (operator, number or unit), has no entry there, or does not parse; or `SM_TARGETS` lists a metric the PRD does not have |
 
 To change behaviour:
 
-1. Update or add the PRD row (or the invariant in CLAUDE.md) in the same commit.
+1. Update or add the PRD row (or the invariant in AGENTS.md) in the same commit.
 2. Mark the test that proves it with `@pytest.mark.req("FR-a.b")`. If the id was a known gap, delete it from `KNOWN_GAPS`.
 3. Add a `CODE` entry for a new done requirement or invariant. Something that can only be checked by hand or live gets an `EXEMPT` entry with the file that holds the check; an `untested (live)` row also needs an offline test.
 4. Run `make trace` and commit `docs/REQUIREMENTS.md`, then `make lint test`.

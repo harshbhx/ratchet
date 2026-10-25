@@ -2,7 +2,7 @@
 
 Ratchet is a gateway that sits between your app and a large "teacher" model. A small "student" model, NVIDIA's open Nano base with a LoRA adapter you own, answers each request first. If it is unsure, the request goes to the teacher. Every teacher answer is stored with its license, and every night a new student is trained on those answers and released through a series of safety gates.
 
-This page describes the code in `ratchet/` as of v0.5.0 (which includes the work listed in [CLAUDE.md](../CLAUDE.md#current-status-oct-25-2026)). Product context is in [PRD.md](PRD.md); the reasoning behind each choice is in the [ADRs](adr/README.md).
+This page describes the code in `ratchet/` as of v0.5.0 (which includes the work listed in [AGENTS.md](../AGENTS.md#current-status-oct-25-2026)). Product context is in [PRD.md](PRD.md); the reasoning behind each choice is in the [ADRs](adr/README.md).
 
 Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.md); FR-, NFR- and INV- ids are requirement and invariant ids ([REQUIREMENTS.md](REQUIREMENTS.md)). A one-page overview is in [README.md](../README.md).
 
@@ -86,7 +86,7 @@ Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written 
 | `ratchet/web/` | `dist/` (the committed build of the React app in `web/`) and the hand-written fallback pages `landing.html` and `scout.html`, served at `/lite*` and when the build is missing |
 | `sim/` | Synthetic tickets, the mock research world (`research.py`), the generic mock world for every other request (`generic.py`: free text, schema instances, tool calls; [ADR 0041](adr/0041-generic-mock-world.md)), workloads (`world.py`), mock teacher/student for the offline simulation and tests |
 
-The table lists the main modules. Every module is listed in the repo map in [CLAUDE.md](../CLAUDE.md#repo-map).
+The table lists the main modules. Every module is listed in the repo map in [AGENTS.md](../AGENTS.md#repo-map).
 
 There are two runtime modes, chosen by `RATCHET_MODE`:
 

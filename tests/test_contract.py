@@ -1000,8 +1000,8 @@ def test_student_serving_kinds_match_the_ui(gw):
 
 
 def _invariants() -> dict[int, str]:
-    """CLAUDE.md's numbered invariants: number -> its text."""
-    text = (REPO / "CLAUDE.md").read_text(encoding="utf-8").split("## Invariants", 1)[1].split("\n## ", 1)[0]
+    """AGENTS.md's numbered invariants: number -> its text."""
+    text = (REPO / "AGENTS.md").read_text(encoding="utf-8").split("## Invariants", 1)[1].split("\n## ", 1)[0]
     return {int(n): body for n, body in re.findall(r"^(\d+)\. (.+)$", text, re.M)}
 
 

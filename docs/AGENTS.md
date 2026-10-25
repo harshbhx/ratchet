@@ -1,4 +1,4 @@
-# CLAUDE.md: `docs/`
+# AGENTS.md: `docs/`
 
 Index: [docs/README.md](README.md). Product docs (PRD, business, competitive analysis, roadmap, glossary) and technical docs (architecture, API, configuration, Scout, deployment, demo VM, runbook, threat model, testing, ADRs).
 

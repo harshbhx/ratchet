@@ -33,7 +33,7 @@ ADR 0024 had reserved `RATCHET_DB_SYNC` for the WAL journal (default `FULL`, tod
 - Negative: with `NORMAL`, a power cut or an operating-system crash can lose the last commits (never corrupt the file). `FULL` restores per-commit durability at the old cost.
 - Negative: WAL needs shared memory, so every process that opens the ledger must run on the same host, with the file on a local disk (never a network or bucket mount; use `FULL` there). Backups must use SQLite's backup API, not a file copy, and a restore must remove the old `-wal` and `-shm` files first (RUNBOOK, DEPLOY_NEBIUS_VM).
 - Negative: a rollback decided by the request path can wait up to `RATCHET_TICK_INTERVAL_S`, and a dashboard can be up to `RATCHET_STATS_TTL_S` behind.
-- Negative: the caches are per process and rely on rules: rows are only appended to `requests` and `examples` in the normal course (ids in commit order); an example's hash is rewritten in place only through the writer's connection; ledger writes commit at once. Other processes' writes are seen through `PRAGMA data_version` and row counts. `ratchet/CLAUDE.md` lists the rules.
+- Negative: the caches are per process and rely on rules: rows are only appended to `requests` and `examples` in the normal course (ids in commit order); an example's hash is rewritten in place only through the writer's connection; ledger writes commit at once. Other processes' writes are seen through `PRAGMA data_version` and row counts. `ratchet/AGENTS.md` lists the rules.
 - The reference simulation and the three pinned workloads are unchanged: the tallies give the same numbers as the aggregates, mock mode keeps a tick per request and fresh stats, and the new stats keys are not pinned.
 
 ## Alternatives considered

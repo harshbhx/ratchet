@@ -1,4 +1,4 @@
-# CLAUDE.md: `web/` (React app)
+# AGENTS.md: `web/` (React app)
 
 The UI for `/` (the story), `/scout` and `/dashboard`. Vite 8, React 19, TypeScript, Tailwind v4, motion, lucide-react, recharts, react-router v8. Read [DESIGN.md](DESIGN.md) before changing anything visual.
 

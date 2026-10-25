@@ -7,7 +7,7 @@
 
 Every escalated or audited request becomes a training example: the request text and the teacher's answer are stored in `examples`, written to `train.jsonl` in the bucket, and trained into a LoRA adapter. Adapters can memorise what they are trained on, so a customer's email address or card number in one support ticket can come back out of the student for someone else. The PRD (FR-4.7, R9) and the threat model (T4) planned "Presidio redaction before storing examples".
 
-Presidio finds names and addresses with a spaCy NER model. That brings a large dependency (about 500 MB with a language model), slower startup, and per-request latency on the request path, which `ratchet/CLAUDE.md` asks us to keep free of slow work. Most of the identifiers that do real harm in support and agent traffic (emails, phone numbers, card numbers, bank accounts, national ID numbers, IP addresses, leaked API keys) have fixed formats, and several have checksums.
+Presidio finds names and addresses with a spaCy NER model. That brings a large dependency (about 500 MB with a language model), slower startup, and per-request latency on the request path, which `ratchet/AGENTS.md` asks us to keep free of slow work. Most of the identifiers that do real harm in support and agent traffic (emails, phone numbers, card numbers, bank accounts, national ID numbers, IP addresses, leaked API keys) have fixed formats, and several have checksums.
 
 ## Decision
 

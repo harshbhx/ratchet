@@ -21,6 +21,7 @@ evidence/live/[0-9]*T*Z/
 # Local tool state and databases
 .mcp.json
 .claude/
+CLAUDE.md
 .env.*
 !.env.example
 *.db-wal

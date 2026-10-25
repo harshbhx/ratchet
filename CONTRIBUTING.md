@@ -16,7 +16,7 @@ No API keys or GPUs are needed for development. Live mode needs a Nebius Token F
 
 ## Ground rules
 
-Read [CLAUDE.md](CLAUDE.md) first. The invariants there are non-negotiable, especially:
+Read [AGENTS.md](AGENTS.md) first. The invariants there are non-negotiable, especially:
 
 - Only teachers whose licenses allow distillation (`ratchet/licenses.py`).
 - Never train on the student's own outputs.

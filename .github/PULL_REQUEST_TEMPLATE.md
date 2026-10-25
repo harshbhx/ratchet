@@ -12,7 +12,7 @@
 
 - [ ] Docs updated (API.md / CONFIGURATION.md / ARCHITECTURE.md / RUNBOOK.md as relevant)
 - [ ] Schema change added to both `SCHEMA` and `MIGRATIONS`
-- [ ] No closed-model teacher added; invariants in CLAUDE.md still hold
+- [ ] No closed-model teacher added; invariants in AGENTS.md still hold
 - [ ] Simulation numbers labelled as simulation, and measured results traceable to a command in [docs/VERIFY.md](../docs/VERIFY.md)
 - [ ] If `web/` changed: `make web` was run and `ratchet/web/dist` is committed
 - [ ] No keys, tokens or personal data in the diff

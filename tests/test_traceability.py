@@ -1,6 +1,6 @@
 """The traceability check (scripts/reqtrace.py): PRD rows, invariants, code references and test markers stay in step.
 
-The repo tests run each rule on the real repo. The mini-world tests write a tiny PRD, CLAUDE.md and test file
+The repo tests run each rule on the real repo. The mini-world tests write a tiny PRD, AGENTS.md and test file
 to a temporary folder and check that each kind of mistake gives exactly one error, so messages stay actionable.
 """
 
@@ -248,7 +248,7 @@ class World:
         (root / "docs").mkdir(exist_ok=True)
         (root / "tests").mkdir(exist_ok=True)
         (root / "docs" / "PRD.md").write_text(self.prd, encoding="utf-8")
-        (root / "CLAUDE.md").write_text(self.claude, encoding="utf-8")
+        (root / "AGENTS.md").write_text(self.claude, encoding="utf-8")
         (root / "tests" / "test_mini.py").write_text(self.tests, encoding="utf-8")
         (root / "evidence.md").write_text("checked by hand\n", encoding="utf-8")
         return rq.load(root, code=self.code, exempt=self.exempt, known_gaps=self.gaps, initial_known_gaps=self.initial)
@@ -310,7 +310,7 @@ def test_mini_world_is_clean_and_renders(tmp_path):
     assert "| FR-1.1 | Answer requests | Done (v0.1) | `json:dumps` | `tests/test_mini.py::test_answers` | tested |" in md
     assert "## 6.2 Empty" in md and "No requirements in this section yet." in md
     assert "`tests/test_mini.py::test_next_thing` (xfail)" in md and "live check: `evidence.md`" in md
-    assert "[CLAUDE.md](../CLAUDE.md#invariants)" in md and "[PRD §6.1](PRD.md#61-gateway)" in md
+    assert "[AGENTS.md](../AGENTS.md#invariants)" in md and "[PRD §6.1](PRD.md#61-gateway)" in md
 
 
 @pytest.mark.parametrize(
@@ -438,7 +438,7 @@ def test_scan_reads_markers_and_counts_cases(tmp_path):
 
 
 def test_invariants_keep_their_list_numbers(tmp_path):
-    path = tmp_path / "CLAUDE.md"
+    path = tmp_path / "AGENTS.md"
     path.write_text("## Invariants\n\n1. One.\n2. Two\n   continues here.\n4. Four.\n\n## Next\n\n5. Not an invariant.\n")
     parsed = rq.parse_invariants(path, tmp_path)
     assert [r.id for r in parsed.reqs] == ["INV-1", "INV-2", "INV-4"]
@@ -449,7 +449,7 @@ def test_invariants_keep_their_list_numbers(tmp_path):
 def test_missing_sources_are_findings_not_crashes(tmp_path):
     ctx = rq.load(tmp_path, code={}, exempt={}, known_gaps=frozenset(), initial_known_gaps=frozenset())
     errors = rq.check(ctx, rq.RULES)
-    assert "docs/PRD.md: not found" in errors and "CLAUDE.md: not found" in errors
+    assert "docs/PRD.md: not found" in errors and "AGENTS.md: not found" in errors
     assert f"{rq.OUT} is missing; run python scripts/reqtrace.py" in errors
     assert f"{rq.API_DOC}: not found" in errors and f"{rq.CONFIG_DOC}: not found" in errors
 
@@ -459,7 +459,7 @@ def test_doc_rules_catch_drift(tmp_path, monkeypatch):
     ctx = world.load(tmp_path)
     (tmp_path / "docs" / "TESTING.md").write_text("| `tests/test_mini.py` | 3 |\n| **Total** | **4** |\n", encoding="utf-8")
     assert rq.rule_test_counts(ctx) == [
-        "CLAUDE.md:9: says 5 tests; the suite has 4",
+        "AGENTS.md:9: says 5 tests; the suite has 4",
         "docs/TESTING.md:1: says tests/test_mini.py has 3 tests; it has 4",
     ]
 

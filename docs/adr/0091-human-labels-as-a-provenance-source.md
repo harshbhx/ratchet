@@ -36,7 +36,7 @@ A correction is kept out, with the reason in the response and the verdict still 
 
 ## Consequences
 
-- Invariant 2 reads, amended (in CLAUDE.md): training targets are teacher answers or customer-attested human labels, never student outputs, and a verdict is never a label. The related amendments to invariants 1, 3, 10 and 16 are in CLAUDE.md too, with a new invariant 26 (human verdicts never promote or roll back a version).
+- Invariant 2 reads, amended (in AGENTS.md): training targets are teacher answers or customer-attested human labels, never student outputs, and a verdict is never a label. The related amendments to invariants 1, 3, 10 and 16 are in AGENTS.md too, with a new invariant 26 (human verdicts never promote or roll back a version).
 - A client with a key can now choose labels, not just prompts (threat model T24). Bounds: its own requests only, one stored correction per request (so the request quota bounds them), the task's spec, redaction, the opt-outs, and `RATCHET_FEEDBACK_CORRECTIONS=0` for deployments whose clients should not write labels. The golden set and the audited release gate still catch broad damage; an operator's import outranks any client.
 - The messages of a correction are the client's word: the request row holds no text to compare them with. Storing a keyed digest of every prompt was considered and rejected: it would fingerprint requests whose text is otherwise never kept (the opted-out ones), and it would not stop a client that can send any prompt anyway.
 - Human precision is a second, biased quality signal that operators see and get alerted on; the release gate does not read it.

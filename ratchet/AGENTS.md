@@ -1,4 +1,4 @@
-# CLAUDE.md: `ratchet/` (core package)
+# AGENTS.md: `ratchet/` (core package)
 
 ## Request path (`router.py`)
 
@@ -181,7 +181,7 @@ Text-to-SQL tasks (FR-2.56, [ADR 0055](../docs/adr/0055-sql-tasks-compared-by-ex
 
 `Runtime(settings, transports={"teacher": ..., "student": ..., "tavily": ...}, sleep=..., clock=..., wall_clock=...)` puts an `httpx.BaseTransport` under the live providers (the student's also carries adapter reloads), so tests (and later items) run live mode offline, and `sleep` replaces the teacher's waits between retries; any other transport key raises, and mock mode ignores both. `wall_clock` (default `time.time`) is the time of day Scout's guard, credit meter and judge sessions count UTC days by; the `tavily` transport goes under live mode's `TavilySearch` client. `clock` drives the student breakers, `rt.reloader` (`live.AdapterReloader`, live mode with a student endpoint only, else None; tests wait for it with `join(timeout)`) and the mock fleet's demo outage. With no student endpoint, the hosted fallback student gets its own client (on the teacher's transport) with the student's timeouts and no retries. A fallback teacher on another base URL (`RATCHET_TEACHER_FALLBACK_BASE`) gets its own client too, with the teacher's key, timeouts, retries and transport; on the teacher's base URL, `Ratchet` uses the teacher's client. The other live entry points take their network and commands the same way, as default arguments that production code never passes: `OpenAICompatProvider(transport=, sleep=, clock=, rng=)`, `live.load_adapter(client=)`, `NebiusTrainer(run=, http=)`, `live.reload_adapters(http=)`, `live.main(argv, provider_factory=, run=, http=)`, `scout.agents.http_caller(client=)` and the Scout CLI's `main(argv, client)`. `tests/test_live.py` uses them; keep new live code testable the same way.
 
-Pages: the React build in `web/dist` (source in `/web`, see [web/CLAUDE.md](../web/CLAUDE.md)) at `/`, `/scout` and `/dashboard`. The hand-written static pages (`web/landing.html`, `web/scout.html`, `dashboard.html`) are served at `/lite*` and as a fallback when the build is missing. Both are package data (`pyproject.toml`).
+Pages: the React build in `web/dist` (source in `/web`, see [web/AGENTS.md](../web/AGENTS.md)) at `/`, `/scout` and `/dashboard`. The hand-written static pages (`web/landing.html`, `web/scout.html`, `dashboard.html`) are served at `/lite*` and as a fallback when the build is missing. Both are package data (`pyproject.toml`).
 
 **OpenAI compatibility (`openai_compat.py`, [ADR 0012](../docs/adr/0012-openai-request-validation-and-error-envelope.md)).** Standard library only. `chat` is `async`: it checks the key, reads the body, and runs `_complete` (parse, validate, normalise, quota, cascade, response) in one worker thread with `anyio.to_thread.run_sync`, on the default pool sync routes use.
 

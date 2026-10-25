@@ -1,4 +1,4 @@
-# CLAUDE.md: `ratchet/nightschool/`
+# AGENTS.md: `ratchet/nightschool/`
 
 One night = `orchestrate.run_night(ledger, trainer, evaluator, gate, base_model)`:
 

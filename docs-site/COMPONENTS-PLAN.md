@@ -2,7 +2,7 @@
 
 A follow-up pass applies the components in [`README.md`](README.md#components) to the content pages once the docs branches
 are merged. This file says, page by page, what to add, where, and the exact MDX. Every number in a snippet below is already
-on that page or in the code (release gate defaults from `ratchet/release.py`, the test count from `CLAUDE.md`); keep it that
+on that page or in the code (release gate defaults from `ratchet/release.py`, the test count from `AGENTS.md`); keep it that
 way when a page changes. Do not invent numbers; a simulation number gets `tone="sim"`.
 
 ## Ground rules for the pass

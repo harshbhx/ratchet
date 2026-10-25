@@ -1,6 +1,6 @@
 /**
  * "Why it is different": six things the code does that a plain router or a distillation API does not, as data. Each
- * names the files that implement it and the invariant in CLAUDE.md that states it, so web/tests/why-model.test.mjs
+ * names the files that implement it and the invariant in AGENTS.md that states it, so web/tests/why-model.test.mjs
  * can hold the page to the repo: every file exists and every cited invariant says what the card says it says.
  * No JSX here, so the test can import it under Node.
  */
@@ -13,7 +13,7 @@ export interface WhyItem {
   body: string;
   /** Repo paths that implement it; each must exist. */
   files: string[];
-  /** The invariant's number in CLAUDE.md and the words its first sentence must contain. */
+  /** The invariant's number in AGENTS.md and the words its first sentence must contain. */
   invariant: { n: number; says: string } | null;
   /** Two thirds of a row on desktop. */
   wide: boolean;
