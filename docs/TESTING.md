@@ -88,6 +88,24 @@ Every test names the requirements it proves with `@pytest.mark.req`, and `tests/
 
 None of these touch Token Factory or a GPU. Live behaviour is checked with `scripts/day1_check.py` and the steps in [DEPLOYMENT.md](DEPLOYMENT.md#5-verification-after-deploy); `tests/test_live.py` runs the same code paths offline first.
 
+## What CI runs
+
+A push to `main` and a manual run (Actions, CI, Run workflow) run every check. A pull request runs only the checks for the areas it changed. The first job, `changes`, decides which (`.github/workflows/ci.yml`).
+
+| Area | Paths | Checks |
+|---|---|---|
+| backend | `ratchet/` (not `ratchet/web/dist/`), `sim/`, `tests/`, `scripts/`, any `.py` file, `pyproject.toml`, `Makefile`, `Dockerfile`, `.env.example` | `test`: ruff, pytest on Python 3.10 to 3.13 with `--runslow` (coverage on 3.12), reqtrace, the config check, the reference workloads, the simulation smoke test. Also `docs`, `docker`, `evidence` and `links`, which read the code |
+| web | `web/`, `ratchet/web/`, `ratchet/dashboard.html` | `web`: type check, `npm test`, build, the committed build is current. The Python tests that read the pages |
+| docs | `docs/`, `docs-site/`, any `.md` file, `design/`, `LICENSE`, `NOTICE`, `CITATION.cff` | `docs`, `links`. The Python tests that read the docs |
+| evidence | `evidence/`, the exam and tool-calling scripts, the exam and tool-calling data files in `web/src/data/` and `docs-site/src/data/` | `evidence`. The Python tests that read `evidence/` |
+| deploy | `deploy/`, `Dockerfile`, `.dockerignore`, `.github/` | `docker`, `workflows` (every workflow file parses). The Python tests that read the deploy kit and the workflows |
+
+- `secrets` always runs.
+- A change to `ci.yml` itself, or to a file no area names, runs everything.
+- A deleted or renamed file also runs `links`, since a link may point at it.
+- Without a backend change, reqtrace and the Python tests for the other areas run once, on Python 3.12, in the `area-tests` job. With one, the full matrix runs them. The lists of those tests are at the top of `ci.yml` (`AREA_TESTS_*`), and the matrix checks that every test they name still exists.
+- `ci-ok` fails when any job failed or was cancelled. A skipped job counts as passed, except on a full run, where every job must pass. It is the one check to require.
+
 ## What each test covers
 
 ### `tests/test_core.py`

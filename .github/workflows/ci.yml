@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,8 +14,171 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The Python tests that read each area's files (found by tracing which files every test opens), run by `area-tests` when
+# the full matrix does not run. The matrix checks on every backend change that each name still exists.
+env:
+  AREA_TESTS_WEB: >-
+    tests/test_contract.py
+    tests/test_docs_claims.py
+    tests/test_judges_page.py
+    tests/test_exam_numbers.py
+    tests/test_scout.py::test_react_app_is_served_with_lite_fallback
+    tests/test_scout.py::test_gateway_scout_routes
+    tests/test_security.py::test_private_live_dashboard_needs_an_admin_or_dashboard_key
+    tests/test_security.py::test_security_headers_on_every_response
+    tests/test_system.py::test_gateway_openai_shape_and_demo_flow
+    tests/test_observability.py::test_request_id_echoed_and_client_id_stored
+  AREA_TESTS_DOCS: >-
+    tests/test_docs_claims.py
+    tests/test_traceability.py
+    tests/test_contract.py
+    tests/test_exam_numbers.py
+    tests/test_toolcall_results.py
+    tests/test_security.py::test_every_route_has_an_access_level
+    tests/test_live.py::test_deploy_scripts_never_say_cost_nothing
+    tests/test_live.py::test_deploy_variables_are_listed_and_documented
+  AREA_TESTS_EVIDENCE: >-
+    tests/test_exam_numbers.py
+    tests/test_toolcall_results.py
+    tests/test_judges_page.py
+    tests/test_live.py::test_liverun_markdown_names_a_serverless_endpoint_only_when_one_was_used
+  AREA_TESTS_DEPLOY: >-
+    tests/test_live.py
+    tests/test_nebius_script.py
+    tests/test_watch.py
+    tests/test_docs_claims.py
+    tests/test_contract.py::test_story_trust_claims_match_code
+    tests/test_readiness.py::test_known_env_covers_every_variable_the_deploy_kit_sets
+    tests/test_readiness.py::test_update_script_checks_the_config_and_waits_for_readyz
+    tests/test_nightschool.py::test_training_rows_carry_reasoning_off
+    tests/test_nightschool.py::test_training_prompt_is_a_prefix_and_matches_serving
+    tests/test_nightschool.py::test_dockerfile_is_pinned
+    tests/test_nightschool.py::test_train_records_library_versions
+    tests/test_cost.py::test_deploy_script_records_uptime_and_never_fails_on_it
+
 jobs:
+  changes:
+    # Which areas a change touched, so a pull request runs only the checks for those areas (docs/TESTING.md#what-ci-runs).
+    # A push to main, a manual run, a change to this file and a file no area names run everything.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read  # the filter lists a pull request's files through the API
+    env:
+      FULL: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    outputs:
+      full: ${{ steps.areas.outputs.full }}
+      backend: ${{ steps.areas.outputs.backend }}
+      web: ${{ steps.areas.outputs.web }}
+      docs: ${{ steps.areas.outputs.docs }}
+      evidence: ${{ steps.areas.outputs.evidence }}
+      deploy: ${{ steps.areas.outputs.deploy }}
+      removed: ${{ steps.areas.outputs.removed }}
+    steps:
+      # Only a push to another branch compares with git; a pull request's files come from the API.
+      - uses: actions/checkout@v7
+        if: env.FULL != 'true' && github.event_name != 'pull_request'
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        id: filter
+        if: env.FULL != 'true'
+        with:
+          # A file counts for an area when it matches one of the area's patterns and none of its '!' patterns.
+          predicate-quantifier: some-with-excludes
+          filters: |
+            ci:
+              - '.github/workflows/ci.yml'
+            backend:
+              - 'ratchet/**'
+              - '!ratchet/web/dist/**'
+              - 'sim/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - '**/*.py'
+              - 'pyproject.toml'
+              - 'Makefile'
+              - 'Dockerfile'
+              - '.env.example'
+            web:
+              - 'web/**'
+              - 'ratchet/web/**'
+              - 'ratchet/dashboard.html'
+            docs:
+              - 'docs/**'
+              - 'docs-site/**'
+              - '**/*.md'
+              - 'design/**'
+              - 'CITATION.cff'
+              - 'LICENSE'
+              - 'NOTICE'
+            evidence:
+              - 'evidence/**'
+              - 'scripts/text2sql/**'
+              - 'scripts/measure_adapter.py'
+              - 'scripts/toolcall_results.py'
+              - 'scripts/toolcall_results_svg.py'
+              - 'scripts/regen_sim_reference.py'
+              - 'web/src/data/exams.json'
+              - 'web/src/data/toolcall.json'
+              - 'docs-site/src/data/exams.json'
+            deploy:
+              - 'deploy/**'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - '.github/**'
+            removed:
+              - deleted: '**'
+              - '!ratchet/web/dist/assets/**'
+            other:
+              - '**'
+              - '!ratchet/**'
+              - '!sim/**'
+              - '!tests/**'
+              - '!scripts/**'
+              - '!**/*.py'
+              - '!pyproject.toml'
+              - '!Makefile'
+              - '!Dockerfile'
+              - '!.env.example'
+              - '!web/**'
+              - '!docs/**'
+              - '!docs-site/**'
+              - '!**/*.md'
+              - '!design/**'
+              - '!CITATION.cff'
+              - '!LICENSE'
+              - '!NOTICE'
+              - '!evidence/**'
+              - '!deploy/**'
+              - '!.dockerignore'
+              - '!.github/**'
+      - id: areas
+        env:
+          CI_FILE: ${{ steps.filter.outputs.ci }}
+          OTHER: ${{ steps.filter.outputs.other }}
+          BACKEND: ${{ steps.filter.outputs.backend }}
+          WEB: ${{ steps.filter.outputs.web }}
+          DOCS: ${{ steps.filter.outputs.docs }}
+          EVIDENCE: ${{ steps.filter.outputs.evidence }}
+          DEPLOY: ${{ steps.filter.outputs.deploy }}
+          REMOVED: ${{ steps.filter.outputs.removed }}
+        run: |
+          full=false
+          if [ "$FULL" = true ] || [ "$CI_FILE" = true ] || [ "$OTHER" = true ]; then full=true; fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          printf '%s\n\n| Area | Changed |\n|---|---|\n' "Full run: $full ($GITHUB_EVENT_NAME)" >> "$GITHUB_STEP_SUMMARY"
+          for area in backend web docs evidence deploy removed; do
+            name=${area^^}
+            value=${!name:-false}
+            if [ "$full" = true ]; then value=true; fi
+            if [ "$value" != true ]; then value=false; fi
+            echo "$area=$value" >> "$GITHUB_OUTPUT"
+            echo "| $area | $value |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
   test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60  # a hung job stops here with its stacks (pytest faulthandler_timeout) instead of running for 6 hours
     strategy:
@@ -46,8 +210,62 @@ jobs:
         run: python scripts/reference_check.py
       - name: Simulation smoke test
         run: python -m sim.simulate --days 6 --requests 800 --bad-deploy-version 3 --out /tmp/sim.json
+      - name: Every test the area selections name still exists (AREA_TESTS_* above)
+        if: matrix.python == '3.12'
+        run: |
+          read -ra sel <<< "$AREA_TESTS_WEB $AREA_TESTS_DOCS $AREA_TESTS_EVIDENCE $AREA_TESTS_DEPLOY"
+          pytest -q --collect-only "${sel[@]}" | tail -n 1
+
+  area-tests:
+    # Without a backend change the full matrix does not run; these are the tests that read the changed areas' files, on one
+    # Python version. A backend change runs the matrix instead, which includes all of them.
+    needs: changes
+    if: >-
+      needs.changes.outputs.backend != 'true' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.docs == 'true' ||
+      needs.changes.outputs.evidence == 'true' || needs.changes.outputs.deploy == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      # The traceability map names files in web/, deploy/ and docs/, so every area runs it.
+      - name: Requirements traceability
+        run: python scripts/reqtrace.py --check
+      - name: Tests that read the changed areas' files
+        env:
+          WEB: ${{ needs.changes.outputs.web }}
+          DOCS: ${{ needs.changes.outputs.docs }}
+          EVIDENCE: ${{ needs.changes.outputs.evidence }}
+          DEPLOY: ${{ needs.changes.outputs.deploy }}
+        run: |
+          sel=()
+          for area in WEB DOCS EVIDENCE DEPLOY; do
+            list="AREA_TESTS_$area"
+            if [ "${!area}" = true ]; then
+              read -ra more <<< "${!list}"
+              sel+=("${more[@]}")
+            fi
+          done
+          mapfile -t sel < <(printf '%s\n' "${sel[@]}" | sort -u)
+          # A test id is left out when its whole file is selected too.
+          declare -A whole=()
+          for t in "${sel[@]}"; do [[ $t == *::* ]] || whole[$t]=1; done
+          run=()
+          for t in "${sel[@]}"; do
+            if [[ $t == *::* && -n ${whole[${t%%::*}]:-} ]]; then continue; fi
+            run+=("$t")
+          done
+          echo "pytest -q ${run[*]}"
+          pytest -q "${run[@]}"
 
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -68,6 +286,9 @@ jobs:
         run: git diff --stat --exit-code -- ../ratchet/web/dist || (echo "Run 'make web' and commit ratchet/web/dist" && exit 1)
 
   docs:
+    # The reference data is exported from the code, so a backend change runs this job too.
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -91,14 +312,52 @@ jobs:
         working-directory: docs-site
 
   docker:
+    # The image holds the package (ratchet/, sim/, pyproject.toml), so a backend change builds it too.
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true' || needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - run: docker build -t ratchet-gateway .
 
+  workflows:
+    # Every YAML file under .github/ must parse, and each workflow needs a trigger and jobs.
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install "PyYAML==6.0.2"
+      - name: Workflow files parse
+        run: |
+          python - <<'EOF'
+          import pathlib, sys, yaml
+          files = sorted(pathlib.Path(".github").rglob("*.yml")) + sorted(pathlib.Path(".github").rglob("*.yaml"))
+          bad = 0
+          for path in files:
+              try:
+                  doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+              except yaml.YAMLError as exc:
+                  print(f"::error file={path}::{exc}")
+                  bad += 1
+                  continue
+              # YAML 1.1 reads the key `on` as true.
+              if path.parent.name == "workflows" and not (isinstance(doc, dict) and "jobs" in doc and (True in doc or "on" in doc)):
+                  print(f"::error file={path}::no trigger or no jobs")
+                  bad += 1
+          print(f"{len(files)} files checked, {bad} bad")
+          sys.exit(1 if bad else 0)
+          EOF
+
   evidence:
     # Recomputes the headline results from the saved answers in evidence/ (docs/VERIFY.md). No network, no secrets.
     name: evidence
+    needs: changes
+    if: needs.changes.outputs.evidence == 'true' || needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -129,6 +388,9 @@ jobs:
 
   links:
     # Fails only on a broken repo-internal link or a 404 from our own domains; other sites only warn (scripts/check_links.py).
+    # Runs for a docs or backend change and for any deleted or renamed file (a link may point at it).
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.removed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -145,6 +407,7 @@ jobs:
 
   secrets:
     # Fails on anything shaped like a credential, in the tree or anywhere in history (scripts/scan_secrets.py). Never prints a value.
+    # Always runs: it is quick, and a credential can land in any file.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -155,3 +418,28 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/scan_secrets.py --history
+
+  ci-ok:
+    # One stable check name to require: it fails when a job failed or was cancelled. A job its areas did not need is skipped,
+    # which counts as passed, except on a full run (main, a manual run), where every job must have run and passed.
+    if: always()
+    needs: [changes, test, area-tests, web, docs, docker, workflows, evidence, links, secrets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job that ran passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          FULL: ${{ needs.changes.outputs.full }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if [ "$FULL" = true ]; then
+            # area-tests is the only job a full run skips on purpose: the matrix runs every test it would.
+            bad=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.key != "area-tests" and .value.result != "success") | .key] | join(", ")')
+          else
+            bad=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key] | join(", ")')
+          fi
+          if [ -n "$bad" ]; then
+            echo "::error::Not passed: $bad"
+            exit 1
+          fi
