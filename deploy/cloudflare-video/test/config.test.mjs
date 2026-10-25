@@ -1,7 +1,12 @@
-// The video link's deploy settings: the Wrangler config and the deploy workflow. Run with `npm test`.
+// The video link's deploy settings (the Wrangler config, the deploy workflow) and every link to it in the repository. Run with `npm test`.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { register } from "node:module";
 import { test } from "node:test";
+
+register("./hooks.mjs", import.meta.url);
+const { SOURCES } = await import("../src/index.ts");
+const ROOT = new URL("../../../", import.meta.url);
 
 const config = JSON.parse(readFileSync(new URL("../wrangler.json", import.meta.url), "utf8"));
 const workflow = readFileSync(new URL("../../../.github/workflows/deploy-cloudflare-video.yml", import.meta.url), "utf8");
@@ -55,4 +60,49 @@ test("the deploy workflow is manual, confirmed, applies migrations, and its smok
     assert.match(call, /--head\b/, call);
   }
   assert.match(workflow, /ratchet-video-smoke\/1/);
+});
+
+/** Every file under `dir` (relative to the repository) whose name matches `re`, without node_modules or build output. */
+function files(dir, re) {
+  let names;
+  try {
+    names = readdirSync(new URL(dir, ROOT), { recursive: true });
+  } catch {
+    return [];
+  }
+  return names
+    .map((n) => String(n).replaceAll("\\", "/"))
+    .filter((n) => re.test(n) && !/(^|\/)(node_modules|dist|\.astro)\//.test(n))
+    .map((n) => `${dir}${n}`);
+}
+
+test("every link to the counter in the repository names a source it counts, and each entry point has its own", () => {
+  const scanned = [
+    "README.md",
+    "web/public/_worker.js",
+    "docs-site/public/_redirects",
+    ...files("docs/", /\.md$/),
+    ...files("docs-site/src/content/", /\.mdx?$/),
+    ...files("web/src/", /\.(ts|tsx|json)$/),
+    ...files("deploy/cloudflare-live/src/", /\.ts$/),
+    ...files("deploy/cloudflare/src/", /\.ts$/),
+  ];
+  const found = new Map();
+  for (const rel of scanned) {
+    const text = readFileSync(new URL(rel, ROOT), "utf8");
+    const tags = [
+      ...[...text.matchAll(/video\.ratchet\.dualmindlab\.tech\/\?from=([A-Za-z0-9_-]+)/g)].map((m) => m[1]),
+      ...[...text.matchAll(/videoHref\([^,()]+,\s*"([^"]+)"\)/g)].map((m) => m[1]),
+    ];
+    for (const tag of tags) {
+      assert.ok(SOURCES.includes(tag), `${rel}: ?from=${tag} is not in the counter's allowlist (it would count as "other")`);
+      found.set(tag, [...(found.get(tag) ?? []), rel]);
+    }
+  }
+  const has = (tag, rel) => (found.get(tag) ?? []).includes(rel);
+  assert.ok(has("site", "web/public/_worker.js"), "the story site's /video");
+  assert.ok(has("live", "deploy/cloudflare-live/src/video.ts"), "the live demo's /video");
+  assert.ok(has("demo", "deploy/cloudflare/src/video.ts"), "the simulation's /video");
+  assert.ok(has("docs", "docs-site/public/_redirects"), "the docs site's /video");
+  assert.ok(has("readme", "README.md"), "the README's video links");
 });

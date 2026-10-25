@@ -324,8 +324,11 @@ jobs:
     # The video link Worker (deploy/cloudflare-video, in the deploy area like every file under deploy/ and .github/): its Node tests
     # (redirect, allowlist, bot detection, nothing identifying stored, stats auth, email cap, the cron, D1 failures, against a fake D1
     # that runs the real migrations), its config and deploy workflow checks, the type check and a dry-run bundle. No network, no secrets.
+    # Also the /video entry points' tests in web/tests (the Pages proxy, the live and simulation Workers), which need no packages, so a
+    # change to deploy/cloudflare-live or deploy/cloudflare runs them too; and a web or docs change runs this job, since its tests
+    # check every link to the counter in web/, docs/, docs-site/ and the README.
     needs: changes
-    if: needs.changes.outputs.deploy == 'true'
+    if: needs.changes.outputs.deploy == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -341,6 +344,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Video link Worker tests (Node test runner)
         run: npm test
+      - name: The /video entry points, the Pages proxy and the live Worker's waking answers (web/tests, no packages needed)
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning --test ../../web/tests/video-links.test.mjs ../../web/tests/worker.test.mjs ../../web/tests/live-waking.test.mjs
       - name: Type check
         run: npm run typecheck
       - name: Wrangler config and bundle (dry run, nothing is deployed)
