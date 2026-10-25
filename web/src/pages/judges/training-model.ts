@@ -1,7 +1,7 @@
 /**
- * The live training panel's pure logic: turn the status a Modal training job reports into what the panel shows, or into
+ * The live training panel's pure logic: turn the status a training job reports into what the panel shows, or into
  * nothing. The panel stays hidden unless a run is under way or ended recently, so a visitor never sees an empty widget.
- * The status service is the small read-only Modal app in the training job's folder; it holds no secrets.
+ * The status service is a small read-only app in the training job's folder; it holds no secrets.
  */
 
 export const STATUS_URL = "https://creharsh--ratchet-status-status.us-east.modal.run";
@@ -47,7 +47,7 @@ export interface RunView {
 }
 
 const PHASE: Record<string, string> = { starting: "Starting up", training: "Training", exam: "Answering the exam", done: "Finished" };
-/** Modal list price per hour for the training job's T4, 2 cores and 16 GiB (the job's own constant). */
+/** List price per hour for the training job's GPU, 2 cores and 16 GiB (the job's own constant). */
 const RATE_PER_H = 0.59 + 2 * 0.0473 + 16 * 0.008;
 
 /** What to show for a status, or null when there is nothing worth showing. */

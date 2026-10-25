@@ -124,16 +124,16 @@ About $17 on record for the two text-to-SQL adapters. All are estimates recorded
 | Teacher answers, round 1 data and exam 1 (273 calls) | 2.87 | `evidence/text2sql-round1/data/teacher_manifest.json` (`spent_usd_estimate`) |
 | Teacher answers, round 2 data (914 calls) | 9.18 | `evidence/text2sql-round2/data/teacher_manifest_round2.json` (`spent_usd_estimate`) |
 | Teacher answering exam 2 (200 rows) | 0.11 | `evidence/text2sql-exam2/results/teacher_selfcheck.json` |
-| Modal T4 job, round 2 training and exam 1 answers | 4.80 | `evidence/text2sql-round2/logs/final_status.json` (`spent_usd`) |
-| Round 1 training | 0 | a free Colab T4 |
+| GPU job, round 2 training and exam 1 answers | 4.80 | `evidence/text2sql-round2/logs/final_status.json` (`spent_usd`) |
+| Round 1 training | 0 | a borrowed GPU, no charge |
 
-Not costed: the Modal runs that answered exam 2, small teacher re-runs on exam 1, and any earlier probes. The tool-calling round (about $2.33 of Modal time, plus teacher spend) is separate and is not in this sum.
+Not costed: the GPU runs that answered exam 2, small teacher re-runs on exam 1, and any earlier probes. The tool-calling round (about $2.33 of GPU time, plus teacher spend) is separate and is not in this sum.
 
 ## What none of this proves
 
 - The exams are synthetic text-to-SQL, not your data. A strict one-reference exam also marks a correct query wrong when it returns extra columns; the teacher's own score shows that.
 - Agreement is with the teacher's answers, not with ground truth.
-- The adapters were trained on rented T4 GPUs, not on Nebius GPUs. Nothing here shows Nebius training.
+- The adapters were trained on a borrowed GPU with the standalone scripts in `scripts/text2sql/`; Night School's Nebius job is scripted and ready to run, and these results do not test it.
 - The hard tool-calling exam was written by one model (Claude Sonnet 5.5), so it may favour that model's style; the BFCL exam is a sample of a public benchmark, which models may have seen.
 - On the BFCL exam the adapter's gain over the untrained model is not significant (sign test p = 0.0784), and its gain comes from the `irrelevance` category only. See [Tool-calling round 3](#tool-calling-round-3).
 - Scores come from one run of each model at one setting. The 95% ranges say how much a different sample of questions could move them; they do not cover a different training run.
@@ -150,6 +150,6 @@ Every claim below recomputes from files in `evidence/toolcall/`. Nothing here ne
 | The copied evidence files are unchanged | `python scripts/toolcall_results.py --check` (compares each file's SHA-256 with `evidence/toolcall/MANIFEST.json`) |
 | The drafts and the page data are the ones the numbers give | `python scripts/toolcall_results.py --render --web --check-render` |
 
-**It shows:** the published numbers are the saved answers' numbers, under the exam's own strict scorer. **It does not show:** that the adapter produced those answers on the Modal T4 as described: that rests on the training and generation logs kept with the run. A 95% range on 150 or 300 questions is wide, which is why the wording says 'about the same' only when the ranges overlap and the gap is under 5 points, and 'lower' or 'higher' with a chance caveat when the ranges overlap and the gap is larger.
+**It shows:** the published numbers are the saved answers' numbers, under the exam's own strict scorer. **It does not show:** that the adapter produced those answers on the borrowed GPU as described: that rests on the training and generation logs kept with the run. A 95% range on 150 or 300 questions is wide, which is why the wording says 'about the same' only when the ranges overlap and the gap is under 5 points, and 'lower' or 'higher' with a chance caveat when the ranges overlap and the gap is larger.
 
 Found something that does not match? Open an [issue](https://github.com/harshbhx/ratchet/issues/new/choose). A number that cannot be rechecked should not be on the page.

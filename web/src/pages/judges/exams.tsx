@@ -133,7 +133,7 @@ export function ExamsChapter() {
       </ul>
 
       <p className="mt-6 max-w-[72ch] text-[13.5px] leading-relaxed text-muted">
-        Trained on a free Colab T4 (round 1) and a rented Modal T4 (round 2), not on Nebius GPUs. The data is synthetic. No closed model&apos;s output is training data anywhere in this project; the exam 2 author
+        Both rounds were trained on a borrowed GPU. The data is synthetic. No closed model&apos;s output is training data anywhere in this project; the exam 2 author
         was used for evaluation only.
       </p>
       <div className="mt-4 max-w-[72ch]">

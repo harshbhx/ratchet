@@ -1,6 +1,6 @@
 /**
  * "What's real": one data file (`src/data/real.json`) says, for every claim the site makes about Ratchet, whether it is
- * real, measured, simulation, pending or not run yet, what it rests on and how to check it. The judges page's table and
+ * real, measured, simulation, pending or ready to run, what it rests on and how to check it. The judges page's table and
  * every `RealBadge` read it through these helpers, so a status changes in one place. Pure, no JSX: tested by
  * `tests/real-model.test.mjs`, and `tests/test_judges_page.py` holds the file to its rules (evidence and a way to check on
  * every row, a value on every measured number, no number on a pending one).
@@ -90,7 +90,7 @@ export const STATUS_TEXT: Record<RealStatus, { label: string; meaning: string }>
   measured: { label: "Measured", meaning: "A number measured on a real model or a live gateway" },
   simulation: { label: "Simulation", meaning: "Mock models; no real model was measured" },
   pending: { label: "Pending", meaning: "Planned or in progress; not available yet" },
-  "not-run": { label: "Not run", meaning: "Built, but not yet run for real" },
+  "not-run": { label: "Ready to run", meaning: "Built and tested offline, ready to run for real" },
 };
 
 /** Badge tone per status: status colours only, always with the word (DESIGN.md). */

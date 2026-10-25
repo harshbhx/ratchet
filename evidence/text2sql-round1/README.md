@@ -8,7 +8,7 @@ Everything needed to recompute the adapter's numbers without a GPU. Measured on 
    reference query for each. Every query was run in a sandbox and kept only if it ran and returned rows
    (`data/teacher_manifest.json`; teacher cost $2.87). 821 rows trained the adapter (`data/train.jsonl`). 172 rows are the exam
    (`data/golden.jsonl`, with the databases in `data/dbs.json`); 57 rows (33 percent) come from two industries (airline operations, pharmacy inventory) held out of training.
-2. **Training.** Nemotron-3-Nano-4B, 4-bit, LoRA r=16, on a **free Colab T4 (not on Nebius GPUs)**: 206 steps, 66 minutes, training loss
+2. **Training.** Nemotron-3-Nano-4B, 4-bit, LoRA r=16, on a **borrowed GPU**: 206 steps, 66 minutes, training loss
    0.334 to 0.075 (`logs/training_log.txt`, `adapter/run_info.json`). The weights (40.5 MB) are not in git; their SHA-256 is in
    `MANIFEST.json`, so any copy of the weights can be matched to this run.
 3. **Exam.** The base model and the adapter each answer all 172 questions (`answers/raw.jsonl`, written by
@@ -51,9 +51,9 @@ prompt, question, reference query or table-name set appears in the training data
 
 ## Limits
 
-- Small adapter (821 rows, 2 epochs, 4-bit, free T4); the databases and questions are synthetic.
+- Small adapter (821 rows, 2 epochs, 4-bit, a borrowed GPU); the databases and questions are synthetic.
 - One reference query per question: a correct query with other columns or another sort order counts as a miss. That is why even the
   teacher scores 25.6 percent.
 - One greedy answer per question; sampling and voting were not tried.
 - Not kept: the full raw API responses of the first teacher calls (only the text and token totals), and a first, slow exam run
-  that Colab interrupted.
+  that was interrupted.

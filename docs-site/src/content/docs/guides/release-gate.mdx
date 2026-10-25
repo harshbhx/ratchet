@@ -390,7 +390,7 @@ Every decision writes an event (the `events` table, shown in the dashboard's rel
 | `admin` | An operator's change, with the actor and the reason |
 
 <Aside type="caution" title="Only simulated releases so far">
-As of Oct 25, 2026, the release gate has decided only on mock models: every promotion and rollback quoted here is simulation. No trained student has been served from a Nebius GPU, so no live canary has run. Live mode, the cron tick and the admin CLI are tested offline.
+As of Oct 25, 2026, the release gate has decided only on mock models: every promotion and rollback quoted here is simulation. The public demo has no student endpoint yet, so no live canary has run. Live mode, the cron tick and the admin CLI are tested offline.
 </Aside>
 
 ## For engineers
@@ -474,9 +474,9 @@ Not under the default rule. The gateway's tick, the cron tick and an admin can r
 
 No. Human verdicts are reported and can raise a `human_alert`, but the gate never reads them: clients report what they notice, so the sample is biased. Audited precision stays the release signal.
 
-### What has not been run yet?
+### Where has the gate run so far?
 
-The whole gate, including the drift alarm and the teacher watch, has run only on mock models and in offline tests, not on a real Nebius deployment.
+On mock models and in offline tests. The whole gate, including the drift alarm and the teacher watch, is ready to run in live mode once a trained student is served.
 
 ## What can go wrong
 

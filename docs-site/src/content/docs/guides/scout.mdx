@@ -284,7 +284,7 @@ These are **simulation** numbers (mock models), from the README and [TESTING.md]
 Across seeds 1, 2, 3, 7 and 11 with the default, the final student share ranged from 65% to 97% and the total savings from 19% to 65%, with the first version live between day 2 and day 6. Because these runs leave out the pinned calls, a full Scout run saves less than the triage-and-reader figure. With `RATCHET_MOCK_WARMUP_DAYS=4` the mock demo opens on a student that answers about 80 to 90% of a run's model calls: 14 to 18 of 17 to 20 calls per example question, 72 to 86% cheaper than all-Ultra (simulation, [SCOUT.md](/reference/scout/)).
 
 <Aside type="caution" title="No live Scout figures yet">
-Live Scout uses Tavily and the real cascade, with the teacher on Nebius Token Factory. No student runs on a Nebius GPU yet, so in live mode, once a trained version exists, student calls go to the hosted, untuned Nano 30B and carry its badge; today every call is answered by the teacher (`evidence/scout`: 57 of 57 calls). As of Oct 25, 2026 no measured live Scout figures are published: they stay `[LIVE NUMBER]` placeholders until a published run, and every number on this page is simulation.
+Live Scout uses Tavily and the real cascade, with the teacher on Nebius Token Factory. The public demo has no student endpoint yet, so in live mode, once a trained version exists, student calls go to the hosted, untuned Nano 30B and carry its badge; today every call is answered by the teacher (`evidence/scout`: 57 of 57 calls). As of Oct 25, 2026 no measured live Scout figures are published: they stay `[LIVE NUMBER]` placeholders until a published run, and every number on this page is simulation.
 </Aside>
 
 ## For engineers

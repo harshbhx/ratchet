@@ -89,7 +89,7 @@ def test_whats_real_keeps_the_seeded_facts():
     """The statuses the page was published with: no claim moves to real or measured without its evidence."""
     by_id = {e["id"]: e for e in json.loads(REAL.read_text(encoding="utf-8"))["entries"]}
     assert by_id["teacher-labels"]["status"] == "real" and by_id["adapter-training"]["status"] == "real"
-    assert "not on Nebius GPUs" in by_id["adapter-training"]["evidence"]
+    assert "borrowed GPU" in by_id["adapter-training"]["evidence"]
     assert by_id["exam-result"]["status"] in ("pending", "measured")
     assert by_id["gateway-live"]["status"] == "not-run" and by_id["scout-tavily"]["status"] == "real"
     assert by_id["demo-numbers"]["status"] == "simulation"

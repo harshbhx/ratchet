@@ -1,6 +1,6 @@
 # Ratchet documentation
 
-Ratchet is license-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base). Start with the [project README](../README.md) for a quick start. The only trained adapters so far are the two text-to-SQL adapters and one tool-calling adapter in [Real results](../README.md#results), trained on rented T4 GPUs.
+Ratchet is license-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base). Start with the [project README](../README.md) for a quick start. The only trained adapters so far are the two text-to-SQL adapters and one tool-calling adapter in [Real results](../README.md#results), trained on a borrowed GPU.
 
 ## Where to start
 
@@ -34,7 +34,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 | Doc | What it covers |
 |---|---|
-| [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md) | Where every part runs today (laptop, Cloudflare, Token Factory) and where it is designed to run on Nebius, and the one command that hosts it all there (scripted, not yet run on a real account) |
+| [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md) | Where every part runs today (laptop, Cloudflare, Token Factory) and where it is designed to run on Nebius, and the one command that hosts it all there (scripted and tested offline, ready to run) |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Local mock mode and live mode on Nebius step by step, cost estimates, keeping the demo alive |
 | [LIVE_MODE.md](LIVE_MODE.md) | Running against real Token Factory, the student endpoint and nightly jobs, measuring a live run |
 | [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | Hosting the public demo on one Nebius CPU VM: setup, mock to live, costs, monitoring, backups, security, teardown |

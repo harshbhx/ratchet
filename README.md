@@ -16,7 +16,7 @@
   <a href="https://live.ratchet.dualmindlab.tech"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-Token%20Factory-1f6feb"></a>
   <a href="https://video.ratchet.dualmindlab.tech/?from=readme"><img alt="Demo video, 2:59" src="https://img.shields.io/badge/demo%20video-2%3A59-475569"></a>
   <a href="https://docs.ratchet.dualmindlab.tech"><img alt="Docs" src="https://img.shields.io/badge/docs-guides-64748b"></a>
-  <a href="docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius"><img alt="Run on Nebius (scripted, not yet run on a real account)" src="docs/img/run-on-nebius.svg"></a>
+  <a href="docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius"><img alt="Run on Nebius (scripted and tested offline, ready to run)" src="docs/img/run-on-nebius.svg"></a>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
   <a href="#results">Results</a> &nbsp;·&nbsp;
   <a href="#open-on-hugging-face">Hugging Face</a> &nbsp;·&nbsp;
-  <a href="#what-is-real-what-is-simulation-what-has-not-run">What is real</a> &nbsp;·&nbsp;
+  <a href="#what-is-real-what-is-simulation-what-is-ready-to-run">What is real</a> &nbsp;·&nbsp;
   <a href="#where-it-runs-and-how-to-host-it-on-nebius">Nebius</a> &nbsp;·&nbsp;
   <a href="#use-it">Use it</a> &nbsp;·&nbsp;
   <a href="#limitations">Limitations</a> &nbsp;·&nbsp;
@@ -48,7 +48,7 @@
 
 - **What it is.** A drop-in OpenAI base URL. A small Nemotron 3 Nano 4B student answers each request first. When it is unsure, the request goes to Nemotron 3 Ultra on Nebius Token Factory, and the answer is logged with the teacher's name and license. Closed models (GPT, Claude, Gemini) are refused as teachers in code, because their terms forbid training competing models.
 - **What is measured.** Real adapters on real models, strict scoring, exams the adapters never saw: text-to-SQL goes from 12.8% (untrained) to 39.0% on exam 1 and from 12.5% to 33.0% on exam 2, for about $17 on record. Every score recomputes from the saved answers ([Check it yourself](docs/VERIFY.md)).
-- **What is not claimed.** The nightly loop is shown in simulation (mock models), not run on Nebius GPUs. The adapters were trained by hand on rented T4s. At a 95% precision bar the student still answers almost nothing, so in practice the teacher answers all live traffic. Details in [What is real](#what-is-real-what-is-simulation-what-has-not-run) and [Limitations](#limitations).
+- **What is not claimed.** The nightly loop is shown in simulation (mock models); its Nebius scripts are tested offline and ready to run. The adapters were trained by hand on a borrowed GPU. At a 95% precision bar the student still answers almost nothing, so in practice the teacher answers all live traffic. Details in [What is real](#what-is-real-what-is-simulation-what-is-ready-to-run) and [Limitations](#limitations).
 
 <p align="center">
   <img src="docs/img/sql-results-16x9.png" alt="Two bar charts of text-to-SQL accuracy under strict scoring; on exam 1 (172 questions) the untrained Nano 4B scores 12.8%, Nemotron 3 Ultra 25.6% and the adapter 39.0%, and on exam 2 (200 questions, new industries) 12.5%, 15.0% and 33.0%." width="100%">
@@ -87,7 +87,7 @@ The code is on the Devpost page and is not in this repository.
 
 ## How it works
 
-Change one line, your base URL. The designed flow (the loop is shown in simulation and in scripts; see [What is real](#what-is-real-what-is-simulation-what-has-not-run)):
+Change one line, your base URL. The designed flow (the loop is shown in simulation and in scripts; see [What is real](#what-is-real-what-is-simulation-what-is-ready-to-run)):
 
 1. **Student first.** NVIDIA Nemotron 3 Nano 4B with a LoRA adapter **you own**, served by vLLM on a Nebius Serverless Endpoint, answers each request. Its confidence comes from token logprobs and self-consistency.
 2. **Teacher on doubt.** If the student is not confident enough, the request goes to **NVIDIA Nemotron 3 Ultra on Nebius Token Factory**, and its answer is served.
@@ -109,11 +109,11 @@ Your bill falls as your own model takes over, and Ratchet tells you when a GPU w
 
 All of this is **measured** on real models, 22 to 24 Oct 2026, not the simulation. Scoring is strict, and both exams were kept out of training. The headline is text-to-SQL; tool calling is a second result.
 
-**Text-to-SQL (the headline).** A Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $17 on record ($12.16 of teacher answers plus $4.80 for the Modal training job; round 1 ran on a free Colab T4; estimates, not invoices; see [what it cost](docs/VERIFY.md#what-it-cost)), scores 2.6 to 3.0 times the untrained model on two exams, one written by the teacher and one by a different model (Claude Sonnet 5.5, for evaluation only; no Claude output was used for training). The round 2 adapter scores 39.0% on exam 1 (172 questions) and 33.0% on exam 2 (200 questions), against 12.8% and 12.5% untrained and 25.6% and 15.0% for the teacher, which loses points mostly on extra columns the strict scorer rejects. At a 95% precision bar the gate lets the adapter answer 1 of 86 measurement questions on exam 1 and none of the 100 on exam 2, so in practice all traffic still goes to the teacher.
+**Text-to-SQL (the headline).** A Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $17 on record ($12.16 of teacher answers plus $4.80 of GPU time for the training job, run on a borrowed GPU; estimates, not invoices; see [what it cost](docs/VERIFY.md#what-it-cost)), scores 2.6 to 3.0 times the untrained model on two exams, one written by the teacher and one by a different model (Claude Sonnet 5.5, for evaluation only; no Claude output was used for training). The round 2 adapter scores 39.0% on exam 1 (172 questions) and 33.0% on exam 2 (200 questions), against 12.8% and 12.5% untrained and 25.6% and 15.0% for the teacher, which loses points mostly on extra columns the strict scorer rejects. At a 95% precision bar the gate lets the adapter answer 1 of 86 measurement questions on exam 1 and none of the 100 on exam 2, so in practice all traffic still goes to the teacher.
 
 [Adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) · [Exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams)
 
-**Tool calling (round 3).** A second adapter (2,940 training rows, about $2.33 of Modal GPU time), scored strictly on two exams it never saw. The gain is large on the hard exam and small on BFCL, and on BFCL the adapter is lower than the teacher.
+**Tool calling (round 3).** A second adapter (2,940 training rows, about $2.33 of GPU time), scored strictly on two exams it never saw. The gain is large on the hard exam and small on BFCL, and on BFCL the adapter is lower than the teacher.
 
 <p align="center">
   <picture>
@@ -169,27 +169,25 @@ Two adapters, six datasets and two demos, all public: the adapters, the syntheti
 
 </details>
 
-## What is real, what is simulation, what has not run
+## What is real, what is simulation, what is ready to run
 
 | Status | What |
 |---|---|
 | **Real** | The code (Apache-2.0) and its offline test suite; the live demo and Scout, calling Nemotron 3 Ultra on Token Factory under spend limits; a 20-request live smoke run ([`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23), about $0.01) and three recorded Scout runs ([`evidence/scout`](evidence/scout)); the adapters, data and exams on Hugging Face |
-| **Measured** | The text-to-SQL and tool-calling scores above, on real models; the adapters were trained on rented T4 GPUs (a free Colab T4 and a Modal T4), not on Nebius GPUs, on synthetic data |
-| **Simulation** | The nightly loop, the release gate, rollbacks and every savings number from `sim/`: mock models, labelled Simulation wherever they appear. The live demo has no trained student on a GPU, so its teacher answers every request |
-| **Scripted, not run** | The Nebius Serverless Endpoint (student), Serverless Job (Night School), Object Storage bucket and CPU VM: written and tested offline against a fake `nebius` CLI; no Nebius GPU has trained or served anything |
+| **Measured** | The text-to-SQL and tool-calling scores above, on real models; the adapters were trained on a borrowed GPU, on synthetic data |
+| **Simulation** | The nightly loop, the release gate, rollbacks and every savings number from `sim/`: mock models, labelled Simulation wherever they appear. The public demo has no student endpoint yet, so the teacher answers every request |
+| **Scripted, ready to run** | The Nebius Serverless Endpoint (student), Serverless Job (Night School), Object Storage bucket and CPU VM: written and tested offline against a fake `nebius` CLI, ready to run with `make nebius-plan` and `make nebius-up` |
 
 ## Where it runs and how to host it on Nebius
 
 The gateway does no inference, so it runs anywhere a container does. Only training and the student endpoint need a GPU. Today the public demos run on Cloudflare Workers with Containers, and the teacher runs on Nebius Token Factory.
 
 <p align="center">
-  <img src="docs/img/anim/readme-runs.gif" alt="Where everything runs. Real today: your laptop, rented T4 GPUs for adapter training, Cloudflare for the live and simulation demos and the docs, Nebius Token Factory for the teacher. Scripted and tested offline, not yet run on a real account: a Nebius CPU VM, a Serverless Endpoint for the student, a Serverless Job for Night School and a bucket." width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/where-it-runs-dark.png">
+    <img src="docs/img/where-it-runs-light.png" alt="Where everything runs. Real today: your laptop, a borrowed GPU for adapter training, Cloudflare for the live and simulation demos and the docs, Nebius Token Factory for the teacher. Scripted and tested offline, ready to run: a Nebius CPU VM, a Serverless Endpoint for the student, a Serverless Job for Night School and a bucket." width="100%">
+  </picture>
   <br><sub>What runs where, today and as designed. <a href="docs/WHERE_IT_RUNS.md">Where everything runs</a> has the table.</sub>
-</p>
-
-<p align="center">
-  <img src="docs/img/anim/nebius-plan-terminal.gif" alt="Dark terminal that types bash deploy/nebius/nebius.sh plan and prints the real dry-run output, with a banner saying nothing is created and that the script is tested offline but not yet run on a real Nebius account." width="100%">
-  <br><sub>The real output of <code>make nebius-plan</code>: a dry run that prints every step and creates nothing.</sub>
 </p>
 
 ```bash
@@ -198,7 +196,7 @@ RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-up YES=1   # a CPU VM with t
 RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-down YES=1 # stops the endpoint, deletes the VM
 ```
 
-Scripted and tested offline against a fake CLI; **not yet run on a real Nebius account**. Costs (estimates), flags and what each step does: [Where everything runs](docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius), [Deployment on Nebius](docs/DEPLOYMENT.md) and [Demo VM on Nebius](docs/DEPLOY_NEBIUS_VM.md). Other hosts: any container host (`make docker`), Cloudflare (`deploy/cloudflare-live`, `deploy/cloudflare`; running) and a static Hugging Face Space that replays recorded Scout runs ([Space](https://huggingface.co/spaces/harshbhx/ratchet-scout)).
+Scripted and tested offline against a fake CLI; **ready to run** with `make nebius-plan` and `make nebius-up`. Costs (estimates), flags and what each step does: [Where everything runs](docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius), [Deployment on Nebius](docs/DEPLOYMENT.md) and [Demo VM on Nebius](docs/DEPLOY_NEBIUS_VM.md). Other hosts: any container host (`make docker`), Cloudflare (`deploy/cloudflare-live`, `deploy/cloudflare`; running) and a static Hugging Face Space that replays recorded Scout runs ([Space](https://huggingface.co/spaces/harshbhx/ratchet-scout)).
 
 ## Use it
 
@@ -284,7 +282,7 @@ flowchart LR
 
 </details>
 
-Rows 4 to 6 (the student endpoint, Night School and the object storage) are the design: the scripts are written but have not run on Nebius, and the adapters in [Real results](#results) were trained on rented T4 GPUs. Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the designed home of the student is Nebius AI Cloud.
+Rows 4 to 6 (the student endpoint, Night School and the object storage) are the design: the scripts are written and tested offline, ready to run with `make nebius-plan`, and the adapters in [Real results](#results) were trained on a borrowed GPU. Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the designed home of the student is Nebius AI Cloud.
 
 ## Why "license-clean"
 
@@ -304,7 +302,7 @@ In its own words, OpenMDW-1.1 "does not impose any restrictions or obligations w
 | Statistical release gate | Nothing ships | Your own evaluation | Held-out certificate, shadow, canary and automatic rollback |
 | Reports when it loses money | Per-token savings only | No | Savings by GPU-hours paid, the break-even volume and a recommendation |
 
-Cells describe the pages we read on 21 Oct 2026 ([sources](docs/COMPETITIVE_ANALYSIS.md)); "Not stated" and "Not recorded" mean we found no statement, not that the feature is absent. The Ratchet column describes the design, shown in simulation and in the scripts (see [Status](#what-is-real-what-is-simulation-what-has-not-run)).
+Cells describe the pages we read on 21 Oct 2026 ([sources](docs/COMPETITIVE_ANALYSIS.md)); "Not stated" and "Not recorded" mean we found no statement, not that the feature is absent. The Ratchet column describes the design, shown in simulation and in the scripts (see [Status](#what-is-real-what-is-simulation-what-is-ready-to-run)).
 
 The YC Summer 2026 teams Understudy and Experiential Labs, as cited in the [competitive analysis](docs/COMPETITIVE_ANALYSIS.md) (not re-checked here), sit between the columns: both say the customer owns the model, and neither page we found documents shadow, canary and automatic rollback.
 
@@ -319,7 +317,7 @@ What breaks first:
 - **Scout's reader is checked on two labels.** page-read's precision covers its `answers_question` and `fact_type` fields only; the free-text `key_fact` the writer cites is not checked.
 - **A signed BOM is the operator's signed statement** of the data and evaluation behind an adapter. It shows that nothing changed after signing, not that the weights were trained on that data.
 - **One gateway process.** The ledger is one SQLite file behind one lock; a Postgres ledger for several workers is planned ([roadmap](docs/ROADMAP.md)).
-- **Simulation numbers come from mock models.** They show how the loop behaves, not real model quality. As of Oct 25, 2026, no Nebius GPU has trained or served a student: the Serverless Job and Endpoint scripts have not run. Token Factory calls (the teacher) are real.
+- **Simulation numbers come from mock models.** They show how the loop behaves, not real model quality. As of Oct 25, 2026, the adapters were trained on a borrowed GPU and the public demo has no student endpoint yet, so the teacher answers every request; the Serverless Job and Endpoint scripts are tested offline and ready to run. Token Factory calls (the teacher) are real.
 - **Token Factory's Terms of Service §5(f)** ("competing service") is broad. We asked Nebius support about it in writing on Oct 19, 2026; until the answer is final, treat the question as open. Not legal advice.
 
 ## NVIDIA lineage

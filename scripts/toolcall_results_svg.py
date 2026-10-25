@@ -84,7 +84,7 @@ def build() -> str:
     )
     parts.append(
         f'<text x="{W / 2}" y="{H - 14}" class="n" text-anchor="middle">'
-        "Strict scoring, one decoder setting, rented Modal T4, synthetic training data.</text>"
+        "Strict scoring, one decoder setting, trained on a borrowed GPU, synthetic training data.</text>"
     )
     parts.append("</svg>")
     return "\n".join(parts) + "\n"

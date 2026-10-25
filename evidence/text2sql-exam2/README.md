@@ -16,8 +16,8 @@ adapter and the teacher. Measured on 23 to 24 Oct 2026. Everything needed to rec
 3. **Frozen before scoring.** `data/golden.jsonl` has SHA-256 `b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058`. The hash was recorded in
    `data/exam_manifest.json` when the exam was generated, before any model answered it.
 4. **Answered.** Nemotron 3 Ultra (the teacher) answered the same prompts on Token Factory at temperature 0, thinking off
-   (`answers/teacher2.jsonl`, `scripts/text2sql/teacher_selfcheck.py`, about $0.11). The base model and each adapter answered on a rented T4 at
-   Modal, not on Nebius GPUs (`answers/raw_v1.jsonl` with the round 1 adapter, `answers/raw_v2.jsonl` with the round 2 adapter, written by
+   (`answers/teacher2.jsonl`, `scripts/text2sql/teacher_selfcheck.py`, about $0.11). The base model and each adapter answered on a borrowed GPU
+   (`answers/raw_v1.jsonl` with the round 1 adapter, `answers/raw_v2.jsonl` with the round 2 adapter, written by
    `scripts/text2sql/fast_generate.py`). The base model gave identical answers in both jobs, 200 of 200 rows.
 5. **Scored.** `scripts/measure_adapter.py report` wrote `results/results_v1.json` and `results/results_v2.json`; `verify` recomputes every
    number from the answers (`results/verify_output_v1.txt`, `results/verify_output_v2.txt`). An answer is right when running it returns the same
@@ -69,4 +69,4 @@ It prints `OK: every number in results.json was recomputed from raw.jsonl and ma
 - Written by one model; a different author would give somewhat different questions. Its numbers sit about 5 to 6 points below exam 1 for the adapters,
   as expected on an exam from a new author.
 - Small adapters, synthetic databases and questions, one greedy answer per question.
-- Not kept: Modal's container logs. The answers and the scores are the evidence.
+- Not kept: the GPU job's container logs. The answers and the scores are the evidence.

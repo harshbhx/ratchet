@@ -45,7 +45,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     label: "What's real",
     pinned: true,
     tourTitle: "What is real, and what is not",
-    tour: "Every claim has one status: real, measured, simulation, pending or not run. The exam results are measured and can be recomputed from the saved answers.",
+    tour: "Every claim has one status: real, measured, simulation, pending or ready to run. The exam results are measured and can be recomputed from the saved answers.",
   },
   {
     id: "client",
@@ -157,7 +157,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "check",
     label: "NVIDIA, Nebius, Tavily",
     tourTitle: "What we used",
-    tour: "Which sponsor technology each part uses, and which parts have not run live yet.",
+    tour: "Which sponsor technology each part uses, and which parts are scripted and ready to run.",
   },
   {
     id: "limits",

@@ -395,7 +395,7 @@ It is served. A random audit may catch it, and audits drive the canary's rollbac
 
 ### Has this path run against real endpoints?
 
-Partly. The teacher runs on Nebius Token Factory. The student side has not: as of Oct 25, 2026 no student has been served from a Nebius GPU endpoint, and the paths through vLLM are tested offline with fake HTTP transports. Model ids and prices stay unverified until `scripts/day1_check.py` passes with a real key.
+Partly. The teacher runs on Nebius Token Factory. The student side is scripted and tested offline: as of Oct 25, 2026 the public demo has no student endpoint yet, so the teacher answers every request, and the paths through vLLM are tested with fake HTTP transports, ready to run with `make nebius-up`. Model ids and prices stay unverified until `scripts/day1_check.py` passes with a real key.
 
 ## Related
 

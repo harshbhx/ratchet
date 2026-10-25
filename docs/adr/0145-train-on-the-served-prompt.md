@@ -5,7 +5,7 @@
 
 ## Context
 
-Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested but have not been run on Nebius. The adapters behind the measured numbers in [evidence/](../../evidence/) were trained on a free Colab T4 and a rented Modal T4, never on Nebius GPUs. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
+Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested, ready to run with `make nebius-plan`. The adapters behind the measured numbers in [evidence/](../../evidence/) were trained on a borrowed GPU. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
 
 The first GPU night trains the student that every later number depends on. Three facts, read on Oct 21, 2026, meant it would have trained on one prompt and been served another, with no error:
 

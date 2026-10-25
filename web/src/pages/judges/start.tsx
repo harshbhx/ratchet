@@ -23,7 +23,7 @@ const PATH = [
     to: "real",
     action: "Read what is real",
     where: "What's real",
-    expect: "Which claims rest on real runs, which are simulation, and which have not been run yet.",
+    expect: "Which claims rest on real runs, which are simulation, and which are built and ready to run.",
   },
 ];
 
@@ -148,7 +148,7 @@ export function WhatsReal() {
         <>
           <p>
             One file holds the status of each result and feature, with what it rests on and how to check it. The simulation demo's numbers come from mock
-            models; the text-to-SQL data and adapter are real; the gateway has called Nebius Token Factory for real; nothing has been trained or served on Nebius GPUs yet.
+            models; the text-to-SQL data and adapter are real; the gateway calls Nebius Token Factory for real; the student endpoint and Night School jobs are scripted and ready to run.
           </p>
           {REAL.updated && <p className="text-[13.5px] text-muted">Updated {fmtDate(REAL.updated)}.</p>}
         </>

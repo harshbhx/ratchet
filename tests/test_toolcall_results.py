@@ -146,7 +146,7 @@ def test_collect_check_render_round_trip(strong, capsys):
     assert tc.main(["--render", "--web", "--evidence", str(ev), "--web-out", str(ev / "web.json")]) == 0
     assert tc.main(["--render", "--web", "--check-render", "--evidence", str(ev), "--web-out", str(ev / "web.json")]) == 0
     text = (ev / "rendered" / "README_block.md").read_text(encoding="utf-8")
-    assert "above the untrained model" in text and "rented Modal T4, not on Nebius GPUs" in text and "create_ticket" in text
+    assert "above the untrained model" in text and "trained on a borrowed GPU" in text and "create_ticket" in text
     assert "2,718 training rows" in text
     assert json.loads((ev / "web.json").read_text(encoding="utf-8"))["variant"] == "B"
     assert not (ev / "rendered" / "NOTION_ROUND3.md").exists()

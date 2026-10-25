@@ -3,7 +3,7 @@
 A fake `nebius` (fakes.FakeNebius), a fake `ssh` and `jq`, and a stub smoke check come first on PATH, so nothing reaches
 Nebius or a VM and nothing costs money. The tests assert what a dry run prints and that it changes and calls nothing, the
 exact sequence of `nebius` and `ssh` calls of a (fake) real run, and every refusal. They check the commands against the CLI
-reference as read, not against a real account: nothing here has run on one.
+reference as read; a real account is the first real run.
 """
 
 from __future__ import annotations
@@ -128,8 +128,8 @@ def _head(calls: list[list[str]], n: int = 3) -> list[list[str]]:
 
 @pytest.mark.req("FR-11.1")
 def test_plan_prints_every_command_and_changes_nothing(rig: Rig):
-    """`plan` works with no variables set, prints every command of the whole path in order, says nothing has run on a
-    real account, never calls the fake (or any) nebius, ssh or smoke check, and shows no secret."""
+    """`plan` works with no variables set, prints every command of the whole path in order, says it is scripted and
+    tested offline, never calls the fake (or any) nebius, ssh or smoke check, and shows no secret."""
     r = rig.run("plan", "--with-student", "--with-training", "--live", RATCHET_TRAIN_IMAGE="cr.example/ratchet-train:1")
     assert r.returncode == 0, r.stderr
     assert rig.nebius.calls == [] and rig.ssh == [] and rig.smoke == []
@@ -152,7 +152,7 @@ def test_plan_prints_every_command_and_changes_nothing(rig: Rig):
     assert any(c.startswith("nebius ai endpoint create") and "--dry-run" in c for c in shown)
     assert any("set_env.sh RATCHET_STUDENT_BASE" in c for c in shown) and any("update.sh" in c for c in shown)
     assert any(c.endswith("--mode live") for c in shown)
-    assert "NOT YET RUN ON A REAL NEBIUS ACCOUNT" in r.stderr and "DRY RUN" in r.stderr
+    assert "SCRIPTED AND TESTED OFFLINE" in r.stderr and "DRY RUN" in r.stderr
     assert "estimate" in r.stderr and "$1.35 an hour" in r.stderr and "stop" in r.stderr.lower()
     assert "bash deploy/student_endpoint.sh stop" in r.stderr and "nebius.sh down --yes" in r.stderr
     assert "Needed before a real run" in r.stderr and "NEBIUS_PROJECT_ID" in r.stderr

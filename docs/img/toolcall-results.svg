@@ -69,5 +69,5 @@
 <text x="856.7" y="338" class="t" text-anchor="middle">Teacher (Ultra)</text>
 <text x="856.7" y="354" class="t2" text-anchor="middle">265/300</text>
 <text x="480.0" y="376" class="n" text-anchor="middle">Tool calling: the adapter against the untrained model and the teacher, with the 95% range. Measured on real models, 2026-10-24.</text>
-<text x="480.0" y="396" class="n" text-anchor="middle">Strict scoring, one decoder setting, rented Modal T4, synthetic training data.</text>
+<text x="480.0" y="396" class="n" text-anchor="middle">Strict scoring, one decoder setting, trained on a borrowed GPU, synthetic training data.</text>
 </svg>

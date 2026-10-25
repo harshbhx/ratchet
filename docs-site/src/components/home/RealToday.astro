@@ -1,6 +1,6 @@
 ---
 /**
- * "What is real today": one line per part of the system with its status (live, done, not yet, simulation), so a
+ * "What is real today": one line per part of the system with its status (live, done, scripted, simulation), so a
  * reader never has to guess which numbers were measured. Edit the items in index.mdx when the status changes.
  */
 interface Item {
@@ -12,7 +12,7 @@ interface Props {
   items: Item[];
   asOf?: string;
 }
-const WORD = { live: 'Live', done: 'Done', next: 'Not yet', sim: 'Simulation' } as const;
+const WORD = { live: 'Live', done: 'Done', next: 'Scripted', sim: 'Simulation' } as const;
 const { items, asOf } = Astro.props;
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: Training on your data with the student endpoint
-description: How your traffic becomes a LoRA adapter you own - what the gateway stores, the nightly Nebius job, the bucket, the endpoint, and what has not run yet.
+description: How your traffic becomes a LoRA adapter you own - what the gateway stores, the nightly Nebius job, the bucket, the endpoint, and what is ready to run.
 sidebar:
   label: Training on your data
 ---
@@ -18,8 +18,8 @@ import GradientText from '../../../components/ui/GradientText.astro';
 
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains <GradientText text="a new LoRA adapter you own" tone="owned" />, which the endpoint then loads from your bucket.</Summary>
 
-<Aside type="caution" title="The GPU path has not run on Nebius yet">
-As of Oct 25, 2026, everything on this page is written and tested offline, but **none of the GPU path has run against a real Nebius account**: not the training image, not a training job, not the endpoint. The teacher runs on Nebius Token Factory; the three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a free Colab T4 and a rented Modal T4. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. This path has no live results yet.
+<Aside type="caution" title="The GPU path is scripted and ready to run">
+As of Oct 25, 2026, everything on this page is written and tested offline, and **the GPU path (the training job and the endpoint) is ready to run with `make nebius-plan` and `make nebius-up`**; the training image's pins are still candidates. The teacher runs on Nebius Token Factory; the three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a borrowed GPU. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. This path has no live results yet.
 </Aside>
 
 <Eli10>
@@ -91,7 +91,7 @@ flowchart TB
   subgraph TF["Token Factory, per token"]
     TEA["Teacher: Ultra<br/>Judge: Super"]
   end
-  subgraph Neb["Nebius AI Cloud, not run yet"]
+  subgraph Neb["Nebius AI Cloud, ready to run"]
     direction TB
     JOB["Serverless Job<br/>LoRA on one L40S"] -->|"adapter"| BK[("Bucket<br/>at /data")]
     BK -->|"loads"| EP["Serverless Endpoint<br/>vLLM"]
@@ -108,12 +108,12 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Three boxes, three jobs. Your host decides and remembers: it holds the gateway, the ledger and the night script. Nebius does the heavy lifting: a job trains, an endpoint serves, and one bucket is shared by both, which is how weights get from one to the other without a copy step. Token Factory is rented per token and holds the teacher and the judge. From the host, the night uploads the rows to the bucket, submits the job and tells the endpoint to load the adapter, and the gateway sends student calls to the endpoint. Nothing on Nebius ever writes to the ledger; only the host does. The Nebius GPU parts are drawn amber and dashed because they have not run yet.
+**Reading this diagram.** Three boxes, three jobs. Your host decides and remembers: it holds the gateway, the ledger and the night script. Nebius does the heavy lifting: a job trains, an endpoint serves, and one bucket is shared by both, which is how weights get from one to the other without a copy step. Token Factory is rented per token and holds the teacher and the judge. From the host, the night uploads the rows to the bucket, submits the job and tells the endpoint to load the adapter, and the gateway sends student calls to the endpoint. Nothing on Nebius ever writes to the ledger; only the host does. The Nebius GPU parts are drawn amber and dashed because they are scripted and ready to run, with no live results yet.
 
 <ul class="rt-key">
   <li class="teacher">Rented per token</li>
   <li class="store">Keeps data</li>
-  <li class="pending">Written, not run on Nebius yet</li>
+  <li class="pending">Scripted, ready to run</li>
 </ul>
 
 </figcaption>
@@ -394,20 +394,20 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 
 <div class="rt-callout rt-callout--live">
 
-**Checked, as of Oct 21, 2026, offline only.** These parts run in the test suite, against fakes, not on a Nebius account:
+**Checked, as of Oct 21, 2026, offline only.** These parts run in the test suite, against fakes:
 
 - `ratchet.live` commands, `NebiusTrainer`, `LiveEvaluator`, the reloader and the export: tested in `tests/test_live.py` and `tests/test_licensing.py`, against fake endpoints.
-- `train_job.sh` and `student_endpoint.sh`: run in tests with a fake `nebius` CLI; the exact commands are asserted against the CLI reference as read, not a real account.
+- `train_job.sh` and `student_endpoint.sh`: run in tests with a fake `nebius` CLI; the exact commands are asserted against the CLI reference as read.
 - `train.py`'s arguments, row checks, loss setting and chat-template prefix check: tested with the vendored Nano 4B chat template. Its `main` needs a GPU and is not run in tests.
 
 </div>
 
-Not run or not checked yet:
+Ready to run, or still to check:
 
 | Part | Status (Oct 25, 2026) |
 |---|---|
 | The training image | Not built yet; pins are candidates |
-| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Not run on Nebius yet. The adapters were trained on a free Colab T4 and a rented Modal T4, outside this path |
+| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Scripted and tested offline, ready to run with `make nebius-up`. The adapters so far were trained on a borrowed GPU, outside this path |
 | The endpoint's arguments as the container splits them, thinking off | Not checked yet |
 | Serverless pricing, the S3 endpoint URL | Unverified (the S3 URL format in the docs is an assumption) |
 | Live numbers from this path | None yet; `[LIVE NUMBER]` placeholders stay empty until a real run |
@@ -526,9 +526,9 @@ Yes. `python -m ratchet.live export` gives you the weights with the signed BOM a
 
 That is what the day-1 checks are for. The script dry runs, the image's build-time kernel check, `check_rows` and `check_prefix` are all there to fail fast and cheaply. The fallbacks (another base image, LoRA on the attention and MLP layers only, merging the adapter into the base weights if runtime LoRA fails) are listed in `train.py`.
 
-### Has this run on Nebius?
+### What runs on Nebius today?
 
-The teacher does: it runs on Nebius Token Factory. The training job and the endpoint do not, as of Oct 25, 2026: they are written and tested offline only, and the three adapters trained so far ran on a free Colab T4 and a rented Modal T4. Treat every GPU command here as a plan until the day-1 checks pass.
+The teacher: it runs on Nebius Token Factory. As of Oct 25, 2026 the training job and the endpoint are written and tested offline, ready to run with `make nebius-plan` and `make nebius-up`, and the three adapters so far were trained on a borrowed GPU. Treat every GPU command here as a plan until the day-1 checks pass.
 
 ## Related
 

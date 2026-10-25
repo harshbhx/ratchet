@@ -6,8 +6,8 @@
  "files": [
   {
    "file": "README.md",
-   "bytes": 3996,
-   "sha256": "4378b38c87c830e2bbb64ff090073b542e33cf827d21a17953b38f468ebd6013"
+   "bytes": 3974,
+   "sha256": "b8baccd3d1e7f0de3a9d2ecb9f19abbda0922ba6dd999891fa7adc1101dfdfcd"
   },
   {
    "file": "adapter/adapter_config.json",

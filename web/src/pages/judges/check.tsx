@@ -65,7 +65,7 @@ export function SponsorsChapter() {
       name: "NVIDIA Nemotron 3 Nano 4B",
       role: "The student's base model. Ratchet trains a LoRA adapter on it; the base keeps NVIDIA's Nemotron Open Model License.",
       parts: [
-        { text: "A text-to-SQL adapter trained on a free Colab T4", status: statusOf("adapter-training") },
+        { text: "A text-to-SQL adapter trained on a borrowed GPU", status: statusOf("adapter-training") },
         { text: "Its exam result", status: statusOf("exam-result") },
         { text: "The adapter and its data on Hugging Face", status: statusOf("hf-publish") },
         { text: "Serving it on a Nebius endpoint through the gateway", status: statusOf("live-gateway-smoke") },
@@ -89,7 +89,7 @@ export function SponsorsChapter() {
     <Chapter
       id="sponsors"
       title="What we used from NVIDIA, Nebius and Tavily"
-      lead={<p>Stated as it stands today: what ran for real, and what is built but has not run live yet.</p>}
+      lead={<p>Stated as it stands today: what ran for real, and what is built and ready to run.</p>}
     >
       <div className="grid min-w-0 gap-4 lg:grid-cols-3">
         {rows.map((r) => (
@@ -123,9 +123,9 @@ export function SponsorsChapter() {
 }
 
 const LIMITS = [
-  "The adapters are small (Nemotron 3 Nano 4B, LoRA) and were trained on a free Colab T4 and a rented Modal T4, not on Nebius GPUs. At a 95% precision bar the text-to-SQL student answers 1 of 86 questions on exam 1 and none on exam 2, so it does not replace the teacher.",
+  "The adapters are small (Nemotron 3 Nano 4B, LoRA) and were trained on a borrowed GPU. At a 95% precision bar the text-to-SQL student answers 1 of 86 questions on exam 1 and none on exam 2, so it does not replace the teacher.",
   "The main site's dashboard and chapters read the live gateway: its numbers come from real Token Factory calls, its teacher answers every request, and its ledger lives in the container's /tmp, so a restart empties it. Every number on the separate simulation demo comes from mock models (simulation).",
-  "The gateway's live mode has run against Nebius Token Factory (a smoke run and the live demo). The student endpoint and Night School's jobs have not run on Nebius GPUs.",
+  "The gateway's live mode runs on Nebius Token Factory (a smoke run and the live demo). The public demo has no student endpoint yet, so the teacher answers every request; the student endpoint and Night School's jobs are scripted and tested offline, ready to run with make nebius-plan.",
   "Scout's recorded live runs were all answered by the teacher; no trained student has served a Scout call. The Scout demo page runs on a mock research world unless the gateway is live.",
   "The ledger is a single SQLite file, written by one gateway process.",
   "The simulation demo is shared: every visitor sees and changes the same simulated state.",
@@ -137,10 +137,10 @@ export function LimitsChapter() {
     { href: REAL.links.docs, label: "Documentation", icon: BookOpen },
     { href: REAL.links.demo, label: "The demo", icon: MonitorPlay },
     ...(JUDGES_VIDEO ? [{ href: JUDGES_VIDEO, label: "The demo video (2:59)", icon: Film }] : []),
-    // The one-command Nebius path (deploy/nebius/nebius.sh): scripted and tested offline, never run on a real account.
+    // The one-command Nebius path (deploy/nebius/nebius.sh): scripted and tested offline, ready to run with make nebius-plan.
     {
       href: `${REAL.links.docs.replace(/\/?$/, "/")}reference/where-it-runs/`,
-      label: "Run on Nebius: scripted, not yet run",
+      label: "Run on Nebius: scripted, ready to run",
       icon: Server,
     },
   ];

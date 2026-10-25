@@ -65,15 +65,15 @@ flowchart LR
 flowchart TB
   subgraph Real["Real"]
     direction LR
-    R1["Teacher calls on Token<br/>Factory, Scout search"] ~~~ R3["Adapters,<br/>T4 (Colab, Modal)"] ~~~ R4["Code and tests,<br/>no GPU needed"]
+    R1["Teacher calls on Token<br/>Factory, Scout search"] ~~~ R3["Adapters, trained<br/>on a borrowed GPU"] ~~~ R4["Code and tests,<br/>no GPU needed"]
   end
   subgraph Sim["Simulation"]
     direction LR
     S1["Story page replay<br/>and savings figures"] ~~~ S2["Mock mode on<br/>your machine"]
   end
-  subgraph Not["Not done yet"]
+  subgraph Not["Ready to run"]
     direction LR
-    N1["Student endpoint<br/>on a Nebius GPU"] ~~~ N2["Measured<br/>live savings"]
+    N1["Student endpoint and<br/>training on Nebius"] ~~~ N2["Measured<br/>live savings"]
   end
   Real ~~~ Sim ~~~ Not
   class R1,R3,R4 ok
@@ -86,12 +86,12 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Three rows: what runs for real (green), what is simulation (dashed outline) and what is not done yet (amber, dashed). The teacher side runs for real; the student side has not run on a Nebius GPU. The two notes below say the same in words.
+**Reading this diagram.** Three rows: what runs for real (green), what is simulation (dashed outline) and what is scripted and ready to run (amber, dashed). The teacher side runs for real; the student side is scripted and tested offline, ready to run with `make nebius-up`. The two notes below say the same in words.
 
 <ul class="rt-key">
   <li class="ok">Real</li>
   <li class="outline">Simulation</li>
-  <li class="pending">Not done yet</li>
+  <li class="pending">Ready to run</li>
 </ul>
 
 </figcaption>
@@ -99,13 +99,13 @@ flowchart TB
 
 <div class="rt-callout rt-callout--note">
 
-**Real, as of Oct 25, 2026.** Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The adapters were trained on a free Colab T4 and a rented Modal T4, not on Nebius, and their results are read from their own results files. The code and its roughly 1,900 tests run with no GPU. The only live run on record is a 20-request smoke run (`evidence/live-smoke-2026-10-23`): the teacher answered everything, no student was served and nothing was audited, so it measures no savings. Since Oct 24, 2026 the public live demo runs in live mode, and every request there is a real Token Factory call.
+**Real, as of Oct 25, 2026.** Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The adapters were trained on a borrowed GPU, and their results are read from their own results files. The code and its roughly 1,900 tests run with no GPU. The only live run on record is a 20-request smoke run (`evidence/live-smoke-2026-10-23`): the teacher answered everything, no student was served and nothing was audited, so it measures no savings. Since Oct 24, 2026 the public live demo runs in live mode, and every request there is a real Token Factory call.
 
 </div>
 
 <div class="rt-callout rt-callout--sim">
 
-**Simulation.** The numbers on the story page come from mock models that show how the loop behaves, not how good a real model is. The student endpoint has not been served on a Nebius GPU, so on the live demo the teacher answers every request (no trained version exists on that ledger yet). With a trained version and no GPU endpoint, student calls would go to a hosted, untuned Nano model, and the pages would say so with a badge. Live savings numbers do not exist yet and are not shown.
+**Simulation.** The numbers on the story page come from mock models that show how the loop behaves, not how good a real model is. The public demo has no student endpoint yet, so the teacher answers every request (no trained version exists on that ledger yet). With a trained version and no GPU endpoint, student calls would go to a hosted, untuned Nano model, and the pages would say so with a badge. Live savings numbers do not exist yet and are not shown.
 
 </div>
 
@@ -153,7 +153,7 @@ On `/dashboard` there click **Run 1 day + night** a few times, then **Break next
 ## Honest limits
 
 <Aside type="caution" title="As of Oct 25, 2026">
-- The student endpoint has not been served on a Nebius GPU. The adapters were trained on a free Colab T4 and a rented Modal T4.
+- The public demo has no student endpoint yet, so the teacher answers every request; the student endpoint and Night School's jobs are scripted and tested offline, ready to run with `make nebius-up`. The adapters were trained on a borrowed GPU.
 - Savings and precision figures on the story page, in the README and in most of these docs are **simulation**.
 - Precision means agreement with the teacher, not ground truth.
 - The redactor is pattern-based: names and street addresses are not caught yet.

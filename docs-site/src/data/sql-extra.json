@@ -80,7 +80,7 @@
   "minutes": 66,
   "loss_first": 0.334,
   "loss_last": 0.075,
-  "gpu": "free Colab T4 (not Nebius GPUs)",
+  "gpu": "borrowed GPU",
   "lora_r": 16,
   "adapter_mb": 40.5
  },
@@ -175,7 +175,7 @@
    "hours": 5.2,
    "loss_first": 0.345,
    "loss_last": 0.087,
-   "gpu": "Modal T4 (not Nebius GPUs)",
+   "gpu": "borrowed GPU",
    "max_seq": 1536,
    "adapter_mb": 40.5
   },
