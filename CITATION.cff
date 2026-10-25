@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Ratchet: license-clean distillation on open models"
+type: software
+authors:
+  - family-names: Bhanushali
+    given-names: Harsh
+repository-code: "https://github.com/harshbhx/ratchet"
+url: "https://ratchet.dualmindlab.tech"
+license: Apache-2.0
+date-released: 2026-10-24
+abstract: >-
+  Ratchet is an OpenAI-compatible gateway in which a small student model answers first and a teacher whose license allows
+  distillation answers when the student is unsure, logging each answer with its teacher and license. Every night it is
+  designed to train a new LoRA adapter on those answers and release it only if it passes a statistical gate.
+keywords:
+  - distillation
+  - LLM gateway
+  - LoRA
+  - Nemotron
+  - text-to-SQL
+  - tool calling
+  - license provenance

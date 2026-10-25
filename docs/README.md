@@ -1,13 +1,13 @@
 # Ratchet documentation
 
-Ratchet is license-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base). Start with the [project README](../README.md) for a quick start. The only trained adapters so far are the two text-to-SQL adapters and one tool-calling adapter in [Real results](../README.md#real-results), trained on rented T4 GPUs.
+Ratchet is license-clean distillation on open models: an OpenAI-compatible gateway that turns your traffic into a Nemotron adapter you own (LoRA on NVIDIA's open Nano base). Start with the [project README](../README.md) for a quick start. The only trained adapters so far are the two text-to-SQL adapters and one tool-calling adapter in [Real results](../README.md#results), trained on rented T4 GPUs.
 
 ## Where to start
 
 | You are | Read, in this order |
 |---|---|
 | **A judge, with five minutes** | [README](../README.md) (the results chart and the judges' path) → [the judges' page](https://ratchet.dualmindlab.tech/judges) → [VERIFY](VERIFY.md) to recompute any claim |
-| **A developer who wants it running** | [README: Quick start](../README.md#quick-start) → [API](API.md) → [CONFIGURATION](CONFIGURATION.md) |
+| **A developer who wants it running** | [README: Quick start](../README.md#use-it) → [API](API.md) → [CONFIGURATION](CONFIGURATION.md) |
 | **An operator hosting it** | [WHERE_IT_RUNS](WHERE_IT_RUNS.md) → [DEPLOYMENT](DEPLOYMENT.md) → [LIVE_MODE](LIVE_MODE.md) → [RUNBOOK](RUNBOOK.md) |
 | **Reviewing security or licenses** | [THREAT_MODEL](THREAT_MODEL.md) → [README: Why license-clean](../README.md#why-license-clean) → [ADR 0001](adr/0001-open-teacher-only.md) and [ADR 0090](adr/0090-licenses-travel-with-the-adapter.md) |
 | **Contributing** | [../CONTRIBUTING.md](../CONTRIBUTING.md) → [ARCHITECTURE](ARCHITECTURE.md) → [TESTING](TESTING.md) |

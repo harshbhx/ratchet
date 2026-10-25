@@ -80,8 +80,16 @@ make demo        # mock mode with a trained student, on http://localhost:8000
 make test        # the offline test suite
 ```
 
-`make demo` serves the story page at `/`, Scout at `/scout` and the dashboard at `/dashboard`, with simulated models. Every number it shows is labelled Simulation. Steps: [the README's quick start](../README.md#quick-start).
+`make demo` serves the story page at `/`, Scout at `/scout` and the dashboard at `/dashboard`, with simulated models. Every number it shows is labelled Simulation. Steps: [the README's quick start](../README.md#use-it).
 
 ## Run the live gateway on a VM
 
 The live gateway (real Token Factory calls) runs on any machine that runs Docker. On a Nebius VM, the steps are in [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#switching-from-mock-to-live); `deploy/nebius/nebius.sh up --live` does the wiring for you. Anywhere else: `RATCHET_MODE=live` with `NEBIUS_API_KEY` and `RATCHET_API_KEYS` set ([LIVE_MODE.md](LIVE_MODE.md)). The public live demo uses Cloudflare Workers with Containers instead ([`deploy/cloudflare-live`](../deploy/cloudflare-live/README.md)), which is the host that has actually run.
+
+## Unlock Scout runs as a judge
+
+Hackathon judges can hold back runs and spend for themselves on the live Scout page. The access code is on the Devpost page, never in this repository. The picture below is an illustration of the page, not a recording.
+
+![Illustration, not a screen recording, of the Scout page's judge box in four steps: click "I am a judge", type the code (shown only as dots), press Unlock, and see "Judge access on" with "Sign out".](img/anim/judge-box-howto.gif)
+
+How the access works: [Scout](SCOUT.md) and [ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md).
