@@ -75,7 +75,7 @@ function scrollToHash(hash: string): () => void {
 
 export function Layout() {
   const { pathname, hash } = useLocation();
-  // One stats call per page load for the header's surface switch and the footer's status line, not live numbers.
+  // One stats call per page load for the footer's status line, not live numbers.
   const { stats, error } = useStats(0);
   const reduce = useReducedMotion();
   useEffect(() => {
@@ -88,7 +88,7 @@ export function Layout() {
   }, [pathname, hash]);
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
-      <SiteHeader stats={stats} />
+      <SiteHeader />
       <main id="main" className="flex-1">
         {/* A page fades in on a route change. Opacity only: a transform here would break the dashboard's sticky jump bar. */}
         <motion.div key={pathname} initial={reduce ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.35, ease: "easeOut" }}>

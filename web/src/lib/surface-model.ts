@@ -41,35 +41,6 @@ export interface Links {
   sim: string | null;
 }
 
-export interface SurfaceStats {
-  mode?: string;
-  links?: Links;
-  demo?: DemoInfo;
-  upstream?: Upstream;
-}
-
-export interface SurfaceSwitch {
-  current: "live" | "simulation";
-  liveLabel: string;
-  liveHref: string | null;
-  simHref: string | null;
-}
-
-/** The header switch "Live on Nebius Token Factory | Simulation", or null on a gateway that sends neither block. */
-export function surfaceSwitch(stats: SurfaceStats | null | undefined): SurfaceSwitch | null {
-  if (!stats) return null;
-  const surface = stats.demo?.surface ?? stats.mode;
-  const current = surface === "simulation" || surface === "mock" ? "simulation" : surface === "live" ? "live" : null;
-  if (!current) return null;
-  if (!stats.demo && !stats.links) return null;
-  return {
-    current,
-    liveLabel: stats.upstream?.token_factory ? "Live on Nebius Token Factory" : "Live",
-    liveHref: stats.links?.live ?? null,
-    simHref: stats.links?.sim ?? null,
-  };
-}
-
 /** The newest call on `host` (the teacher and the hosted student both use Token Factory), or null. */
 export function lastCall(upstream: Upstream | null | undefined, host: "token_factory" | "tavily"): UpstreamCall | null {
   const calls = (upstream?.calls ?? []).filter((c) => c.host === host);

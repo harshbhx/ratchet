@@ -218,7 +218,7 @@ The demo VM can run a second gateway in mock mode beside the live one ([DEPLOY_N
 
 | Variable | Default | Mode | Meaning |
 |---|---|---|---|
-| `RATCHET_LIVE_URL` | empty | both | The live gateway's public URL, for the header switch (`/ratchet/stats` `links.live`). Empty, or `https://` with a host, at most 300 characters, no user info, no whitespace |
+| `RATCHET_LIVE_URL` | empty | both | The live gateway's public URL, for the pages' links to the live gateway (`/ratchet/stats` `links.live`). Empty, or `https://` with a host, at most 300 characters, no user info, no whitespace |
 | `RATCHET_SIM_URL` | empty | both | The simulation's public URL (`links.sim`). Same rule. On the VM the compose file derives it from `RATCHET_SIM_DOMAIN` unless `.env` sets it (empty: no link) |
 | `RATCHET_DEMO_RPM` | `0` (off) | mock | Demo actions (non-GET calls to `/ratchet/demo/*`) a minute per client IP, 0 to 600. Over it: 429 with `Retry-After`. The burst is `rpm // 6`, at least 1 |
 | `RATCHET_DEMO_MAX_DAYS` | `0` (off) | mock | Reset the shared simulation before the day after this many simulated days. 0, or above `RATCHET_MOCK_WARMUP_DAYS`, at most 3650. Enforced when a visitor clicks `POST /ratchet/demo/day` (`auto_reset: "max_days"`) |

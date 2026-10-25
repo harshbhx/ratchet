@@ -1,12 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { motion, useScroll } from "motion/react";
-import { ArrowUpRight, FlaskConical, Menu, Moon, Sun } from "lucide-react";
+import { ArrowUpRight, Menu, Moon, Sun } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { ButtonA, ButtonLink } from "@/components/ui/button";
-import type { Stats } from "@/lib/api";
 import { useTheme } from "@/lib/hooks";
-import { surfaceSwitch, type SurfaceSwitch as Switch } from "@/lib/surface-model";
 import { cn, LIVE_URL } from "@/lib/utils";
 import { MobileMenu } from "./mobile-menu";
 import { isCurrentRoute, pillItems, sectionIds, type NavItem } from "./nav-model";
@@ -25,45 +23,6 @@ export function ThemeToggle({ className }: { className?: string }) {
     >
       {theme === "dark" ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
     </button>
-  );
-}
-
-/** "Live on Nebius Token Factory | Simulation": the surface this page is on is a label, the other one a link when its URL is known. */
-export function SurfaceSwitch({ sw }: { sw: Switch }) {
-  const seg = "inline-flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[12px] [overflow-wrap:anywhere]";
-  const here = cn(seg, "bg-surface-2 font-medium text-ink ring-1 ring-inset ring-line");
-  const there = cn(seg, "text-ink-2 transition-colors hover:text-ink");
-  const live = sw.current === "live";
-  const other = live ? sw.simHref : sw.liveHref;
-  const liveDot = <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-good" />;
-  const simIcon = <FlaskConical aria-hidden className="size-3 shrink-0" />;
-  return (
-    <div className="flex flex-wrap items-center justify-center gap-1" role="group" aria-label="Which gateway this page shows">
-      {live ? (
-        <span className={here} aria-current="true">
-          {liveDot}
-          {sw.liveLabel}
-        </span>
-      ) : other ? (
-        <a href={other} className={there}>
-          {liveDot}
-          {sw.liveLabel} <ArrowUpRight className="size-3" aria-hidden />
-        </a>
-      ) : null}
-      {live ? (
-        other ? (
-          <a href={other} className={there}>
-            {simIcon}
-            Simulation <ArrowUpRight className="size-3" aria-hidden />
-          </a>
-        ) : null
-      ) : (
-        <span className={here} aria-current="true">
-          {simIcon}
-          Simulation
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -238,8 +197,7 @@ function NavPill({ items, pathname, activeSection }: { items: readonly NavItem[]
   );
 }
 
-export function SiteHeader({ stats }: { stats: Stats | null }) {
-  const sw = surfaceSwitch(stats);
+export function SiteHeader() {
   const { pathname, hash } = useLocation();
   const [open, setOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement | null>(null);
@@ -320,12 +278,6 @@ export function SiteHeader({ stats }: { stats: Stats | null }) {
           </div>
         </div>
       </header>
-      {sw && (
-        // Not sticky, so the bar above stays 64 px tall: anchors (scroll-mt-16) and Scout's sticky totals line up under it.
-        <div className="border-b border-line/60 px-4 py-1.5 sm:px-6 lg:px-8">
-          <SurfaceSwitch sw={sw} />
-        </div>
-      )}
       <MobileMenu open={open} onClose={() => setOpen(false)} pathname={pathname} activeSection={activeSection} returnFocus={menuButton} />
     </>
   );

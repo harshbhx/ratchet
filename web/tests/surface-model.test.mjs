@@ -1,4 +1,4 @@
-// The header switch, the last-call line and the shared-simulation notice (src/lib/surface-model.ts). Pure functions over
+// The last-call line and the shared-simulation notice (src/lib/surface-model.ts). Pure functions over
 // /ratchet/stats; an older gateway without the blocks gets null. Run with `npm test`.
 import assert from "node:assert/strict";
 import { register } from "node:module";
@@ -29,37 +29,6 @@ const LIVE = {
   demo: { surface: "live", controls: false, shared: false },
   upstream: { recording: true, since: 1, token_factory: true, calls: [] },
 };
-
-test("the switch on the live host links the simulation and names Token Factory", () => {
-  assert.deepEqual(m.surfaceSwitch(LIVE), {
-    current: "live",
-    liveLabel: "Live on Nebius Token Factory",
-    liveHref: null,
-    simHref: "https://sim.example.org",
-  });
-});
-
-test("a live gateway not on Token Factory says only Live", () => {
-  const sw = m.surfaceSwitch({ ...LIVE, upstream: { ...LIVE.upstream, token_factory: false } });
-  assert.equal(sw.liveLabel, "Live");
-});
-
-test("the switch on the simulation host links the live gateway", () => {
-  const sw = m.surfaceSwitch({
-    mode: "mock",
-    links: { live: "https://live.example.org", sim: null },
-    demo: { surface: "simulation", controls: true, shared: true },
-    upstream: { recording: false, since: null, token_factory: true, calls: [] },
-  });
-  assert.equal(sw.current, "simulation");
-  assert.equal(sw.liveHref, "https://live.example.org");
-  assert.equal(sw.simHref, null);
-});
-
-test("an older gateway without the blocks has no switch", () => {
-  assert.equal(m.surfaceSwitch({ mode: "live" }), null);
-  assert.equal(m.surfaceSwitch(null), null);
-});
 
 test("lastCall picks the newest Token Factory entry across the teacher and the hosted student", () => {
   const up = {

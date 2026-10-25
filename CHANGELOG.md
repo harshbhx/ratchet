@@ -4,6 +4,8 @@ All notable changes are listed here. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+- The web app's header no longer shows the "Live on Nebius Token Factory | Simulation" chip (its extra row and the helper behind it are gone); the footer's status line and the menu's "Simulation demo" link stay, and every Simulation label on a simulated number or chart is unchanged.
+
 Links to `docs/lanes/`, `docs/DAY1.md`, `docs/HACKATHON_SUBMISSION.md` and `specs_next/` in the entries below point at working files that are not in this repository.
 
 - **Measured results on real models** (22 to 24 Oct 2026). Two text-to-SQL adapters on Nemotron 3 Nano 4B (821 and 4,322 teacher-labelled rows; round 1 on a free Colab T4, round 2 on a rented Modal T4, never on Nebius GPUs; synthetic data) scored 33.1% and 39.0% on exam 1 (172 questions) and 28.0% and 33.0% on exam 2 (200 questions, written by Claude Sonnet 5.5 for evaluation only), against the untrained model's 12.8% and 12.5% and the teacher's 25.6% and 15.0% (strict scoring; the teacher loses points mostly on extra columns). At a 95% precision bar the round 2 adapter answers 1 of 86 measurement questions on exam 1 and 0 of 100 on exam 2. Evidence in `evidence/text2sql-round1`, `-round2` and `-exam2`; `python scripts/text2sql/exam_numbers.py --check` recomputes the scores and `python scripts/measure_adapter.py verify` re-scores one adapter. Cost on record about $17 (about $12.2 of teacher answers and $4.80 for the Modal job; estimates, see `docs/VERIFY.md`).
