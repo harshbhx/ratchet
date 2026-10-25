@@ -32,3 +32,25 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  smoke:
+    # Final check from outside once the deploy is done: pages, /healthz mode, /readyz and /scout/status (never runs Scout,
+    # never sends a key or a completion). A waking-up demo gets about two minutes of retries to answer.
+    needs: deploy
+    if: ${{ inputs.confirm == 'deploy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check https://demo.ratchet.dualmindlab.tech
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if python scripts/demo_check.py https://demo.ratchet.dualmindlab.tech --mode mock --timeout 20; then exit 0; fi
+            echo "attempt $attempt failed; waiting 20 s for the site to wake up"
+            sleep 20
+          done
+          echo "the site did not pass its smoke check" >&2
+          exit 1

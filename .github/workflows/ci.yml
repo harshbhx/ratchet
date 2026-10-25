@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request replaces its running checks; runs on main always finish.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -22,10 +27,17 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+          cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev]" ruff
+      # Lint and format do not depend on the Python version: once is enough. The coverage run is the slowest, so one version has it.
       - run: ruff check .
+        if: matrix.python == '3.12'
       - run: ruff format --check .
+        if: matrix.python == '3.12'
       - run: pytest -q --runslow --cov=ratchet --cov=sim --cov-report=term-missing:skip-covered
+        if: matrix.python == '3.12'
+      - run: pytest -q --runslow
+        if: matrix.python != '3.12'
       - name: Requirements traceability
         run: python scripts/reqtrace.py --check
       - name: Startup configuration check (defaults must be clean; exit 1 = warnings, 2 = errors)
@@ -63,6 +75,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: pyproject.toml
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -82,3 +95,63 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: docker build -t ratchet-gateway .
+
+  evidence:
+    # Recomputes the headline results from the saved answers in evidence/ (docs/VERIFY.md). No network, no secrets.
+    name: evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e .
+      - name: Text-to-SQL exam scores match the saved answers
+        run: python scripts/text2sql/exam_numbers.py --check
+      - name: One adapter's score recomputes row by row (exam 2, round 1 and round 2)
+        run: |
+          for v in v1 v2; do
+            python scripts/measure_adapter.py verify               --raw evidence/text2sql-exam2/answers/raw_$v.jsonl               --results evidence/text2sql-exam2/results/results_$v.json               --golden evidence/text2sql-exam2/data/golden.jsonl               --dbs evidence/text2sql-exam2/data/dbs.json
+          done
+      - name: Exam 2 was frozen (golden set hash)
+        run: echo "b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058  evidence/text2sql-exam2/data/golden.jsonl" | sha256sum --check
+      - name: Tool-calling scores and evidence file hashes
+        run: python scripts/toolcall_results.py --check
+      - name: Tool-calling drafts and page data match the numbers
+        run: python scripts/toolcall_results.py --render --web --check-render
+      - name: Live smoke run's client-side numbers recompute from its records
+        run: python -m ratchet.liverun verify evidence/live-smoke-2026-10-23
+      - name: Pinned reference simulation still matches a fresh run
+        run: python scripts/regen_sim_reference.py --check
+
+  links:
+    # Fails only on a broken repo-internal link or a 404 from our own domains; other sites only warn (scripts/check_links.py).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: .link-cache.json
+          key: links-${{ github.run_id }}
+          restore-keys: links-
+      - run: python scripts/check_links.py --cache .link-cache.json
+
+  secrets:
+    # Fails on anything shaped like a credential, in the tree or anywhere in history (scripts/scan_secrets.py). Never prints a value.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python scripts/scan_secrets.py --history
