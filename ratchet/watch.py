@@ -1,6 +1,8 @@
 """The demo watchdog (FR-11.32 to FR-11.34, ADR 0132): keep the live demo answering until judging ends.
 
 Runs on the VM host from cron, outside the gateway container, because a hung gateway cannot restart or alert itself.
+That is the Nebius VM kit's host (deploy/vm); the public demo runs on Cloudflare Workers with Containers, where this
+watchdog does not run.
 At module level this file imports the standard library only (the host has Python but none of the project's packages);
 the `inside` commands import the gateway's modules inside their functions and run in the container.
 
@@ -56,7 +58,6 @@ DEFAULT_ALERT_KINDS = (
     "probe",
     "watchdog_restart",
 )
-FLAG_MAX_AGE_S = 10800  # a flag older than this is `stale` and never shows the banner
 PROBE_BODY = {
     "model": "ratchet",
     "messages": [{"role": "user", "content": "Reply with the single word: ok"}],

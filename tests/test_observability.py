@@ -727,14 +727,16 @@ def test_event_listeners_see_every_event_and_cannot_fail_it():
 
 
 # ---------- version transitions ----------
-@pytest.mark.req("NFR-6")
-def test_every_version_transition_writes_an_event(monkeypatch):
+@pytest.mark.req("NFR-6", "FR-12.9")
+@pytest.mark.parametrize("sequential", [0, 1])
+def test_every_version_transition_writes_an_event(monkeypatch, sequential):
     """Cold start -> canary -> live, then shadow -> canary -> live over the old live version, then a candidate replaced
     by a newer one, a rolled-back canary and a rejected candidate: every move the gate makes goes through the
     compare-and-set writers (`transition`, `promote_live`; never `set_version`, ADR 0064) and writes, in the same call,
-    an event naming that version, the old live version's retirement included (`live_retired`)."""
+    an event naming that version, the old live version's retirement included (`live_retired`). The same under the
+    anytime-valid canary rule (`sequential=1`, ADR 0025), which once moved versions with `set_version`."""
     led = Ledger(":memory:")
-    gate = ReleaseGate(led, ReleasePolicy(min_audits=5, min_shadow=5))
+    gate = ReleaseGate(led, ReleasePolicy(min_audits=5, min_shadow=5, sequential=sequential))
     log: list[tuple[str, int | str, str, str]] = []  # ("set", vid, from, to) and ("event", kind, detail, "")
     real_transition, real_promote, real_event = led.transition, led.promote_live, led.event
 

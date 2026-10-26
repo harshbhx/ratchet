@@ -1,4 +1,5 @@
-"""LoRA fine-tune of the student. Runs inside a Nebius Serverless Job (see deploy/train_job.sh).
+"""LoRA fine-tune of the student. Built to run inside a Nebius Serverless Job (see deploy/train_job.sh); scripted and
+tested offline.
 
 Usage (inside the job container):
     python -m ratchet.nightschool.train --data /data/night/train.jsonl \
@@ -52,9 +53,10 @@ LIBRARIES = (
     "setuptools",
     "wheel",
 )
-# LoRA targets for Nemotron-H (attention, Mamba in_proj/out_proj, MLP). The default keeps the Mamba projections until the
-# day-1 probe of runtime LoRA shows whether vLLM loads and applies them; if it refuses them, train with `--targets` set
-# to TARGETS_ATTENTION_MLP (and make that the default here).
+# LoRA targets for Nemotron-H (attention, Mamba in_proj/out_proj, MLP). The default is attention and MLP only: what the
+# measured adapters used (evidence/text2sql-round*/adapter/adapter_config.json). TARGETS_WITH_MAMBA adds the Mamba
+# projections (`--targets`), which vLLM's runtime LoRA must be checked to load and apply before an adapter with them
+# is served (scripts/day1_check.py student).
 TARGETS_WITH_MAMBA = "q_proj,k_proj,v_proj,o_proj,up_proj,down_proj,in_proj,out_proj"
 TARGETS_ATTENTION_MLP = "q_proj,k_proj,v_proj,o_proj,up_proj,down_proj"
 
@@ -195,9 +197,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument(
         "--targets",
-        default=TARGETS_WITH_MAMBA,
+        default=TARGETS_ATTENTION_MLP,
         help="comma-separated LoRA target modules, or 'all-linear'. Nemotron-H mixes attention, Mamba (in_proj/out_proj) "
-        f"and MLP layers; if vLLM refuses the Mamba modules on day 1, use {TARGETS_ATTENTION_MLP}.",
+        "and MLP layers; the default, attention and MLP, is what the measured adapters used. To add the Mamba "
+        f"projections: {TARGETS_WITH_MAMBA}.",
     )
     return ap.parse_args(argv)
 

@@ -79,7 +79,7 @@
   <section class="tiles">
     <div class="tile"><div class="v" id="tSaved">$0</div><div class="l">saved vs all-teacher</div></div>
     <div class="tile"><div class="v" id="tPct">0%</div><div class="l">cost reduction (latest day)</div></div>
-    <div class="tile"><div class="v" id="tShare">0%</div><div class="l" id="tShareL">answered by your model (latest day)</div></div>
+    <div class="tile"><div class="v" id="tShare">0%</div><div class="l" id="tShareL">answered by your adapter (latest day)</div></div>
     <div class="tile"><div class="v" id="tLive">none</div><div class="l">live student version</div></div>
   </section>
 
@@ -90,7 +90,7 @@
       <div class="legend"><span><i style="background:var(--teacher)"></i>All-teacher baseline</span><span><i style="background:var(--accent)"></i>Ratchet</span></div>
     </div>
     <div class="panel">
-      <h2>Share answered by your model</h2>
+      <h2>Share answered by your adapter</h2>
       <svg id="shareChart" viewBox="0 0 520 240" role="img" aria-label="Share of requests answered by the student by day"></svg>
       <div class="legend"><span><i style="background:var(--accent)"></i>Student</span><span><i style="background:var(--teacher)"></i>Escalated to teacher</span></div>
     </div>
@@ -99,7 +99,7 @@
   <section class="panel">
     <h2>By task</h2>
     <div class="scroll"><table id="tasks"><thead><tr>
-      <th>Task</th><th>Requests</th><th>Answered by your model</th><th>Escalated</th><th>Cost reduction</th><th>Route</th>
+      <th>Task</th><th>Requests</th><th>Answered by your adapter</th><th>Escalated</th><th>Cost reduction</th><th>Route</th>
     </tr></thead><tbody></tbody></table></div>
     <p class="note">Pinned tasks (open-ended planning and writing for Scout) always go to the teacher and are never trained on.</p>
   </section>
@@ -183,7 +183,7 @@ function render(s) {
   $("tSaved").textContent = "$" + (s.totals.saved_usd || 0).toFixed(2);
   $("tPct").textContent = last ? pct(last.savings_pct) : "0%";
   $("tShare").textContent = last ? pct(last.student_share) : "0%";
-  $("tShareL").textContent = sv.kind === "hosted_fallback" ? "answered by the student (hosted Nano 30B, latest day)" : "answered by your model (latest day)";
+  $("tShareL").textContent = sv.kind === "hosted_fallback" ? "answered by the student (hosted Nano 30B, latest day)" : "answered by your adapter (latest day)";
   const live = s.versions.filter((v) => v.state === "live").pop();
   $("tLive").textContent = live ? "v" + live.id : "none";
   drawCost(days); drawShare(days);
@@ -204,7 +204,7 @@ function render(s) {
   ).join("") || `<tr><td colspan="6" class="muted">No traffic yet.</td></tr>`;
   $("controls").hidden = s.mode !== "mock";
 }
-async function refresh() { const r = await fetch("ratchet/stats"); render(await r.json()); }
+async function refresh() { const r = await fetch("/ratchet/stats"); render(await r.json()); }
 async function act(path, btn) {
   document.querySelectorAll("button").forEach((b) => (b.disabled = true));
   $("msg").textContent = "";
@@ -215,9 +215,9 @@ async function act(path, btn) {
   }
   finally { document.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
 }
-$("runDay").onclick = () => act("ratchet/demo/day?workload=" + encodeURIComponent($("workload").value));
-$("breakNext").onclick = () => act("ratchet/demo/break-next");
-$("reset").onclick = () => act("ratchet/demo/reset");
+$("runDay").onclick = () => act("/ratchet/demo/day?workload=" + encodeURIComponent($("workload").value));
+$("breakNext").onclick = () => act("/ratchet/demo/break-next");
+$("reset").onclick = () => act("/ratchet/demo/reset");
 refresh();
 setInterval(refresh, 15000);
 </script>

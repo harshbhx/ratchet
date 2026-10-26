@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1934 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page, test_livesim, test_attribution, test_exam_numbers, test_reasoning, test_toolcall_results, test_watch), ~120 s
+pytest -q                     # 1950 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page, test_livesim, test_attribution, test_exam_numbers, test_reasoning, test_toolcall_results, test_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -24,44 +24,44 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_tasks.py` | 129 (44 functions; one has 37 cases, one has 20) |
 | `tests/test_registry.py` | 30 |
 | `tests/test_nightschool.py` | 31 (25 functions; one has 5 cases) |
-| `tests/test_release.py` | 41 (32 functions; one has 8 cases, two have 2) |
+| `tests/test_release.py` | 43 (33 functions; one has 8 cases, three have 2) |
 | `tests/test_system.py` | 21 |
 | `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
-| `tests/test_resilience.py` | 88 (50 functions; one has 20 cases, two have 7, one has 6, one has 3) |
-| `tests/test_scout.py` | 46 |
-| `tests/test_contract.py` | 57 (45 functions; one has 9 cases, one has 4) |
+| `tests/test_resilience.py` | 90 (50 functions; one has 22 cases, two have 7, one has 6, one has 3) |
+| `tests/test_scout.py` | 47 |
+| `tests/test_contract.py` | 59 (47 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 47 (23 functions; one has 23 cases) |
-| `tests/test_live.py` | 79 (3 of them strict xfails for NFR-60) |
+| `tests/test_live.py` | 80 (3 of them strict xfails for NFR-60) |
 | `tests/test_nebius_script.py` | 12 |
 | `tests/test_livesim.py` | 19 |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
 | `tests/test_receipts.py` | 44 (32 functions; one has 8 cases, one has 5) |
-| `tests/test_privacy.py` | 26 |
+| `tests/test_privacy.py` | 27 |
 | `tests/test_erasure.py` | 58 (37 functions; one has 13 cases, one has 4, three have 2) |
 | `tests/test_redaction.py` | 45 (27 functions; one has 9 cases, one has 7, one has 3) |
 | `tests/test_kpis.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_licensing.py` | 10 |
 | `tests/test_feedback.py` | 32 |
 | `tests/test_docs_claims.py` | 10 |
-| `tests/test_perf.py` | 24 |
+| `tests/test_perf.py` | 25 |
 | `tests/test_security.py` | 12 |
-| `tests/test_observability.py` | 28 |
+| `tests/test_observability.py` | 29 (28 functions; one has 2 cases) |
 | `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
 | `tests/test_idempotency.py` | 25 |
 | `tests/test_offpath.py` | 32 |
 | `tests/test_attribution.py` | 10 |
 | `tests/test_limits.py` | 29 |
-| `tests/test_admin.py` | 38 (26 functions; one has 13 cases) |
-| `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
+| `tests/test_admin.py` | 39 (27 functions; one has 13 cases) |
+| `tests/test_calibration.py` | 28 (26 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 21 |
 | `tests/test_structured.py` | 45 |
 | `tests/test_tools.py` | 26 (20 functions; one has 7 cases) |
 | `tests/test_model_routing.py` | 26 |
 | `tests/test_routing.py` | 54 (22 functions; one has 33 cases) |
-| `tests/test_adjacent_endpoints.py` | 22 |
+| `tests/test_adjacent_endpoints.py` | 24 |
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 49 (45 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
@@ -70,7 +70,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_reasoning.py` | 7 |
 | `tests/test_toolcall_results.py` | 11 |
 | `tests/test_watch.py` | 70 (38 functions; counted on Linux, the file imports `fcntl` and does not collect on Windows) |
-| **Total** | **1934** |
+| **Total** | **1950** |
 
 Tests without a table of their own yet: `test_model_routing`, `test_attribution`, `test_exam_numbers`, `test_reasoning`, `test_toolcall_results` and `test_judges_page` (the file names and the docstrings of their tests say what each covers); `test_watch` has a paragraph below and no table.
 

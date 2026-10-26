@@ -564,9 +564,6 @@ class OffPath:
         """(audited version, shadow version): what a dropped or abandoned job is counted under."""
         return self.audit_version, self.shadow.id if self.shadow is not None else None
 
-    rejected: Completion | None = None
-    first: Completion | None = None
-
 
 class Ratchet:
     """The cascade. `clock` drives the breakers (tests pass a fake one). `on_adapter_missing(version)` is called when
@@ -1947,14 +1944,15 @@ class Ratchet:
         n: int = 1,
         route: str | None = None,
     ) -> Result:
-        """A request the student cannot take, such as one with an image part the teacher reads
-        (RATCHET_TEACHER_MODALITIES; the gateway passes `route` `multimodal`): the pinned path, so the teacher answers (or
-        the fallback teacher, when the primary is unavailable), the request is logged, and nothing is stored as a
-        training example. No student, audit or shadow call, so it never degrades. `n` choices, as for `handle`. An
-        unregistered task under RATCHET_UNKNOWN_TASKS=reject raises `tasks.UnknownTask`. The row's route says why the
-        teacher answered alone, the operator's reason first: `unknown_task` (an unregistered task under `teacher`),
-        `pinned` (a pinned task), then `route`, then `tools` for a tool request (FR-1.41), else `pinned`. A
-        `response_format` binds the task as in `handle`."""
+        """The teacher alone for a request its caller will not give the student: the pinned path, so the teacher answers
+        (or the fallback teacher, when the primary is unavailable), the request is logged, and nothing is stored as a
+        training example. No student, audit or shadow call, so it never degrades. `n` choices, as for `handle`. The
+        gateway does not call it: a request with a part only the teacher reads goes through `handle`, which sends it to
+        the teacher as ineligible (route `ineligible:content_type`, FR-2.50). An unregistered task under
+        RATCHET_UNKNOWN_TASKS=reject raises `tasks.UnknownTask`. The row's route says why the teacher answered alone,
+        the operator's reason first: `unknown_task` (an unregistered task under `teacher`), `pinned` (a pinned task),
+        then the caller's `route`, then `tools` for a tool request (FR-1.41), else `pinned`; `fallback_teacher` replaces
+        it when the fallback teacher answered. A `response_format` binds the task as in `handle`."""
         t0 = self.timer()
         self.ledger.flags()  # publishes the runtime pins before the task is resolved (ADR 0064)
         task = self.resolve(task, params)

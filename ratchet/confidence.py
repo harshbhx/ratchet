@@ -26,7 +26,8 @@ from .tasks import Task
 
 # How the student is sampled for a confidence score: in production (`Ratchet._sample`), in the live golden eval
 # (`LiveEvaluator.evaluate`) and in the mock one (`MockFleet.evaluate`). One constant, so the eval cannot drift from
-# production (FR-5.1). `n` is added by each caller (`Settings.samples`). Read-only.
+# production (FR-5.1). `n` is added by each caller: the task's `policy.samples`, else `Settings.samples`
+# (`Task.sample_count`, FR-2.55). Read-only.
 STUDENT_SAMPLING: Mapping[str, Any] = MappingProxyType({"temperature": 0.7, "logprobs": True})
 # A threshold no confidence reaches (scores are at most 1): the student serves nothing. Finite, so an eval stays JSON.
 SERVE_NOTHING = 1.01
@@ -99,9 +100,10 @@ def score(task: Task, samples: list[Completion], w_prob: float = 0.4, w_agree: f
 def majority(task: Task, scored: Scored, samples: list[Completion], n: int) -> list[Completion] | None:
     """The `n` samples a client gets as its choices when the student serves a request for `n` choices (FR-1.14), or
     None when fewer than `n` of `samples` share the scored majority answer (or no sample was valid). `scored` is the
-    score of a prefix of `samples` (`Settings.samples` of them, as calibrated), so choice 0 is `scored.answer`, the
-    sample a one-choice request serves; the others are the samples that agree with it (`Task.match`), by token
-    probability, highest first (in sample order on ties). Every choice is a valid answer that ended by itself."""
+    score of a prefix of `samples` (`Task.sample_count` of them: the task's `policy.samples`, else `Settings.samples`, as
+    calibrated), so choice 0 is `scored.answer`, the sample a one-choice request serves; the others are the samples that
+    agree with it (`Task.match`), by token probability, highest first (in sample order on ties). Every choice is a valid
+    answer that ended by itself."""
     if not scored.valid:
         return None
     if n == 1:

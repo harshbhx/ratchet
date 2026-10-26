@@ -64,7 +64,6 @@ from .stats import binom_sf, cp_lower, ratio_estimate, required_rows, wilson
 
 GENERATOR = "ratchet.liverun/1"
 KEY_ENV = "RATCHET_LIVERUN_KEY"  # the harness's gateway key; never a flag (shell history, the process list)
-SHA_ENV = "RATCHET_GIT_SHA"  # the code's commit when the image has no .git
 ARMS_KEY_ENV = "NEBIUS_API_KEY_LIVERUN"  # the arms' own Token Factory key (falls back to NEBIUS_API_KEY)
 # The gate settings the live run is planned with: the anytime-valid canary rule (ADR 0025) and audit focusing, so each
 # canary stage gets its audits within a round (the plan's stage table shows the difference). `run` refuses to start
@@ -2696,7 +2695,7 @@ def ledger_values(results: Mapping[str, Any]) -> tuple[dict[str, float], dict[st
     )
     put("live.final.audits", None if final is None else float(audits.get("n", 0)), f"round {k}: ledger audits", "no round")
     wall = led.get("wall_ms")
-    lane_d = "requests.wall_ms is not recorded by this gateway (lane D's OPS-PERF-HOTPATH)"
+    lane_d = "requests.wall_ms is not recorded by this gateway (it needs a gateway that logs each request's wall time)"
     by_route = (wall or {}).get("by_route") or {}
     by_served = (wall or {}).get("by_served_by") or {}
     put(
