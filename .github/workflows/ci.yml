@@ -313,6 +313,9 @@ jobs:
         env:
           # A public edit that no longer matches, a dropped anchor or a missing generated page fails the build.
           DOCS_STRICT: "1"
+      - name: Every diagram has its saved SVG (drawn at build time, none in the browser)
+        run: node scripts/mermaid-cache.mjs --check
+        working-directory: docs-site
 
   docker:
     # The image holds the package (ratchet/, sim/, pyproject.toml), so a backend change builds it too.

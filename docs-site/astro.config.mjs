@@ -1,6 +1,7 @@
 // @ts-check
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import react from '@astrojs/react';
 import starlight from '@astrojs/starlight';
 import { defineConfig } from 'astro/config';
@@ -9,6 +10,7 @@ import lucode from 'lucode-starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightOpenAPI, { createOpenAPISidebarGroup } from 'starlight-openapi';
 import { REPO_URL, SITE_DIR, SITE_URL } from './scripts/doc-map.mjs';
+import { inlineDiagrams } from './scripts/mermaid-cache.mjs';
 import { mermaidConfig } from './src/config/mermaid.mjs';
 
 const DOCS = join(SITE_DIR, 'src', 'content', 'docs');
@@ -54,6 +56,17 @@ export default defineConfig({
       enableLog: false,
       mermaidConfig,
     }),
+    // Draws nothing itself: swaps each ```mermaid block's <pre> for the SVG saved in generated/mermaid (scripts/mermaid-cache.mjs),
+    // so the browser runs no Mermaid. Listed before Starlight so its build:done runs first, ahead of Starlight's Pagefind index
+    // (which then skips the diagrams, `data-pagefind-ignore`, instead of indexing their source text).
+    {
+      name: 'ratchet-static-diagrams',
+      hooks: {
+        'astro:build:done': ({ dir, logger }) => {
+          inlineDiagrams(fileURLToPath(dir), logger);
+        },
+      },
+    },
     starlight({
       title: 'Ratchet docs',
       description:

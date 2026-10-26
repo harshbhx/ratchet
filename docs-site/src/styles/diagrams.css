@@ -1,8 +1,10 @@
 /*
-  Diagrams. Every diagram on the site is a ```mermaid block, rendered in the browser by astro-mermaid from a bundled copy
-  of Mermaid (no CDN), with the `base` theme. What is inside the SVG (node, edge, cluster, actor and state colours, and
-  the type, which Mermaid measures before it sizes a box) comes from src/config/mermaid.mjs: rules written in the
-  tokens of theme.css, so a diagram follows light and dark without a re-render. This file is the frame around it: the
+  Diagrams. Every diagram on the site is a ```mermaid block. The build draws each one (scripts/mermaid-cache.mjs keeps the
+  finished SVGs in generated/mermaid/ and puts them into the HTML as <div class="mermaid" data-static>), so the browser
+  runs no Mermaid; astro-mermaid's client still draws a <pre class="mermaid"> that has no saved SVG, which is why every
+  rule below matches both. The SVG's own colours (node, edge, cluster, actor and state colours, and the type, which
+  Mermaid measures before it sizes a box) come from src/config/mermaid.mjs: rules written in the tokens of theme.css, so
+  a diagram follows light and dark without a re-render. This file is the frame around it: the
   card, an optional caption with a key, and sideways scrolling on narrow screens instead of shrinking the text.
 
   Two ways to place a diagram in a page:
@@ -12,8 +14,8 @@
 */
 
 /* ---------- The card ---------- */
-.sl-markdown-content pre.mermaid,
-pre.mermaid {
+.sl-markdown-content :is(pre, div[data-static]).mermaid,
+:is(pre, div[data-static]).mermaid {
   display: flex !important;
   justify-content: safe center !important;
   align-items: flex-start !important;
@@ -41,12 +43,12 @@ pre.mermaid {
     var(--rt-surface) !important;
   --rt-scroll-shade: rgb(18 18 18 / 0.14);
 }
-:root[data-theme='dark'] pre.mermaid,
-:root:not([data-theme='light']) pre.mermaid {
+:root[data-theme='dark'] :is(pre, div[data-static]).mermaid,
+:root:not([data-theme='light']) :is(pre, div[data-static]).mermaid {
   --rt-scroll-shade: rgb(0 0 0 / 0.55);
 }
 
-/* Before Mermaid has drawn it: hold the space, hide the source text. */
+/* Before Mermaid has drawn it (only a diagram without a saved SVG): hold the space, hide the source text. */
 pre.mermaid:not([data-processed]) {
   min-height: 14rem;
   color: transparent !important;
@@ -55,13 +57,13 @@ pre.mermaid:not([data-processed]) {
 }
 
 /* "Expand" (ReadingAids.astro), added once the diagram is drawn: quiet until the card is hovered or focused. */
-pre.mermaid {
+:is(pre, div[data-static]).mermaid {
   position: relative;
 }
-pre.mermaid:has(> .rt-expand) {
+:is(pre, div[data-static]).mermaid:has(> .rt-expand) {
   padding-top: 2.9rem !important;
 }
-pre.mermaid > .rt-expand {
+:is(pre, div[data-static]).mermaid > .rt-expand {
   position: absolute;
   top: 0.6rem;
   right: 0.6rem;
@@ -76,17 +78,17 @@ pre.mermaid > .rt-expand {
   opacity: 0;
   transition: opacity var(--rt-dur) ease;
 }
-pre.mermaid:hover > .rt-expand,
-pre.mermaid > .rt-expand:focus-visible {
+:is(pre, div[data-static]).mermaid:hover > .rt-expand,
+:is(pre, div[data-static]).mermaid > .rt-expand:focus-visible {
   opacity: 1;
 }
 @media (hover: none) {
-  pre.mermaid > .rt-expand {
+  :is(pre, div[data-static]).mermaid > .rt-expand {
     opacity: 1;
   }
 }
 
-pre.mermaid svg {
+:is(pre, div[data-static]).mermaid svg {
   display: block;
   flex: none;
   max-width: none !important;
@@ -96,18 +98,18 @@ pre.mermaid svg {
   overflow: visible;
 }
 /* A label measured before the web font arrived can be a pixel wider than its box: let it show, never clip it. */
-pre.mermaid svg foreignObject {
+:is(pre, div[data-static]).mermaid svg foreignObject {
   overflow: visible;
 }
 
-/* Keyboard users can scroll a wide diagram once it has focus (astro-mermaid renders into the <pre>). */
-pre.mermaid:focus-visible {
+/* Keyboard users can scroll a wide diagram once it has focus (astro-mermaid renders into the <pre>; a static diagram is a div). */
+:is(pre, div[data-static]).mermaid:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
 /* Mermaid's own error box, if a diagram ever fails to parse: readable in both themes. */
-pre.mermaid > div[style*='color: red'] {
+:is(pre, div[data-static]).mermaid > div[style*='color: red'] {
   color: var(--rt-bad) !important;
   border-color: var(--rt-bad) !important;
   background: var(--rt-bad-soft);
@@ -123,7 +125,7 @@ pre.mermaid > div[style*='color: red'] {
   background: var(--rt-surface);
   overflow: hidden;
 }
-.sl-markdown-content figure.rt-diagram > pre.mermaid {
+.sl-markdown-content figure.rt-diagram > :is(pre, div[data-static]).mermaid {
   margin: 0 !important;
   border: 0 !important;
   border-radius: 0 !important;
@@ -210,8 +212,8 @@ pre.mermaid > div[style*='color: red'] {
   .sl-markdown-content figure.rt-diagram::before {
     display: block;
   }
-  .sl-markdown-content pre.mermaid,
-  pre.mermaid {
+  .sl-markdown-content :is(pre, div[data-static]).mermaid,
+  :is(pre, div[data-static]).mermaid {
     padding: 1rem 0.75rem !important;
   }
   .sl-markdown-content figure.rt-diagram > figcaption {

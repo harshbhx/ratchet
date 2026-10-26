@@ -3,3 +3,6 @@
 # No line-ending conversion, so a Windows clone hashes the same as Linux.
 evidence/** -text
 tests/fixtures/nano4b_chat_template.jinja -text
+
+# Saved diagram SVGs (docs-site/scripts/mermaid-cache.mjs): written with LF, compared byte for byte.
+docs-site/generated/mermaid/** -text
