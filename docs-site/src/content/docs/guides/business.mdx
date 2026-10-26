@@ -15,7 +15,7 @@ import PathGrid from '../../../components/PathGrid.astro';
 
 ## The problem
 
-- **LLM bills grow with traffic.** Enterprise spend on model APIs was $12.5B in 2025 ([Menlo Ventures](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/), 2025 report). Much of what teams send is narrow and repetitive: classification, extraction, ticket triage, steps inside agents.
+- **LLM bills grow with traffic.** Enterprise spend on model APIs was $12.5B in 2025 ([Menlo Ventures](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/), report of Dec 9, 2025, read Oct 26, 2026). Much of what teams send is narrow and repetitive: classification, extraction, ticket triage, steps inside agents.
 - **The obvious fix is often not allowed.** Training a cheaper model on a closed model's answers breaks the terms of the largest vendors: [OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/) and [Anthropic Commercial Terms §D.4(a)](https://www.anthropic.com/legal/commercial-terms) (both read Oct 21, 2026) forbid using outputs to train competing models. Not legal advice.
 - **Doing it by hand is slow.** Logging, cleaning, fine-tuning, evaluating, deploying and watching for regressions are separate chores, and most tools cover one.
 
@@ -61,7 +61,7 @@ flowchart TB
 </StatRow>
 
 - **You own the result.** A LoRA adapter on an open base model, plus a signed bill of materials listing the teacher and license of every training example.
-- **Releases are gated.** A new student must beat the current one on held-out data, then pass shadow and canary stages. See [The release gate](/guides/release-gate/).
+- **Releases are gated.** A new student needs at least 95% precision on held-out data and may fall no more than 2 points behind the live version, then passes shadow and canary stages. See [The release gate](/guides/release-gate/).
 
 ## How it could make money
 
@@ -70,7 +70,7 @@ The plan is an open-source core (Apache-2.0: gateway, ledger, Night School, rele
 ## Why now
 
 - **A deadline for fine-tuning customers.** OpenAI lists no new self-serve fine-tuning jobs after Jan 6, 2027 ([OpenAI deprecations](https://developers.openai.com/api/docs/deprecations), checked Oct 21, 2026). Teams with fine-tunes there need somewhere else to run them.
-- **Small models are being used for narrow tasks.** NVIDIA Research estimates that 40 to 70% of LLM calls in agent systems could go to small models ([arXiv 2506.02153](https://arxiv.org/abs/2506.02153), an estimate, not a measurement).
+- **Small models are being used for narrow tasks.** An NVIDIA Research paper estimates that about 40 to 70% of the LLM queries in the three open agent systems it studied (MetaGPT, Open Operator and Cradle) could go to specialized small models ([arXiv 2506.02153v3](https://arxiv.org/abs/2506.02153v3), revised Sep 22, 2026, read Oct 26, 2026). It is an estimate for those three systems, not a measurement.
 
 ## How it differs from other categories
 
@@ -106,8 +106,8 @@ flowchart TB
 
 ## Honest limits
 
-<Aside type="caution" title="As of Oct 25, 2026">
-- **Not proven on live traffic.** Real teacher calls on Nebius Token Factory built the text-to-SQL data (Oct 22, 2026), but the gateway's live mode is unverified until the day-1 checks pass, and the public demo has no student endpoint yet, so the teacher answers every request. Savings figures come from mock models and are labelled simulation. A text-to-SQL adapter trained on a borrowed GPU is the first real training result ([Results](/guides/results/)).
+<Aside type="caution" title="As of Oct 26, 2026">
+- **Not proven on live traffic.** Real teacher calls on Nebius Token Factory built the text-to-SQL data (Oct 22, 2026), and the public demo runs in live mode, but it has no student endpoint yet, so the teacher answers every request. Savings figures come from mock models and are labelled simulation. The measured adapters, two text-to-SQL rounds and one tool-calling round, were trained on a borrowed GPU ([Results](/guides/results/)).
 - **Early stage.** There is no customer and no revenue.
 - **Savings depend on the traffic mix.** Per-token savings against the cheapest tiers of closed models are small. The large savings come from moving traffic off top-tier models, and only for tasks a small model can learn.
 - **A Token Factory terms question is open.** A question about its Terms of Service §5(f) was sent to Nebius support on Oct 19, 2026. This is not legal advice.

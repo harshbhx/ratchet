@@ -1,6 +1,6 @@
 ---
 title: For judges
-description: "A ten-minute tour for an evaluator of Ratchet: what to open first, a five-step try-it path, what is simulation and what is live, how to verify a result with one command, and the honest limits."
+description: "A ten-minute tour for an evaluator of Ratchet: what to open first, a five-step try-it path, what is simulation and what is live, how to verify a result with two commands, and the honest limits."
 ---
 
 import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
@@ -23,9 +23,9 @@ Short on time? Start with [the demo video](https://video.ratchet.dualmindlab.tec
   <PathCard title="The code" href="https://github.com/harshbhx/ratchet" icon="repo" tone="neutral" eyebrow="Apache-2.0" description="The gateway, Night School, the release gate and the tests, on GitHub." />
 </PathGrid>
 
-These docs are at https://docs.ratchet.dualmindlab.tech.
+These docs are at https://docs.ratchet.dualmindlab.tech. The main site has a [judges' console](https://ratchet.dualmindlab.tech/judges) that puts the same path, the results and the checks to run on one page.
 
-Adapters and data on Hugging Face: [text-to-SQL adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql), [tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall), [exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), [recorded Scout runs](https://huggingface.co/spaces/harshbhx/ratchet-scout). Evidence folders in the repository: `evidence/live-smoke-2026-10-23`, `evidence/scout`, `evidence/text2sql-round2`, `evidence/text2sql-exam2`, `evidence/toolcall`.
+Adapters and data on Hugging Face: [text-to-SQL adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql), [tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall), [text-to-SQL exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), the tool-calling [hard exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard) and [BFCL exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl), the [exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) (the tool-calling answers, question by question) and [recorded Scout runs](https://huggingface.co/spaces/harshbhx/ratchet-scout). Evidence folders in the repository: `evidence/live-smoke-2026-10-23`, `evidence/scout`, `evidence/text2sql-round2`, `evidence/text2sql-exam2`, `evidence/toolcall`.
 
 ## Try it in five steps
 
@@ -36,24 +36,24 @@ flowchart LR
   S1(["1 Story page"]) ==> S2(["2 Scout"])
   S2 ==> S3(["3 Dashboard"])
   S3 ==> S4["4 Proof"]
-  S4 ==> S5["5 SQL results"]
+  S4 ==> S5["5 Results"]
 ```
 
 <figcaption>
 
-**Reading this diagram.** The three rounded steps are on the live site and the two square ones are in these docs. The order goes from the idea, to a running system, to the books, to evidence you can recompute, to the one real training result. Each step is about two minutes; the walk-through below has the detail.
+**Reading this diagram.** The three rounded steps are on the live site and the two square ones are in these docs. The order goes from the idea, to a running system, to the books, to evidence you can recompute, to the measured text-to-SQL (headline) and tool-calling adapters, trained on synthetic data. Each step is about two minutes; the walk-through below has the detail.
 
 </figcaption>
 </figure>
 
 <Stepper
-  label="A five-minute tour"
+  label="A ten-minute tour"
   steps={[
     { title: 'The story page', body: 'Open [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech). Look at "The catch" (why closed models cannot be distilled), "One way only" (the release gate) and "The honest bill" (when self-hosting does not pay).\n\n"Watch it learn" is a replay of the reference **simulation**.' },
     { title: 'The Scout demo', body: 'Open `/scout` and pick an example question to watch five agents work. Each call shows who answered it, what it cost and what the teacher alone would have cost.\n\nThe planner and the writer are pinned to the teacher by design; triage and reader calls are the repetitive ones the student learns to take over.', tone: 'owned' },
     { title: 'The dashboard', body: 'Open `/dashboard`. Read the by-task table, the versions with their signed bills of materials, the release log and the economics panel (savings per token and by GPU-hours, the break-even, a recommendation).\n\nPaste an email and a card number into the redactor in the trust panel.' },
     { title: 'Proof you can run', body: 'Read [Proof you can run](/guides/proof/): commands that recompute a number from a signed record.' },
-    { title: 'Text-to-SQL results', body: 'Read [Results](/guides/results/): the one adapter trained on real data (see [Text-to-SQL](/guides/text-to-sql/)).' },
+    { title: 'The results', body: 'Read [Results](/guides/results/): the measured text-to-SQL (headline) and tool-calling adapters, trained on synthetic data (see [Text-to-SQL](/guides/text-to-sql/)).' },
   ]}
 />
 
@@ -99,7 +99,7 @@ flowchart TB
 
 <div class="rt-callout rt-callout--note">
 
-**Real, as of Oct 25, 2026.** Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The adapters were trained on a borrowed GPU, and their results are read from their own results files. The code and its roughly 1,900 tests run with no GPU. The only live run on record is a 20-request smoke run (`evidence/live-smoke-2026-10-23`): the teacher answered everything, no student was served and nothing was audited, so it measures no savings. Since Oct 24, 2026 the public live demo runs in live mode, and every request there is a real Token Factory call.
+**Real, as of Oct 26, 2026.** Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The adapters were trained on a borrowed GPU, and their results are read from their own results files. The code and its roughly 1,900 tests run with no GPU. The only live run on record is a 20-request smoke run (`evidence/live-smoke-2026-10-23`): the teacher answered everything, no student was served and nothing was audited, so it measures no savings. Since Oct 24, 2026 the public live demo runs in live mode, and every request there is a real Token Factory call.
 
 </div>
 
@@ -119,7 +119,7 @@ Every answer on Scout and the dashboard carries a badge:
 
 The Scout demo has a daily run cap. If it is used up you get a polite refusal; evaluators receive an access code with their instructions, never on a public page.
 
-## Verify a result with one command
+## Verify a result with two commands
 
 On the repository as cloned, these two commands recompute the published exam numbers from the saved answers:
 
@@ -128,7 +128,7 @@ python scripts/text2sql/exam_numbers.py --check
 python scripts/toolcall_results.py --check
 ```
 
-For a real signed bill of materials from your own gateway, `python -m ratchet.stats check bom.json --public-key <key>` recomputes its certificate from the signed counts, and `python -m ratchet.bom verify bom.json --public-key <key>` checks only the signature and the data lineage. No real BOM is published in the repository yet. The [proof page](/guides/proof/) walks through both with real files.
+For a real signed bill of materials from your own gateway, `python -m ratchet.stats check bom.json --public-key <key>` recomputes its certificate from the signed counts, and `python -m ratchet.bom verify bom.json --public-key <key>` checks only the signature and the data lineage. No real BOM is published in the repository yet. The [proof page](/guides/proof/) walks through every check; only the exam checks run on real files, and the others on documents the mock gateway writes.
 
 To see the loop move without any keys, run the mock demo (simulation, about a minute):
 
@@ -152,7 +152,7 @@ On `/dashboard` there click **Run 1 day + night** a few times, then **Break next
 
 ## Honest limits
 
-<Aside type="caution" title="As of Oct 25, 2026">
+<Aside type="caution" title="As of Oct 26, 2026">
 - The public demo has no student endpoint yet, so the teacher answers every request; the student endpoint and Night School's jobs are scripted and tested offline, ready to run with `make nebius-up`. The adapters were trained on a borrowed GPU.
 - Savings and precision figures on the story page, in the README and in most of these docs are **simulation**.
 - Precision means agreement with the teacher, not ground truth.

@@ -52,7 +52,7 @@ flowchart LR
 </figcaption>
 </figure>
 
-<Aside type="caution" title="Status as of Oct 25, 2026">
+<Aside type="caution" title="Status as of Oct 26, 2026">
 Teacher calls to Nemotron 3 Ultra on Nebius Token Factory are real (they built the text-to-SQL data on Oct 22, 2026), and the adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU, outside Night School. The full loop is complete and tested in simulation with mock models; the student endpoint, the training job and the demo VM kit are written and tested offline, ready to run with `make nebius-plan` and `make nebius-up`; live mode runs on the public demo, where every request is a real Token Factory call. Every number on this site is simulation, an estimate, or read from the text-to-SQL and tool-calling results files, and says which.
 </Aside>
 
@@ -86,7 +86,7 @@ Sometimes it will be, and Ratchet is built to keep that rare and visible:
 
 ### Does it work on real traffic yet?
 
-Not yet. As of Oct 25, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data), but the full loop has not served real traffic and the public demo has no student endpoint yet, so there are no live numbers. Live figures will come only from a published live-run results file. The measured results are the text-to-SQL and tool-calling adapters' exams, on [Results](/guides/results/); the only live run is a 20-request smoke run that measures no savings; everything else is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
+Not yet. As of Oct 26, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data), but the full loop has not served real traffic and the public demo has no student endpoint yet, so there are no live numbers. Live figures will come only from a published live-run results file. The measured results are the text-to-SQL and tool-calling adapters' exams, on [Results](/guides/results/); the only live run is a 20-request smoke run that measures no savings; everything else is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
 
 ### What does it cost?
 
@@ -119,7 +119,7 @@ The story page at https://ratchet.dualmindlab.tech, then `/scout` (ask an exampl
 
 ### Is the demo live or simulated?
 
-Mock mode is simulation, and the pages label it so. The hosted live demo runs in live mode and calls the real teacher on Token Factory. It has no GPU and no trained student yet, so the teacher answers every request (README, Oct 2026). Once a version exists, student calls go to the hosted, untuned Nano 30B <Who as="fallback" /> and carry that badge. The story page's replay and savings figures are simulation. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
+Mock mode is simulation, and the pages label it so. The hosted live demo runs in live mode and calls the real teacher on Token Factory. It has no GPU and no trained student yet, so the teacher answers every request (as of Oct 26, 2026). Once a version exists, student calls go to the hosted, untuned Nano 30B <Who as="fallback" /> and carry that badge. The story page's replay and savings figures are simulation. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Which numbers are real?
 
@@ -138,7 +138,7 @@ The text-to-SQL results (the headline) and the smaller tool-calling results, bot
 | Public demo host | Cloudflare Workers with Containers today; a Nebius CPU VM (`2vcpu-8gb`) is scripted and tested offline, ready to run with `make nebius-up` (`make nebius-plan` prints every step) |
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) |
 
-Token Factory did not offer fine-tuning or LoRA serving for Nemotron (Oct 2026), so the student is trained and served on Nebius AI Cloud. [Host it on Nebius](/guides/host-on-nebius/)
+Token Factory listed no fine-tuning or LoRA serving for Nemotron when this design was chosen (research notes, Oct 19, 2026), and Nebius's [post on post-training in Token Factory](https://nebius.com/blog/posts/post-training-in-token-factory) names no Nemotron model to fine-tune (read Oct 26, 2026), so the student is trained and served on Nebius AI Cloud. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Where are the Token Factory and Tavily calls?
 
@@ -146,7 +146,7 @@ In live mode, every teacher call goes to Token Factory: cold starts, escalations
 
 ### Can I check the claims myself?
 
-Yes, offline. `make test` runs the 1,922 tests with no network and no GPU; `make sim` reproduces the reference simulation exactly; `python -m ratchet.bom verify` checks an adapter's signed BOM and its `NOTICE.md`; `python -m ratchet.stats check` recomputes a certificate from its signed counts; `python -m ratchet.proof heldout` checks that no golden example was trained on; `python -m ratchet.receipt verify` checks a savings receipt. [Evidence](/guides/evidence/)
+Yes, offline. `make test` runs the 1,934 tests with no network and no GPU; `make sim` reproduces the reference simulation exactly; `python -m ratchet.bom verify` checks an adapter's signed BOM and its `NOTICE.md`; `python -m ratchet.stats check` recomputes a certificate from its signed counts; `python -m ratchet.proof heldout` checks that no golden example was trained on; `python -m ratchet.receipt verify` checks a savings receipt. [Evidence](/guides/evidence/)
 
 ### Why does a Scout run say "search unavailable"?
 
@@ -254,11 +254,11 @@ No. Below break-even, the hosted fallback on Token Factory is cheaper: you pay p
 
 ### Is it ready for production?
 
-Not yet, and it says so. The public demo has no student endpoint yet, so the teacher answers every request, and live mode is unverified until the day-1 checks pass; it runs as one gateway process; PII redaction is pattern-based, so names and street addresses are not caught; precision means agreement with the teacher, not ground truth; and Scout's reader is checked on its labels only, not on the free-text fact it extracts. The README's [limitations](https://github.com/harshbhx/ratchet#limitations) list is the full picture. [Security](/guides/security/)
+Not yet, and it says so. The public demo has no student endpoint yet, so the teacher answers every request; it runs as one gateway process; PII redaction is pattern-based, so names and street addresses are not caught; precision means agreement with the teacher, not ground truth; and Scout's reader is checked on its labels only, not on the free-text fact it extracts. The README's [limitations](https://github.com/harshbhx/ratchet#limitations) list is the full picture. [Security](/guides/security/)
 
 ### Where does my data go?
 
-Everything runs in your own Nebius project: the gateway and ledger on your VM, adapters in your bucket, teacher calls to Token Factory with your key. The teacher sees the original request; redaction happens before anything is stored as training data. Tavily is called only by the Scout demo. [Host it on Nebius](/guides/host-on-nebius/)
+When you host it on Nebius, everything runs in your own project: the gateway and ledger on your VM, adapters in your bucket, teacher calls to Token Factory with your key. The teacher sees the original request; redaction happens before anything is stored as training data. Tavily is called only by the Scout demo. [Host it on Nebius](/guides/host-on-nebius/)
 
 ## Related
 

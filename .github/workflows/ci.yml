@@ -310,6 +310,9 @@ jobs:
       - name: Docs site builds (syncs ../docs, validates every internal link)
         run: npm run build
         working-directory: docs-site
+        env:
+          # A public edit that no longer matches, a dropped anchor or a missing generated page fails the build.
+          DOCS_STRICT: "1"
 
   docker:
     # The image holds the package (ratchet/, sim/, pyproject.toml), so a backend change builds it too.

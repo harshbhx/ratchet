@@ -31,7 +31,7 @@ export const PUBLIC_DOCS = [
   ['ARCHITECTURE.md', 'Architecture'],
   ['CONFIGURATION.md', 'Configuration'],
   ['DEPLOYMENT.md', 'Deployment'],
-  ['DEPLOY_NEBIUS_VM.md', 'Demo VM on Nebius'],
+  ['DEPLOY_NEBIUS_VM.md', 'Nebius VM kit (alternative host)'],
   ['RUNBOOK.md', 'Runbook'],
   ['SCOUT.md', 'Scout reference'],
   ['TESTING.md', 'Testing'],

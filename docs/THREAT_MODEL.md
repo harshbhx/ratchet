@@ -1,6 +1,6 @@
 # Threat model: security and privacy
 
-Scope: Ratchet v0.5.0 (the last tagged release is v0.4.0) in live mode, made up of the gateway, the SQLite ledger, the Night School driver, the Nebius bucket, the vLLM endpoint, the Token Factory calls, and the Scout demo with Tavily search, as hosted on Cloudflare Containers (the public demo) or on the demo VM kit ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)). Mock mode handles only synthetic data. Each threat below says plainly what exists today and what is planned.
+Scope: Ratchet v0.5.0 (released and tagged Oct 25, 2026) in live mode, made up of the gateway, the SQLite ledger, the Night School driver, the Nebius bucket, the vLLM endpoint, the Token Factory calls, and the Scout demo with Tavily search, as hosted on Cloudflare Containers (the public demo) or on the demo VM kit ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md)). Mock mode handles only synthetic data. Each threat below says plainly what exists today and what is planned.
 
 ## Assets
 

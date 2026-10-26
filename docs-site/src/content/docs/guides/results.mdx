@@ -1,6 +1,6 @@
 ---
 title: Results
-description: What the text-to-SQL adapter scored on databases it never saw, how to read the numbers, and how the simulation numbers differ from them.
+description: What the text-to-SQL adapters (the headline) and the tool-calling adapter scored on exams they never trained on, how to read the numbers, and how the simulation numbers differ from them.
 ---
 
 import { Steps, Aside } from '@astrojs/starlight/components';
@@ -12,19 +12,21 @@ import StatRow from '../../../components/StatRow.astro';
 import sqlResults from '../../../data/sql-results.json';
 import extra from '../../../data/sql-extra.json';
 import ExamCharts from '../../../components/ExamCharts.astro';
+import exams from '../../../data/exams.json';
 
 export const run = sqlResults;
 export const measured = run?.status !== 'pending' && run?.mode === 'sql';
 export const pct = (c) => (100 * c.agree / c.n).toFixed(1) + '%';
 export const rng = (c) => (100 * c.wilson95[0]).toFixed(1) + ' to ' + (100 * c.wilson95[1]).toFixed(1) + '%';
 export const A = extra.all_rows;
+export const S = exams.scores;
 export const lines = [
   ['Base model', A.base_v1, A.base_v2],
   ['Teacher answering the exam prompt', A.teacher, null],
   ['Adapter', A.adapter_v1, A.adapter_v2],
 ];
 
-<Summary>This page shows what the text-to-SQL adapter measured on an exam of databases it never trained on, read straight from the run's results file, and keeps those numbers apart from the simulation numbers used elsewhere in these docs.</Summary>
+<Summary>This page shows what the text-to-SQL adapters (the headline) and the tool-calling adapter measured on exams they never trained on, read straight from the runs' results files, and keeps those numbers apart from the simulation numbers used elsewhere in these docs.</Summary>
 
 <Eli10>
 
@@ -40,7 +42,26 @@ Every score comes with a range, like "somewhere between 64% and 82%". A small ex
   <Stat value="CPU only" label="to recompute every number" note="From the raw answers, with one command." />
 </StatRow>
 
-## The adapter's results
+## The headline: text-to-SQL, round 2
+
+Two exams, scored strictly (the scores come from `src/data/exams.json`, which `scripts/text2sql/exam_numbers.py --check` recomputes from the saved answers): a query is right only when running it returns the same rows as the exam's stored query on the same database. Exam 1 was written by the teacher; exam 2 by a different model, on industries that appear in neither the training data nor exam 1.
+
+<table>
+  <thead><tr><th>Who answered</th><th>Exam 1 ({S.exam1.base.n} questions)</th><th>Exam 2 ({S.exam2.base.n} questions)</th></tr></thead>
+  <tbody>
+    {[['Base model (untrained Nano 4B)', 'base'], ['Teacher (Nemotron 3 Ultra)', 'teacher'], ['Adapter, round 2', 'r2']].map(([name, id]) => (
+      <tr><td>{name}</td><td>{S.exam1[id].agree} of {S.exam1[id].n} = <strong>{pct(S.exam1[id])}</strong></td><td>{S.exam2[id].agree} of {S.exam2[id].n} = <strong>{pct(S.exam2[id])}</strong></td></tr>
+    ))}
+  </tbody>
+</table>
+
+- **The training shows on both exams.** The round 2 adapter scores {(S.exam1.r2.agree / S.exam1.base.agree).toFixed(1)} times the base model on exam 1 and {(S.exam2.r2.agree / S.exam2.base.agree).toFixed(1)} times on exam 2.
+- **It does not replace the teacher yet.** At the 95% precision target it answers {extra.round2.gate.answered} of {extra.round2.gate.of} questions on exam 1's measurement half and {extra.exam2.gate.answered} of {extra.exam2.gate.of} on exam 2's.
+- **The exams do not show it is better than the teacher.** Each exam has one stored query per question, so a correct query with other columns counts as a miss, and the teacher's own score shows it. The sections below give the ranges, round 1 and the details.
+
+The tool-calling adapter's results (the second result) are in [Tool calling, round 3](#tool-calling-round-3) below.
+
+## Round 1, on the measurement half
 
 <p>Status: {run?.sample === true
   ? <span class="rt-badge rt-badge--bad">Sample data, not a result</span>
@@ -92,7 +113,7 @@ Round 2 trained a second adapter on {extra.round2.training.rows.toLocaleString('
 - **Better than round 1, but the exam cannot call it settled.** Row by row, {extra.round2.flips_vs_round1.wrong_to_right} questions went from wrong to right and {extra.round2.flips_vs_round1.right_to_wrong} from right to wrong. The two ranges overlap, and a test on those changes gives p = {extra.round2.flips_vs_round1.two_sided_p}, so some of the gain could be chance.
 - **The gain is on familiar industries.** On industries seen in training the adapter went from {extra.round2.round1_by_domain.seen[0]} to {extra.round2.by_domain.seen[0]} of {extra.round2.by_domain.seen[1]}. On the two industries it never saw it stayed at {extra.round2.by_domain.unseen[0]} of {extra.round2.by_domain.unseen[1]}.
 - **By difficulty:** simple {extra.round2.by_difficulty.simple[0]} of {extra.round2.by_difficulty.simple[1]}, join {extra.round2.by_difficulty.join[0]} of {extra.round2.by_difficulty.join[1]}, aggregate {extra.round2.by_difficulty.aggregate[0]} of {extra.round2.by_difficulty.aggregate[1]}, hard {extra.round2.by_difficulty.hard[0]} of {extra.round2.by_difficulty.hard[1]}.
-- **The point estimate is above the teacher's, but we do not claim it beats the teacher.** The exam has one stored query per question, written together with the question, and the two 95% ranges still overlap a little (adapter 32.0 to 46.4%, teacher 19.6 to 32.6%).
+- **The point estimate is above the teacher's, but we do not claim it is better than the teacher.** The exam has one stored query per question, written together with the question, and the two 95% ranges still overlap a little (adapter 32.0 to 46.4%, teacher 19.6 to 32.6%).
 - **The confidence gate did not improve.** At the 95% precision target {extra.round2.gate.answered} of {extra.round2.gate.of} test questions pass, so the cost saved at that coverage is {extra.round2.gate.saved_pct}%. The adapter still does not replace the teacher.
 - **No exam question leaked into training:** {extra.round2.leakage.exam_prompts_in_training} of {extra.round2.leakage.of} for prompts, questions, stored queries and table-name sets. Six generated rows that shared a question or a query with the exam were removed before training.
 
@@ -154,6 +175,28 @@ Join questions improved most from round 1 to round 2. Simple questions did not i
 <ExamCharts kind="flips" />
 
 The exam, its fingerprint, every answer and the command that recomputes the scores are in `evidence/text2sql-exam2` in the repository.
+
+## Tool calling, round 3
+
+![Strict tool-calling scores on a hard exam and a BFCL exam: untrained model, tool-calling adapter and teacher, with the 95% range and exact counts](https://raw.githubusercontent.com/harshbhx/ratchet/main/docs/img/toolcall-results.svg)
+
+A tool-calling adapter on Nemotron 3 Nano 4B (2,940 training rows, about $2.33 of GPU time), scored strictly on two exams. These are measured results on real models, not the simulation (Oct 24, 2026).
+
+| | Hard exam (150) | BFCL exam (300) |
+|---|---|---|
+| Untrained Nano 4B | 94 of 150 (62.7%, 95% range 54.7 to 70.0%) | 232 of 300 (77.3%, 95% range 72.3 to 81.7%) |
+| Teacher (Nemotron 3 Ultra) | 137 of 150 (91.3%, 95% range 85.7 to 94.9%) | 265 of 300 (88.3%, 95% range 84.2 to 91.5%) |
+| Tool-calling adapter | 136 of 150 (90.7%, 95% range 84.9 to 94.4%) | 241 of 300 (80.3%, 95% range 75.5 to 84.4%) |
+
+On the hard exam the adapter is above the untrained model: 90.7% against 62.7%, and the 95% ranges do not overlap. It is about the same as the teacher: 90.7% against 91.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart).
+
+On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is lower than the teacher: 80.3% against 88.3% (241/300 against 265/300; the 95% ranges overlap only slightly, so part of the gap could be chance).
+
+Hard exam: question by question against the untrained model, the adapter fixed 42 and broke 0 (exact sign test p < 0.0001). BFCL exam: question by question against the untrained model, the adapter fixed 15 and broke 6 (exact sign test p = 0.0784).
+
+Strict scoring: an answer counts only if it is one JSON object with the right tool and arguments; a reply with text around the JSON is wrong. Free-text arguments are a known weak spot in the training data: the strict scorer cannot agree on free text, so tools such as create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training. The adapter was trained on a borrowed GPU, on synthetic data. The hard exam (150 questions, 20 new tools) was written by Claude Sonnet 5.5 for evaluation only and is never training data; the second exam (300 questions) is drawn from the Berkeley Function Calling Leaderboard (Apache-2.0).
+
+Every number comes from `evidence/toolcall/results.json`, which `python scripts/toolcall_results.py --check` recomputes from the saved answers.
 
 ## How it really works
 
@@ -274,33 +317,7 @@ flowchart TB
 | The numbers' code | `measure_adapter.py`: `agreement`, `wilson`, `calibrate`, `build_report` |
 | Simulation | `python -m sim.simulate`, `make reference`; see the repository's `docs/TESTING.md` |
 
-## Tool calling, round 3
-
-![Strict tool-calling scores on a hard exam and a BFCL exam: untrained model, tool-calling adapter and teacher, with the 95% range and exact counts](https://raw.githubusercontent.com/harshbhx/ratchet/main/docs/img/toolcall-results.svg)
-
-A tool-calling adapter on Nemotron 3 Nano 4B (2,940 training rows, about $2.33 in all), scored strictly on two exams. These are measured results on real models, not the simulation (2026-10-24).
-
-| | Hard exam (150) | BFCL exam (300) |
-|---|---|---|
-| Untrained Nano 4B | 94 of 150 (62.7%, 95% range 54.7 to 70.0%) | 232 of 300 (77.3%, 95% range 72.3 to 81.7%) |
-| Teacher (Nemotron 3 Ultra) | 137 of 150 (91.3%, 95% range 85.7 to 94.9%) | 265 of 300 (88.3%, 95% range 84.2 to 91.5%) |
-| Tool-calling adapter | 136 of 150 (90.7%, 95% range 84.9 to 94.4%) | 241 of 300 (80.3%, 95% range 75.5 to 84.4%) |
-
-On the hard exam the adapter is above the untrained model: 90.7% against 62.7%, and the 95% ranges do not overlap. It is about the same as the teacher: 90.7% against 91.3% (lower by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart).
-
-On the BFCL exam the adapter is about the same as the untrained model: 80.3% against 77.3% (higher by point estimate, but the 95% ranges overlap, so the exam cannot tell them apart). It is lower than the teacher: 80.3% against 88.3% (241/300 against 265/300; the 95% ranges overlap only slightly, so part of the gap could be chance).
-
-Hard exam: question by question against the untrained model, the adapter fixed 42 and broke 0 (exact sign test p < 0.0001). BFCL exam: question by question against the untrained model, the adapter fixed 15 and broke 6 (exact sign test p = 0.0784).
-
-Strict scoring: an answer counts only if it is one JSON object with the right tool and arguments; a reply with text around the JSON is wrong. Free-text arguments are a known weak spot in the training data: the strict scorer cannot agree on free text, so tools such as create_ticket (15 training rows), search_files, send_payment and search_inbox are thin. The hard exam uses 20 tools that were never in training. The adapter was trained on a borrowed GPU, on synthetic data. The hard exam (150 questions, 20 new tools) was written by Claude Sonnet 5.5 for evaluation only and is never training data; the second exam (300 questions) is drawn from the Berkeley Function Calling Leaderboard (Apache-2.0).
-
-Every number comes from `evidence/toolcall/results.json`, which `python scripts/toolcall_results.py --check` recomputes from the saved answers.
-
 ## Common questions
-
-### The panel says results are pending. Is something broken?
-
-No. It means the training run has not produced a `results.json` yet. Nothing on the page is a stand-in for it.
 
 ### Why not just show one accuracy number?
 
@@ -308,7 +325,7 @@ One number hides the sample size and the slices. The range shows how much to tru
 
 ### Why is the exam only partly used for scoring?
 
-Half of the exam rows set the confidence threshold and the other half grade it. The comparison between the base model and the adapter is also scored on the graded half, so both are measured on the same questions.
+Only the confidence gate uses half the exam: the even rows set the threshold and the odd rows grade it, so coverage and precision when it answers (the Round 1 panel's gate figures, and the gate numbers for round 2 and exam 2) come from the graded half. The Round 1 panel's base-against-adapter bars are scored on that graded half too (86 of 172 questions). Every table on this page, the headline included, scores all the questions of each exam (172 and 200), and the base model, the teacher and each adapter answer the same questions.
 
 ### Can I check these numbers without a GPU?
 

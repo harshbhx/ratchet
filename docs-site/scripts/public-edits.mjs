@@ -21,14 +21,16 @@ export const EDITS = {
     [/^\| ADR \| Decision \|$/m, '| # | Decision |'],
     [/^\| \[0011\]\(.*\n/m, ''],
     [/Before \[?ADR 0060\]?(\([^)]*\))?/, 'Before the hot-path caches'],
+    // The id scrubber turns "PRD" into "product requirements", which reads badly before "§8.1's".
+    [/PRD §8\.1's SM-1 to SM-5/, 'SM-1 to SM-5'],
+    [/^PRD §8\.1's metrics come from/m, 'The success metrics come from'],
   ],
   'CONFIGURATION.md': [
     [/for hackathon judges/g, 'for evaluators'],
     [/ \(PRD §6\.16\)/g, ''],
   ],
   'DEPLOY_NEBIUS_VM.md': [
-    [/so judges can use it from \*\*Oct 29 to Dec 15, 2026\*\*\./, 'so evaluators can use it.'],
-    [/the checks in \[DAY1\.md\]\(DAY1\.md\) pass/, 'the first-run checks (`scripts/day1_check.py`) pass'],
+    [/so judges can use it from \*\*Oct 29 to Dec 15, 2026\*\* if you choose this host\./, 'so evaluators can use it if you choose this host.'],
     [/^> \*\*For judging, live mode is required\.\*\*.*$/m, '> **The public demo should run in live mode.** Mock mode makes no Token Factory or Tavily call. Keep the VM running with the budget guard on, and make sure the Token Factory and Tavily credits last as long as the demo is meant to stay up.'],
     [/\(README or Devpost\)/, '(for example in the README)'],
     [/The Devpost gallery is public, so without/, 'The demo is public, so without'],
@@ -48,10 +50,8 @@ export const EDITS = {
   ],
   'RUNBOOK.md': [
     [/, but the Tavily prize needs working Tavily calls:/, ', but the demo needs working Tavily calls:'],
-    [/ \(lane D\)/, ''],
     [/to the hackathon managers/, 'to the evaluators'],
-    [/If lane E's retention window/, 'If the retention window'],
-    [/^3\. Fill each `\[LIVE NUMBER\]` in .*$/m, '3. Replace each `[LIVE NUMBER]` in the published figures with the value from `evidence/live/results.json`, using the placeholder map in `docs/LIVE_RESULTS.md`.'],
+    [/^3\. Take each live number for the README and the submission text from .*$/m, '3. Take each live number for the published figures from `evidence/live/results.json`, using the placeholder map in `docs/LIVE_RESULTS.md`, with the `<!-- claim:live.* -->` anchor right after each number.'],
     [/^4\. Move the PRD statuses.*\n/m, ''],
     [/^5\. Stop the endpoint/m, '4. Stop the endpoint'],
   ],
@@ -61,15 +61,29 @@ export const EDITS = {
   ],
   'SCOUT.md': [
     [/for hackathon judges/g, 'for evaluators'],
-    [/ \(and the Tavily prize needs working Tavily calls\)/, ''],
   ],
   'TESTING.md': [
-    [/ in the PRD until the day-1 checks \(\[?DAY1\.md\]?(\([^)]*\))?\)/, ' until the first-run checks'],
+    [/ in the PRD until the day-1 checks \(`scripts\/day1_check\.py`\)/, ' until the first-run checks (`scripts/day1_check.py`)'],
+    // The id scrubber turns "PRD" into "product requirements", which reads badly in these two sentences.
+    [/meets PRD §8\.1's SM-1 \(/, 'meets SM-1 ('],
+    [/, so the PRD says `Not met`\./, ', so its status is `Not met`.'],
+    [/these back the PRD's `Met in simulation \(seed 7\)` statuses/, 'these back the `Met in simulation (seed 7)` statuses'],
     [/where the PRD plans it and its foundations exist/, 'where its foundations exist'],
     [/, and `tests\/test_traceability\.py` checks that the PRD, the invariants, the code and the tests agree \(\[Traceability\]\(#traceability\)\)/, ''],
     [/^python scripts\/reqtrace\.py --check .*\n/m, ''],
     [/^\| `tests\/test_traceability\.py` \|.*\n/m, ''],
     [/, and update the test counts above \(\[Traceability\]\(#traceability\)\)/, ', and update the test counts above'],
     [/^\| `tests\/test_docs_claims\.py` \|.*\n/m, ''],
+  ],
+};
+
+/**
+ * Edits for the generated reference pages (api/cli.md), applied once the page is built from generated/cli.json. Its help
+ * text is captured from the code, which points at rows of a private checklist; the published page names no row.
+ */
+export const GENERATED_EDITS = {
+  'cli.md': [
+    [/ as an escalation asks for them \(DAY1 row 10\)\./, ' as an escalation asks for them.'],
+    [/: DAY1 row 4's `bash deploy\/train_job\.sh test` is that adapter\./, ': `bash deploy/train_job.sh test` trains that adapter.'],
   ],
 };

@@ -155,7 +155,7 @@ const prices = d?.cost_usd_on_measured_rows?.prices_per_million_tokens;
         <dd>{prov.gpu ?? 'n/a'}</dd>
       </dl>
       <p class="sqlr-foot">
-        Check it yourself: <code>python measure_adapter.py verify --raw raw.jsonl --results results.json --golden golden.jsonl --dbs dbs.json</code>{' '}
+        Check it yourself: <code>python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json --golden golden.jsonl --dbs dbs.json</code>{' '}
         recomputes every number above from the raw answers and fails if any differs. Only the first 12 characters of each SHA-256 are shown.
       </p>
     </div>

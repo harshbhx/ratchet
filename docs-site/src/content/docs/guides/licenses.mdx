@@ -116,11 +116,11 @@ flowchart TB
 ### Why closed teachers are refused
 
 <StatRow cols={2} label="Closed and open teachers">
-  <Stat value="Refused" label="a closed teacher" note="Terms such as OpenAI's Business Terms §3.3(e) forbid training competing models on the outputs. Ratchet refuses these teachers in code." />
+  <Stat value="Refused" label="a closed teacher" note="Terms such as OpenAI's Business Terms §3.3(e) (read Oct 21, 2026) forbid training competing models on the outputs. Ratchet refuses these teachers in code." />
   <Stat value="Allowed" label="an open teacher" tone="owned" note="Nemotron 3 Ultra is released under OpenMDW-1.1, which places no restrictions on outputs. Each stored example records the teacher and its license." />
 </StatRow>
 
-The terms of the most used closed models forbid using their outputs to train competing models. OpenAI's [Business Terms §3.3(e)](https://openai.com/policies/business-terms/) forbid using Output "to develop artificial intelligence models that compete with OpenAI". A distillation tool that learns from GPT traffic would put its users in breach of terms like these. The README's [Why "license-clean"](https://github.com/harshbhx/ratchet#why-license-clean) section lists the other closed vendors' clauses.
+The terms of the most used closed models forbid using their outputs to train competing models. OpenAI's [Business Terms §3.3(e)](https://openai.com/policies/business-terms/) (read Oct 21, 2026) forbid using Output "to develop artificial intelligence models that compete with OpenAI". A distillation tool that learns from GPT traffic would put its users in breach of terms like these. The README's [Why "license-clean"](https://github.com/harshbhx/ratchet#why-license-clean) section lists the other closed vendors' clauses.
 
 So the rule is hard, not a warning: the teacher must be in the registry with `distill_ok=True`, and an override needs a reviewed code change. The cost is real: traffic that runs on closed models today cannot become training data. It has to go through an open teacher first.
 
