@@ -57,6 +57,8 @@ sha256sum evidence/text2sql-exam2/data/golden.jsonl
 
 Expected: `b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058` (on Windows: `python -c "import hashlib;print(hashlib.sha256(open('evidence/text2sql-exam2/data/golden.jsonl','rb').read()).hexdigest())"`).
 
+The repository's `.gitattributes` keeps every file under `evidence/` byte for byte on checkout, so a Windows clone hashes the same as Linux. With an older clone, or a Git that ignores it, clone again with `git clone -c core.autocrlf=false https://github.com/harshbhx/ratchet.git`.
+
 That hash was written into `evidence/text2sql-exam2/data/exam_manifest.json` when the exam was generated. Exam 1's fingerprint is `6b9c1db49bbe2aecf4157ed27845fe024d1b4fcb540f93d81b6987b982b22864`, in the [round 1 manifest](../evidence/text2sql-round1/MANIFEST.json).
 
 **It shows:** the exam file is the one that was frozen. **It does not show:** when the hash was first recorded: that rests on this repository's dated history and the saved generator output.
@@ -109,11 +111,14 @@ A signed BOM is the operator's signed statement of the data and evaluation behin
 ## 8. The test suite and the requirements matrix
 
 ```bash
-make test                      # 1934 tests, no network, no GPU
+make test                      # 1934 tests, no network, no GPU (Linux, macOS or WSL)
+python -m pytest -q            # the same suite without make
 python scripts/reqtrace.py --check
 ```
 
-Expected for the second command: `reqtrace: OK: 226 requirements …`. Every requirement in the PRD and every invariant maps to code and to tests in [REQUIREMENTS.md](REQUIREMENTS.md).
+Run the suite on Linux, macOS or WSL: Windows has no `make`, and `tests/test_watch.py` needs `fcntl`, which Windows lacks.
+
+Expected for the last command: `reqtrace: OK: 226 requirements …`. Every requirement and every invariant maps to code and to tests in [REQUIREMENTS.md](REQUIREMENTS.md).
 
 ## What it cost
 

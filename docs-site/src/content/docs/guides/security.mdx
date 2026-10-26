@@ -1,6 +1,6 @@
 ---
 title: Security and safety
-description: Who may call what, how spend is capped, what is logged and stored, how the demo VM is locked down, and the rules the learning loop never breaks.
+description: Who may call what, how spend is capped, what is logged and stored, how the Nebius VM kit is locked down, and the rules the learning loop never breaks.
 ---
 
 import { Steps, Aside } from '@astrojs/starlight/components';
@@ -70,7 +70,7 @@ flowchart TB
 
 <Steps>
 
-1. **The edge.** On the demo VM, Caddy serves HTTPS with automatic certificates, adds security headers (`Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, a referrer and a permissions policy) and, with `RATCHET_API_GUARD=guarded`, blocks the paid and management paths unless a request carries the edge token. The gateway's port 8000 is only reachable from Caddy.
+1. **The edge.** In the VM kit, Caddy serves HTTPS with automatic certificates, adds security headers (`Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, a referrer and a permissions policy) and, with `RATCHET_API_GUARD=guarded`, blocks the paid and management paths unless a request carries the edge token. The gateway's port 8000 is only reachable from Caddy.
 
 2. **Keys and access levels.** The gateway gives every route one access level (`ratchet/access.py`) and checks the caller's key for it. Live mode refuses to start without API keys unless you say something else checks callers.
 
@@ -268,7 +268,7 @@ Before a request and the teacher's answer are stored as a training example, `rat
 
 ### Secrets and the host
 
-From the [demo VM guide](/reference/deploy-nebius-vm/#security-notes):
+From the [VM kit guide](/reference/deploy-nebius-vm/#security-notes):
 
 - **No secrets in git.** Keys live only in `deploy/vm/.env` on the VM, mode 0600, owned by the `ratchet` user. `.gitignore` ignores `.env` files at any depth. Never paste keys into `cloud-init.yaml` or `create_vm.sh`.
 - **Port 8000 is never published.** The compose file uses `expose`, not `ports`, so only Caddy on the internal network reaches the gateway. That is also why uvicorn may trust `X-Forwarded-For` from any forwarder there: Caddy replaces any client-sent value with the real address.
@@ -286,7 +286,7 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 
 **Assets**: customer request text (stored examples, the training file in the bucket, and what adapters memorise), teacher outputs and their license provenance, the adapters the customer owns, the ledger, the API keys, the BOM signing key, the demo budget, and the release decisions that choose which model answers users.
 
-**Trust boundaries**: client to gateway (keys); gateway to Token Factory (HTTPS, bearer key); gateway to the vLLM endpoint (HTTPS, endpoint token); the cron host to the Nebius CLI (local credentials); job and endpoint to the bucket (a Nebius-managed mount); gateway to Tavily (search results are **untrusted web content**); internet to Caddy on the demo VM.
+**Trust boundaries**: client to gateway (keys); gateway to Token Factory (HTTPS, bearer key); gateway to the vLLM endpoint (HTTPS, endpoint token); the cron host to the Nebius CLI (local credentials); job and endpoint to the bucket (a Nebius-managed mount); gateway to Tavily (search results are **untrusted web content**); internet to Caddy in the VM kit.
 
 | Threat | Present today | Planned |
 |---|---|---|
@@ -303,7 +303,7 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 | Stolen BOM signing key (T21) | Read from the environment only; only the public half is served | A secrets manager, signing on a separate machine |
 
 <Aside type="caution" title="What runs where today">
-As of Oct 25, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are scripted and tested offline, ready to run with `make nebius-up`; live mode runs on the public demo, where every request is a real Token Factory call. As of Oct 21, 2026, items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, had not been checked on a real VM.
+As of Oct 26, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are scripted and tested offline, ready to run with `make nebius-up`; live mode runs on the public demo, where every request is a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
 </Aside>
 
 ### The safety rules the loop never breaks
@@ -383,11 +383,11 @@ No prompt or answer text goes into logs, metrics or `failures` rows. Request tex
 
 ### What is not protected yet?
 
-Names and street addresses are not redacted. A rare-trigger backdoor may never be audited. Runtime adapter loading on the endpoint is protected only by the endpoint token. The dashboard page cannot send a key yet, so a private live dashboard is read through the API. Unlearning is out of scope: an adapter trained on erased text keeps what it learned. All of these are listed as planned work in the threat model.
+Names and street addresses are not redacted. A rare-trigger backdoor may never be audited. Runtime adapter loading on the endpoint is protected only by the endpoint token. The dashboard page sends a key only for task writes, not for reads, so a private live dashboard is read through the API. Unlearning is out of scope: an adapter trained on erased text keeps what it learned. All of these are listed as planned work in the threat model.
 
 ### Can someone fake their IP to get around the Scout limit?
 
-Not on the demo VM: Caddy overwrites `X-Forwarded-For`, and the gateway trusts it only because port 8000 is not published. Elsewhere, `RATCHET_TRUST_PROXY` is off by default. Many real addresses can still use up the public share early; the judges' reserve is held back from them.
+Not in the Nebius VM kit: Caddy overwrites `X-Forwarded-For`, and the gateway trusts it only because port 8000 is not published. Not on the public demo either, which runs on Cloudflare Workers with Containers: the Worker overwrites `X-Forwarded-For` with the address Cloudflare saw (`CF-Connecting-IP`) before it passes a request to the container, and the demo caps spend whatever the address (the gateway at $2.50 a day, the demo key at $1.50 a day and Scout at $1.50 a day, set in `deploy/cloudflare-live/src/index.ts`, and Scout at 30 runs a day, the code default). Elsewhere, `RATCHET_TRUST_PROXY` is off by default. Many real addresses can still use up the public share early; the judges' reserve is held back from them.
 
 ### Could the gateway train on a closed model's answers by mistake?
 
@@ -398,10 +398,10 @@ Closed teachers and unknown models are refused at startup, and an open teacher a
 <FadeContent distance={16}>
 <PathGrid cols={2} label="Related guides">
   <PathCard title="Scout and its budget guard" href="/guides/scout/" icon="search" eyebrow="The public path" tone="neutral" description="The daily caps, the judges' reserve and the access code." />
-  <PathCard title="Host it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="The demo VM" tone="neutral" description="Caddy's edge guard, the firewall and secrets on the VM." />
+  <PathCard title="Host it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="The VM kit" tone="neutral" description="Caddy's edge guard, the firewall and secrets on the VM." />
   <PathCard title="Licenses" href="/guides/licenses/" icon="scale" eyebrow="Which teachers" tone="neutral" description="Why closed teachers are refused, and what travels with the adapter." />
   <PathCard title="Threat model" href="/reference/threat-model/" icon="shield" eyebrow="Reference" tone="neutral" description="Assets, trust boundaries and every threat, present and planned." />
 </PathGrid>
 </FadeContent>
 
-More detail: [Demo VM security notes](/reference/deploy-nebius-vm/#security-notes) and [API access levels](/reference/api/#access-levels).
+More detail: [VM kit security notes](/reference/deploy-nebius-vm/#security-notes) and [API access levels](/reference/api/#access-levels).

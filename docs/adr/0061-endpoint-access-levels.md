@@ -13,7 +13,7 @@ v0.4 protected `/v1/*` with named API keys, and ADR 0022 added admin keys for ma
 - Live mode started without `RATCHET_API_KEYS`, so a forgotten variable made `/v1/*` a public endpoint spending the operator's teacher credits.
 - No response carried `X-Content-Type-Options` or `Referrer-Policy` unless Caddy added them, and there was no way to send a Content-Security-Policy (threat model T14).
 
-The mock demo is different: it is synthetic and meant to be shown, and the public demo VM's judges should see the live dashboard too.
+The mock demo is different: it is synthetic and meant to be shown, and judges of a public demo (on the VM kit or on Cloudflare) should see the live dashboard too.
 
 ## Decision
 

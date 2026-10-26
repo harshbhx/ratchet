@@ -69,8 +69,10 @@ The custom domain `docs.ratchet.dualmindlab.tech` is attached to the Pages proje
 
 ## Diagrams
 
-Every diagram is a ` ```mermaid ` block. [astro-mermaid](https://github.com/joesaby/astro-mermaid) renders it in the browser from
-the bundled `mermaid` package (no CDN). No SVG or image files.
+Every diagram in a guide is a ` ```mermaid ` block. [astro-mermaid](https://github.com/joesaby/astro-mermaid) renders it in the
+browser from the bundled `mermaid` package (no CDN). The one picture is the architecture overview on the big picture page:
+`public/img/architecture-light.png` and `-dark.png`, copies of the exports that `scripts/render_architecture.py` renders from
+`docs/img/architecture.svg`.
 
 How it is themed:
 
@@ -174,8 +176,8 @@ Keep the blank lines around the block and inside `<figcaption>`, or MDX reads th
 Every guide follows the same shape: `<Summary>` (one sentence), `<Eli10>` (an everyday analogy), "How it really works"
 (numbered steps and a diagram), "For engineers" (files, functions, settings, endpoints) and "Common questions". Plain English,
 short sentences, no hype; simulation numbers say "simulation", costs say "estimate" with a source and date. Components live in
-`src/components/` (`Who` badges use the landing page's words; the diagrams in `diagrams/` use the owned blue for the student
-and the rented orange for the teacher). Mermaid code blocks render in the browser from a bundled copy; nothing loads from a CDN.
+`src/components/` (`Who` badges use the landing page's words; diagrams use the owned blue for the student and the rented
+orange for the teacher). Mermaid code blocks render in the browser from a bundled copy; nothing loads from a CDN.
 
 ## Components
 
