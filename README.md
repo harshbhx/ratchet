@@ -27,6 +27,7 @@
   <a href="#open-on-hugging-face">Hugging Face</a> &nbsp;·&nbsp;
   <a href="#what-is-real-what-is-simulation-what-is-ready-to-run">What is real</a> &nbsp;·&nbsp;
   <a href="#where-it-runs-and-how-to-host-it-on-nebius">Nebius</a> &nbsp;·&nbsp;
+  <a href="#feedback-on-nebius-and-nvidia">Feedback</a> &nbsp;·&nbsp;
   <a href="#use-it">Use it</a> &nbsp;·&nbsp;
   <a href="#limitations">Limitations</a> &nbsp;·&nbsp;
   <a href="#repo-map">Repo map</a>
@@ -197,6 +198,40 @@ RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-down YES=1 # stops the endpo
 ```
 
 Scripted and tested offline against a fake CLI; **ready to run** with `make nebius-plan` and `make nebius-up`. Costs (estimates), flags and what each step does: [Where everything runs](docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius), [Deployment on Nebius](docs/DEPLOYMENT.md) and [Demo VM on Nebius](docs/DEPLOY_NEBIUS_VM.md). Other hosts: any container host (`make docker`), Cloudflare (`deploy/cloudflare-live`, `deploy/cloudflare`; running) and a static Hugging Face Space that replays recorded Scout runs ([Space](https://huggingface.co/spaces/harshbhx/ratchet-scout)).
+
+## Feedback on Nebius and NVIDIA
+
+I built Ratchet on Nemotron 3 Ultra through Nebius Token Factory and on Nemotron 3 Nano 4B.
+
+### What worked well
+
+Token Factory speaks the OpenAI API, so the gateway calls Ultra with a normal client and nothing custom.
+
+Paying per token made labelling cheap: the teacher answers cost about $2.87 for the first text-to-SQL round (with exam 1) and $9.18 for the second (estimates from the run records, see [what it cost](docs/VERIFY.md#what-it-cost)).
+
+Ultra's license, OpenMDW-1.1, puts no restrictions on outputs ([license page](https://openmdw.ai/license/1-1/), checked Oct 21, 2026). That is what makes license-clean distillation possible.
+
+The thinking switch, `chat_template_kwargs: {"enable_thinking": false}`, works on Token Factory. I needed it: with thinking on, the reasoning used up my labelling calls' output limit ([`gen_sql_data.py`](scripts/text2sql/gen_sql_data.py)).
+
+### Where I got stuck
+
+Most of the pain was LoRA training on the Mamba-hybrid Nano, on a borrowed GPU:
+
+- PEFT's `all-linear` target failed on the Mamba layers, so I picked the target modules by hand.
+- With 4-bit quantisation, `in_proj` and `out_proj` must stay unquantised, because the Mamba kernels read them directly.
+- The first training step spent about 18 minutes compiling Triton kernels.
+- Building the `mamba-ssm` and `causal-conv1d` wheels took up to 2.5 hours, and kernels built for CUDA 13 did not load on CUDA 12 machines.
+- A hybrid-cache bug in Hugging Face's `generate()` recomputed the prompt for every token, so I wrote my own decoder for the exams.
+
+On the Nebius side, Token Factory's [post-training model list](https://docs.tokenfactory.nebius.com/post-training/models.md) had no Nemotron model (read Oct 21, 2026), so I could not fine-tune Nano there. GPU access on AI Cloud asked me for a prepayment first (Oct 2026), a hurdle on a student budget. Serving my own weights on a dedicated endpoint is "currently in beta and available on request" ([docs](https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights.md), read Oct 21, 2026).
+
+### What would help
+
+- Hosted LoRA serving for Nemotron Nano on Token Factory, paid per token: upload an adapter, call it by name. Today a small fine-tuned model pays for itself only at high volume, because its GPU endpoint keeps running.
+- Clear terms on training with outputs. The "competing service" clause, §5(f) of Token Factory's terms, is broad; one sentence allowing customers to fine-tune their own models on an openly licensed model's outputs would settle it. I asked support on Oct 19, 2026 and have no final answer yet.
+- A small GPU credit in the Builder Program, or managed fine-tuning for Nano, so the training side has a Nebius path too.
+- Per-model docs on token logprobs, `n` choices and the thinking switch. Confidence routing depends on all three.
+- From NVIDIA: prebuilt `mamba-ssm` and `causal-conv1d` wheels for common CUDA versions, and an official LoRA recipe for Nano that names the target modules that work.
 
 ## Use it
 
