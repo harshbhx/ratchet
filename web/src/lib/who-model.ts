@@ -6,7 +6,7 @@
  * `model` says which model answered. So a student call is ours only when its model is not the fallback id the gateway
  * reports (`fallback_student` in /ratchet/stats and /scout/status). Pure (no JSX): tested in tests/who-model.test.mjs.
  */
-import type { Mode, ServedBy, StudentServing } from "./api";
+import type { DemoSplitStats, Mode, ServedBy, StudentServing } from "./api";
 
 export type WhoKind = "owned" | "hosted" | "rented" | "tool";
 
@@ -30,16 +30,28 @@ export interface WhoInput {
   windows?: boolean;
   /** Mock mode: mock models play the real ones, and the tooltip says so. */
   simulated?: boolean;
+  /** How the call was served (the response's `ratchet.route`, a Scout step's `detail.route`); `demo_split` is labelled. */
+  route?: string | null;
 }
 
 /** The badge texts. The colour tokens keep their names (`owned`, `rented`); only these words are visible. */
 export const WHO_TEXT = {
   owned: "Nano + your adapter",
   hosted: "Nano 30B · hosted",
+  demoSplit: "Nano 30B · demo split",
   rented: "Ultra · Token Factory",
   tavily: "Tavily",
   search: "Search",
 } as const;
+
+/** The route of a call the live demo's split sent to the hosted Nano at random (ratchet/router.py DEMO_SPLIT_ROUTE, ADR 0147). */
+export const DEMO_SPLIT_ROUTE = "demo_split";
+/** The label every demo-split answer carries, on its badge and in its tooltip. */
+export const DEMO_SPLIT_TITLE = "Nano 30B (hosted, untuned) · demo split: picked at random, not by the confidence gate";
+
+export function isDemoSplit(route?: string | null): boolean {
+  return route === DEMO_SPLIT_ROUTE;
+}
 
 export const TEACHER_TITLE = "Nemotron 3 Ultra on Nebius Token Factory";
 /** What a page says in place of the adapter's precision or certificate while the hosted fallback answers. */
@@ -88,15 +100,62 @@ export function hostedTitle(threshold?: number | null, windows = false): string 
 }
 
 /** The badge for one call. A student call is `hosted` when its model is the fallback id, else `owned`. */
-export function whoLabel({ servedBy, model, fallback, threshold, windows, simulated }: WhoInput): WhoLabel {
+export function whoLabel({ servedBy, model, fallback, threshold, windows, simulated, route }: WhoInput): WhoLabel {
   const sim = (title: string) => (simulated ? SIMULATED + title : title);
   if (servedBy === "student") {
+    // Never disguised: a random pick is said to be one, whatever the confidence the call came back with.
+    if (isDemoSplit(route))
+      return { kind: "hosted", text: WHO_TEXT.demoSplit, title: sim(`${DEMO_SPLIT_TITLE}. Not covered by our adapter's precision certificate.`) };
     if (isHosted(servedBy, model, fallback))
       return { kind: "hosted", text: WHO_TEXT.hosted, title: sim(hostedTitle(threshold, windows)) };
     return { kind: "owned", text: WHO_TEXT.owned, title: sim(ownedTitle(adapterVersion(model))) };
   }
   if (servedBy === "teacher") return { kind: "rented", text: WHO_TEXT.rented, title: sim(TEACHER_TITLE) };
   return { kind: "tool", text: model === "tavily" ? WHO_TEXT.tavily : WHO_TEXT.search, title: model ?? "" };
+}
+
+/** How many of these calls the live demo's split picked (a Scout step's `detail.route`). */
+export function demoSplitCalls(steps: readonly { served_by: ServedBy; detail?: object | null }[]): number {
+  return steps.filter((s) => s.served_by === "student" && isDemoSplit((s.detail as { route?: string } | null | undefined)?.route)).length;
+}
+
+function pct(v: number | null | undefined): string {
+  return typeof v === "number" && Number.isFinite(v) ? `${Math.round(v * 100)}%` : "–";
+}
+
+export interface DemoSplitStat {
+  label: string;
+  /** The configured share, "40%", or "off" when the split is off and only earlier answers remain. */
+  value: string;
+  /** What it did, in order; each is one short sentence. */
+  lines: string[];
+}
+
+/**
+ * The dashboard overview's labelled split stat, from `/ratchet/stats` `demo_split`. Null while the split is off and never
+ * answered anything (an older gateway too): the page shows nothing.
+ */
+export function demoSplitStat(split?: DemoSplitStats | null): DemoSplitStat | null {
+  if (!split || (!split.enabled && !(split.requests > 0))) return null;
+  const lines = ["A random share of calls goes to the hosted Nano 30B (untuned), picked at random, not by the confidence gate."];
+  if (split.requests > 0) {
+    lines.push(`${split.requests} of ${split.of_requests} requests of those tasks so far (${pct(split.share)}).`);
+    lines.push(
+      split.audits > 0
+        ? `Ultra audited ${split.audits}: the Nano agreed on ${split.agreed} (${pct(split.agreement)}).`
+        : `No audit has come back yet (${pct(split.audit_rate)} of these answers are audited).`,
+    );
+    if (split.savings_pct != null) lines.push(`Cost ${pct(split.savings_pct)} below all-Ultra on these calls.`);
+  } else {
+    lines.push("No request has been picked yet.");
+  }
+  return { label: "Demo split", value: split.enabled ? pct(split.rate) : "off", lines };
+}
+
+/** The Scout run's note when some student calls were demo-split picks; null when none were. */
+export function demoSplitNote(picked: number, studentCalls: number): string | null {
+  if (picked <= 0) return null;
+  return `Demo split: ${picked} of ${studentCalls} student ${studentCalls === 1 ? "call was" : "calls were"} picked at random for the hosted Nano, not by the confidence gate.`;
 }
 
 /** How many of these calls the hosted fallback answered. */
@@ -197,7 +256,7 @@ export function servingLine(serving?: StudentServing | null): ServingLine | null
     return {
       kind: "hosted",
       text: "Nano 30B · hosted on Token Factory (endpoint off)",
-      detail: `${t ? `threshold ${t} · ` : ""}${NOT_CERTIFIED}`,
+      detail: `${serving.demo_split ? `demo split ${pct(serving.demo_split)} picked at random, not by the confidence gate · ` : ""}${t ? `threshold ${t} · ` : ""}${NOT_CERTIFIED}`,
       title: hostedTitle(serving.threshold, hasWindows(serving)),
     };
   }

@@ -209,7 +209,7 @@ function RequestRows({ rows }: { rows: { key: string; label: string; task: strin
           <span className="min-w-0 truncate text-[12.5px]">
             <span className="font-mono text-[11.5px] text-muted">{r.label}</span> <span className="font-mono text-ink-2">{r.task}</span>
           </span>
-          <WhoBadge servedBy={(r.servedBy || "teacher") as ServedBy} model={r.model || undefined} className="row-span-2 justify-self-end" />
+          <WhoBadge servedBy={(r.servedBy || "teacher") as ServedBy} model={r.model || undefined} route={r.route} className="row-span-2 justify-self-end" />
           <span className="min-w-0 truncate text-[12px] text-muted">{routeWords(r.route)}</span>
         </li>
       ))}

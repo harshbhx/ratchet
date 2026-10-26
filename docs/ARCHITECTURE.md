@@ -422,7 +422,7 @@ Created by `SCHEMA` in `ledger.py` (`CREATE TABLE IF NOT EXISTS`).
 | `train_examples` | INTEGER | Size of the train set used |
 | `dataset_hash` | TEXT | `dataset_sha256` from the manifest |
 | `eval` | TEXT (JSON) | `golden_n`, `golden_agreement`, `threshold`, `coverage`, `precision`, `test_n`, `refused_n`, `golden_invalid_refs`, `tasks` (one record per task, [§6](#per-task-calibration)), `spec_hashes`, `precision_kind`, optional `judge_n` and `judge_pass_rate`, `rechecked_day` |
-| `state` | TEXT | `candidate`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rolled_back` |
+| `state` | TEXT | `candidate`, `rejected`, `shadow`, `canary`, `live`, `retired`, `rolled_back`; `hosted` for the hosted student's row ([§16](#16-fallback-attribution)), which no release move touches |
 | `traffic_pct` | INTEGER | 10 or 50 in canary, 100 when live, 0 otherwise |
 | `stage_since` | INTEGER | Max `requests.id` when the current stage began; a stage's audits are counted only after it (`Ledger.audit_counts(id, stage_since)`; the sequential rollback counts from 0) |
 | `bom` | TEXT (JSON) | This adapter's bill of materials document (`manifest`, `sha256`, `signature`), written at training time |
@@ -1000,6 +1000,8 @@ Which answers a version's release statistics count ([ADR 0073](adr/0073-fallback
 **The ledger.** `OWN_STUDENT` and `OWN_SHADOW` (`student_model IS NULL OR student_model = (SELECT adapter_uri FROM versions WHERE id=?1)`) are part of `AUDIT_TALLY_SQL`, `AUDIT_PENDING_SQL` and `SHADOW_QUALITY_SQL`: the adapter is read once per query by primary key, and the requests indexes are searched as before. `stats_by_day` adds `fallback_served`.
 
 **What follows.** While the fallback serves, no version gets evidence: the canary and the shadow hold, the live alert stays quiet, and Night School skips while that release is in flight (INV-5). Rows from before v0.5 have no model and count as they did; the reference runs are unchanged.
+
+**The hosted student** ([ADR 0146](adr/0146-hosted-student.md), FR-12.33, off by default). With `RATCHET_HOSTED_STUDENT=1` in live mode the same hosted model can answer before any version exists. The gateway keeps one version row in state `hosted` (`Ledger.ensure_hosted`: the hosted id as base model, `adapter_uri` empty, no training examples), whose eval holds the per-task records in `ratchet/hosted.py`, and writes a `hosted` event when it makes or changes it. `Ratchet._pick_version` returns that row only while no version is live (after the canary's draw); `Ratchet.threshold` holds it to its records (`calibration.threshold` with SERVE_NOTHING as the global threshold), and `_held_back` keeps it from being sampled for a task without a serving record (route `task_disabled`). The resolver always sends it to Token Factory. Its adapter is empty, so by the rule above its answers are never its own: audited as drawn, never stored, counted by no release. `/ratchet/stats` leaves the row out of `versions`; `student_serving` reports `hosted_fallback` with each task's threshold (`tasks`) only while it answers some task. The records come from `scripts/hosted_nano_calibration.py` over `evidence/hosted-nano/` (Ultra's labels, the Nano's samples, `cascade_eval`); a task serves only at 95% held-out precision against Ultra on 20 served rows. As measured on Oct 26, 2026 none does, so the switch changes no answer yet.
 
 ## 19. Demo hosting: live and simulation
 

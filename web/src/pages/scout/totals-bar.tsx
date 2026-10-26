@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { CircleCheck, CircleSlash, LoaderCircle, Square, TriangleAlert } from "lucide-react";
 import { cn, fmtMs } from "@/lib/utils";
 import { Container } from "@/components/ui/section";
-import { studentCopy } from "@/lib/who-model";
+import { demoSplitNote, studentCopy } from "@/lib/who-model";
 import { AnimatedNumber, usd } from "./bits";
 import type { Derived, RunState } from "./state";
 
@@ -49,6 +49,7 @@ export function TotalsBar({ run, derived, onStop }: { run: RunState; derived: De
   );
   const t = derived.totals;
   const who = studentCopy(derived.hosted);
+  const demoNote = demoSplitNote(derived.demoSplit, t.student);
   const elapsed = useElapsed(run);
   const sShare = t.llm ? t.student / t.llm : 0;
   const tShare = t.llm ? t.teacher / t.llm : 0;
@@ -129,6 +130,11 @@ export function TotalsBar({ run, derived, onStop }: { run: RunState; derived: De
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
             />
           </div>
+          {demoNote && (
+            <p className="mt-2 text-[11.5px] leading-snug text-muted" data-demo-split>
+              {demoNote}
+            </p>
+          )}
           <p className="sr-only">
             {t.student} of {t.llm} model calls answered {who.by}, {t.teacher} by Ultra. Cost {usd(t.cost)} against {usd(t.baseline)} on Ultra
             alone.

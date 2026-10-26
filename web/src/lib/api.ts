@@ -128,6 +128,30 @@ export interface StudentServing {
   certified: boolean;
   /** The daily endpoint windows (W10, RATCHET_STUDENT_WINDOWS); null or absent when none are set. */
   window?: { open: boolean; next_start_utc: string | null } | null;
+  /** The live demo's split (RATCHET_DEMO_SPLIT, ADR 0147): the share of eligible requests sent to the hosted Nano at random. Absent when off. */
+  demo_split?: number;
+}
+
+/** `/ratchet/stats` `demo_split` (FR-12.34): what the live demo's random split did. Counts and dollars. */
+export interface DemoSplitStats {
+  enabled: boolean;
+  /** RATCHET_DEMO_SPLIT. */
+  rate: number;
+  /** RATCHET_DEMO_SPLIT_AUDIT. */
+  audit_rate: number;
+  /** Requests answered with route `demo_split`. */
+  requests: number;
+  /** Requests of the tasks they came from. */
+  of_requests: number;
+  share: number | null;
+  /** Audits that came back with a verdict, and how many agreed with the Nano. */
+  audits: number;
+  agreed: number;
+  agreement: number | null;
+  cost_usd: number;
+  baseline_usd: number;
+  saved_usd: number;
+  savings_pct: number | null;
 }
 
 export interface Stats {
@@ -142,6 +166,8 @@ export interface Stats {
   /** v0.5: the hosted, untuned model that answers student calls while the GPU endpoint is off (RATCHET_FALLBACK_STUDENT). */
   fallback_student?: string;
   student_serving?: StudentServing;
+  /** FR-12.34: the live demo's split; absent on an older gateway. */
+  demo_split?: DemoSplitStats;
   days: DayStats[];
   tasks: TaskStats[];
   versions: Version[];
@@ -401,11 +427,11 @@ export type PlannerStep = StepBase & { agent: "planner"; detail: { queries: stri
 export type SearcherStep = StepBase & { agent: "searcher"; detail: { query: string; results: SearchResult[] } };
 export type TriageStep = StepBase & {
   agent: "triage";
-  detail: { id: number; url: string; title: string; relevant: boolean; source_type: string; reason: string };
+  detail: { id: number; url: string; title: string; relevant: boolean; source_type: string; reason: string; route?: string };
 };
 export type ReaderStep = StepBase & {
   agent: "reader";
-  detail: { id: number; url: string; answers_question: boolean; fact_type: string; key_fact: string };
+  detail: { id: number; url: string; answers_question: boolean; fact_type: string; key_fact: string; route?: string };
 };
 export type WriterStep = StepBase & { agent: "writer"; detail: { answer: string; citations: Citation[] } };
 export type ScoutStep = PlannerStep | SearcherStep | TriageStep | ReaderStep | WriterStep;
@@ -419,6 +445,8 @@ export interface ScoutTotals {
   baseline_usd: number;
   savings_pct: number;
   wall_ms: number;
+  /** Student calls the live demo's split picked at random (ADR 0147); absent on an older gateway. */
+  demo_split_calls?: number;
 }
 
 import type { Recording, RecordingSummary } from "@/lib/recording-model";

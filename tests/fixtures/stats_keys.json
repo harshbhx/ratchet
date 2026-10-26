@@ -40,6 +40,21 @@
       "threshold": "number|null",
       "certified": "bool"
     },
+    "demo_split": {
+      "enabled": "bool",
+      "rate": "number",
+      "audit_rate": "number",
+      "requests": "number",
+      "of_requests": "number",
+      "share": "number|null",
+      "audits": "number",
+      "agreed": "number",
+      "agreement": "number|null",
+      "cost_usd": "number",
+      "baseline_usd": "number",
+      "saved_usd": "number",
+      "savings_pct": "number|null"
+    },
     "totals": {
       "requests": "number",
       "cost_usd": "number",

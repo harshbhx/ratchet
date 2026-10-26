@@ -27,6 +27,7 @@ export function WhoBadge({
   threshold,
   windows,
   simulated,
+  route,
   className,
 }: {
   servedBy: ServedBy;
@@ -35,6 +36,8 @@ export function WhoBadge({
   threshold?: number | null;
   windows?: boolean;
   simulated?: boolean;
+  /** The call's route (`ratchet.route`, a Scout step's `detail.route`): `demo_split` is labelled as such. */
+  route?: string | null;
   className?: string;
 }) {
   const ctx = useWho();
@@ -45,6 +48,7 @@ export function WhoBadge({
     threshold: threshold ?? ctx.threshold,
     windows: windows ?? ctx.windows,
     simulated: simulated ?? ctx.simulated,
+    route,
   });
   const Icon = ICON[w.kind];
   return (

@@ -21,7 +21,7 @@ from . import calibration, licenses, metrics, obs, reasoning, schema_tasks, task
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .drift import boosted_rate
-from .ledger import STORED_PARAM_KEYS, TEACHER_MODEL, Ledger, RuntimeFlags, Version, example_hash, target_params
+from .ledger import HOSTED_STATE, STORED_PARAM_KEYS, TEACHER_MODEL, Ledger, RuntimeFlags, Version, example_hash, target_params
 from .openai_compat import tool_turns
 from .providers import (
     COMPLETE,
@@ -67,6 +67,8 @@ OPEN_SAMPLE = 10
 JSON_SCHEMA_STRIKES = 3
 MAX_REFUSED_SCHEMAS = 1024  # refused schema digests remembered per endpoint; past it, a new one is refused each time
 
+DEMO_SPLIT_ROUTE = "demo_split"
+
 # How a request was served (`requests.route`): the student; the teacher because the student was unsure (`confidence`),
 # because no version serves yet (`cold_start`), because the task is pinned (`pinned`), because the student call raised
 # (`student_error`), or because the student's breaker was open (`student_breaker`); the student's own below-threshold
@@ -84,7 +86,9 @@ MAX_REFUSED_SCHEMAS = 1024  # refused schema digests remembered per endpoint; pa
 # sends such a request through `handle`, which routes it `ineligible:content_type`). The task's routing block adds two
 # families of routes (FR-2.50, ADR 0049; `known_route`): `rule:<i>`, the teacher because rule i of `escalate_when`
 # held for the confident student's answer, and `ineligible:<reason>`, the teacher without a student call because the
-# request is one the student must not see (`routing.INELIGIBLE_REASONS`: `input_tokens`, `content_type`).
+# request is one the student must not see (`routing.INELIGIBLE_REASONS`: `input_tokens`, `content_type`). The live demo's
+# split adds `demo_split`: the hosted student answered because RATCHET_DEMO_SPLIT picked the request at random, not
+# because it was confident (FR-12.34, ADR 0147; always labelled so).
 ROUTES = (
     "student",
     "confidence",
@@ -100,6 +104,7 @@ ROUTES = (
     "task_disabled",
     "tools",
     "multimodal",
+    DEMO_SPLIT_ROUTE,
 )
 RULE_ROUTE = "rule:"  # + the index of the escalate_when rule (FR-2.50)
 INELIGIBLE_ROUTE = "ineligible:"  # + one of routing.INELIGIBLE_REASONS (FR-2.50)
@@ -594,6 +599,9 @@ class Ratchet:
         self.teacher = teacher
         self.resolve_student = student_resolver
         self.rng = random.Random(seed)
+        # The demo split's own generator (FR-12.34, ADR 0147): never `rng`, so a split changes no other draw. Secure, not
+        # seeded: a visitor must not be able to predict which of their requests the hosted student gets.
+        self.split_rng = random.SystemRandom()
         # The license registry for these settings: the built-in teachers plus RATCHET_TEACHER_LICENSES' (ADR 0090); a bad
         # file stops startup here, every error listed. Night School and the BOM read the same registry.
         licenses.install(settings.teacher_licenses_file)
@@ -905,13 +913,17 @@ class Ratchet:
     def _pick_version(self, flags: RuntimeFlags | None = None) -> Version | None:
         """The version that answers this request: the canary for its `traffic_pct`% of requests, otherwise live; None on
         cold start, or while an operator has turned the student off (`student_disabled`, ADR 0064), so the teacher
-        answers and its answers are stored as usual."""
+        answers and its answers are stored as usual. With RATCHET_HOSTED_STUDENT on and no live version, the hosted
+        student's row (FR-12.33, ADR 0146) stands in for live; the canary draw is made first, as before, so the random
+        stream does not change."""
         if (flags or self.ledger.flags()).student_disabled:
             return None
         live = self.ledger.live()
         canary = self.ledger.by_state("canary")
         if canary and self.rng.random() * 100 < canary.traffic_pct:
             return canary
+        if live is None and self.s.hosted_student:
+            return self.ledger.by_state(HOSTED_STATE)  # None until the gateway made it (`Ledger.ensure_hosted`)
         return live  # None on cold start -> teacher
 
     def plan(self, params: GenParams | None, n: int = 1) -> GenPlan:
@@ -1508,7 +1520,7 @@ class Ratchet:
         with self._errors_lock:
             self._unattributed_counts[(role, version.id)] += 1
             n = self._unattributed_counts[(role, version.id)]
-        if n not in EVENT_ON_FAILURE:
+        if n not in EVENT_ON_FAILURE or version.state == HOSTED_STATE:  # the hosted student has no release to hold
             return
         who = f"the hosted fallback student {model}" if model == self.s.fallback_student_model else model
         if role == "shadow":
@@ -1726,7 +1738,11 @@ class Ratchet:
         night re-scores it, FR-2.15), else the version's global threshold. A version scored before per-task calibration
         has only the global one, and one that is not a number serves nothing. The hosted untuned fallback model was never
         calibrated, so it uses the global default, except on a task with critical classes, which it never answers: nothing
-        measured how often it misses them (FR-2.50). Dict lookups only."""
+        measured how often it misses them (FR-2.50). The hosted student's row (FR-12.33, ADR 0146) is that model with its
+        own records: each task at its measured threshold, any other task (or none named) at SERVE_NOTHING, which its eval's
+        global threshold is. Dict lookups only."""
+        if version.state == HOSTED_STATE:
+            return SERVE_NOTHING if task is None else calibration.threshold(version.eval, _task(task), SERVE_NOTHING)
         if model is not None and model == self.s.fallback_student_model:
             critical = task is not None and bool(_task(task).routing_rules.critical)
             return SERVE_NOTHING if critical else self.s.confidence_threshold
@@ -1745,7 +1761,11 @@ class Ratchet:
         (FR-2.50): such a task is held back whenever the resolver picks that model, whatever the record says, so the
         model is not sampled (and paid for) for answers `threshold` would never serve. The resolver is asked only when
         the answer depends on it; one that fails here leaves a held-back task held back and a critical task with a
-        serving record to the student path, which fails over to the teacher as before."""
+        serving record to the student path, which fails over to the teacher as before. The hosted student's row (FR-12.33)
+        holds back every task its records do not let it answer, so the hosted model is sampled only for those it may
+        serve."""
+        if version.state == HOSTED_STATE:
+            return self.threshold(version, None, task) >= SERVE_NOTHING
         critical = bool(task.routing_rules.critical)
         if not calibration.held_back(version.eval, task):
             if not (critical and self.s.fallback_student_model):
@@ -2335,6 +2355,11 @@ class Ratchet:
         if reason is not None:
             return self._ineligible(task, messages, reason, client, plan, params, meta, opt_out, t0)
         version = self._pick_version(flags)
+        # The live demo's split (FR-12.34): this request goes to the hosted student whatever its confidence.
+        split = self._demo_split(task, flags, plan)
+        if split is not None:
+            version = split
+        forced = split is not None
         cost = 0.0
         # cost's two parts (FR-15.1), added beside it call by call so `cost` itself is summed exactly as before, and the
         # student calls' tokens, which price the hosted fallback student in the cost report (ratchet/cost.py).
@@ -2384,8 +2409,8 @@ class Ratchet:
         sc = None
         # The samples one confidence score of this task rests on: its policy's, else RATCHET_SAMPLES (FR-2.55), as the
         # golden eval calibrated it.
-        k = task.sample_count(self.s.samples)
-        if version is not None and self._held_back(version, task):
+        k = 1 if forced else task.sample_count(self.s.samples)  # a forced answer is one sample, held to no threshold
+        if version is not None and not forced and self._held_back(version, task):
             # The version's record for the task serves nothing: its samples could never be served, so the student is not
             # called, and with no student answer nothing below the task's floor can stand in for the teacher (FR-14.1).
             escalated, route = True, "task_disabled"
@@ -2415,28 +2440,37 @@ class Ratchet:
                 confidence = sc.confidence
                 student_c = sc.answer
         if version is not None and sc is not None:
-            threshold = threshold_used = self.threshold(version, model_used, task)
-            # A sample set with no valid answer is never served, whatever the threshold (confidence.Scored.valid).
-            confident = sc.valid and sc.confidence >= threshold
+            threshold = self.threshold(version, model_used, task)
+            threshold_used = None if forced else threshold  # a forced answer is held to none: the replay skips it
+            # A sample set with no valid answer is never served, whatever the threshold (confidence.Scored.valid); the
+            # demo split serves a valid one whatever its confidence.
+            confident = sc.valid if forced else sc.valid and sc.confidence >= threshold
             # The task's escalate_when rules, on the confident answer's key (FR-2.50): a costly positive goes to the teacher.
             rule = self._rule(task, sc) if confident else None
             if rule is not None:
                 escalated, route = True, f"{RULE_ROUTE}{rule}"
             elif confident and picked is not None:
-                served, served_by, route, served_choices = sc.answer, "student", "student", picked
-                fp = self._student_fingerprint(version, model_used, threshold)
+                route = DEMO_SPLIT_ROUTE if forced else "student"
+                served, served_by, served_choices = sc.answer, "student", picked
+                fp = (
+                    fingerprint("student", model_used, route)
+                    if forced
+                    else self._student_fingerprint(version, model_used, threshold)
+                )
                 # The task's own audit rate (`policy.audit_rate`, FR-2.50) or RATCHET_AUDIT_RATE; audit focusing (ADR
                 # 0025): a canary may be audited at its own rate; an operator's runtime rate (`audit_rate`, ADR 0064)
                 # replaces them all. Still one draw per served answer, drawn also under student_only, which skips the
                 # call (and so observes no label: `label_p` 0).
                 rate = self.audit_rate(task) if flags.audit_rate is None else flags.audit_rate
+                if forced and flags.audit_rate is None:
+                    rate = self.s.demo_split_audit  # its own rate, drawn from its own generator
                 if flags.audit_rate is None and version.state == "canary" and self.s.canary_audit_rate is not None:
                     rate = self.s.canary_audit_rate
                 boost = self.audit_boost.get(version.id)  # an open drift alarm on this version (FR-6.40)
                 if boost:
                     rate = boosted_rate(rate, boost)
                 label_p = 0.0 if student_only else rate
-                if self.rng.random() < rate and not student_only:  # audit = quality signal + free training data
+                if (self.split_rng if forced else self.rng).random() < rate and not student_only:  # a quality signal
                     if offpath:  # a reserved place: shadow work alone can never push an audit onto this path
                         slot = self.sidecar.reserve(priority=True, size=job_bytes(messages))
                         if slot is None:
@@ -2534,7 +2568,7 @@ class Ratchet:
             # per version), and nothing else changes.
             # The student turned off (ADR 0064) stops the shadow's samples too: the switch stops every student call.
             stopped = student_only or flags.student_disabled
-            shadow = None if route in STAND_IN_ROUTES or stopped else self.ledger.by_state("shadow")
+            shadow = None if route in STAND_IN_ROUTES or route == DEMO_SPLIT_ROUTE or stopped else self.ledger.by_state("shadow")
             shadow_vid = shadow_serve = shadow_agree = None
             shadow_target: tuple[Provider, str] | None = None
             shadow_model: str | None = None  # the model behind the shadow's verdict (`requests.shadow_model`)
@@ -2675,6 +2709,20 @@ class Ratchet:
             task=task.name,
             schema_valid=_schema_valid(task, choices),
         )
+
+    def _demo_split(self, task: tasks.Task, flags: RuntimeFlags, plan: GenPlan) -> Version | None:
+        """The hosted student's row when the demo split picks this request (FR-12.34, ADR 0147), else None. Called only
+        for a request that reaches the cascade (pinned, tool, unknown-task-teacher and ineligible requests were
+        answered before), so it adds the rest: one choice (`n` choices need the calibrated path), no critical classes
+        (nothing measured how often the hosted model misses them), the student not turned off by an operator, and a
+        hosted row to send it to. Then one draw of the split's own generator; with the split off (0) there is none."""
+        share = self.s.demo_split
+        if not share or share <= 0 or flags.student_disabled or plan.n != 1 or task.routing_rules.critical:
+            return None
+        hosted_row = self.ledger.by_state(HOSTED_STATE)
+        if hosted_row is None or self.split_rng.random() >= share:
+            return None
+        return hosted_row
 
     def _student_fingerprint(self, version: Version, model: str, threshold: float) -> str:
         """A student answer's `system_fingerprint`: its adapter, version, training-set hash and threshold. Another

@@ -379,8 +379,11 @@ class Version:
 # Every state a version can be in (ARCHITECTURE §5). A release moves a version only through `transition` and
 # `promote_live` (compare-and-set, ADR 0064): at most one version is live, and at most one is in flight (shadow or
 # canary), across every process that shares the ledger file. `set_version` stays for tests and migrations.
-VERSION_STATES = ("candidate", "rejected", "shadow", "canary", "live", "retired", "rolled_back")
+VERSION_STATES = ("candidate", "rejected", "shadow", "canary", "live", "retired", "rolled_back", "hosted")
 IN_FLIGHT_STATES = ("shadow", "canary")
+# The hosted student's one row (FR-12.33, ADR 0146): the untuned hosted model, no adapter, outside every release move.
+# The router uses it only while no version is live and RATCHET_HOSTED_STUDENT is on (`Ratchet._pick_version`).
+HOSTED_STATE = "hosted"
 # The runtime switches an operator sets with the admin API or CLI (ADR 0064), stored in `runtime_flags`. The booleans
 # default to off; `audit_rate` (0 to 1) replaces Settings.audit_rate while it is set.
 FLAG_NAMES = ("student_disabled", "releases_frozen", "training_paused", "audit_rate")
@@ -684,7 +687,7 @@ BUSY_TIMEOUT_MS = 5000  # how long a connection waits for another process's writ
 # Paths SQLite keeps out of any file other connections can open: no journal mode, no second connection.
 PRIVATE_PATHS = ("", ":memory:")
 # The versions a request is routed by (`Ledger.live`, `Ledger.by_state`), kept in the routing snapshot.
-ROUTED_STATES = ("live", "canary", "shadow")
+ROUTED_STATES = ("live", "canary", "shadow", HOSTED_STATE)
 # Tables whose writes on this connection bump a generation (`_bump`, through TEMP triggers that live only on
 # the writer's connection): any write to `versions` invalidates the routing snapshot; a deleted or rewritten request or
 # example invalidates the incremental tallies built from them. Inserts into requests and examples are not watched (the
@@ -2492,6 +2495,41 @@ class Ledger:
             "no_train_end_users": no_train,
         }
 
+    @_locked
+    def demo_split_stats(self) -> dict[str, Any]:
+        """What the live demo's split did (FR-12.34, ADR 0147), from the request rows still held: the requests the hosted
+        student answered at random (route `demo_split`), the requests of the tasks they came from (the share's
+        denominator), the audits that came back with a verdict (Ultra's answer against the Nano's) and how many agreed,
+        and the cost against the all-Ultra baseline. Counts and dollars, never text."""
+        row = self.db.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(audit_agree IS NOT NULL), 0) audits, COALESCE(SUM(audit_agree = 1), 0) agreed,"
+            " COALESCE(SUM(cost_usd), 0) cost, COALESCE(SUM(baseline_cost_usd), 0) baseline"
+            " FROM requests WHERE route = 'demo_split'"
+        ).fetchone()
+        n = int(row["n"])
+        of = (
+            int(
+                self.db.execute(
+                    "SELECT COUNT(*) FROM requests WHERE task IN (SELECT DISTINCT task FROM requests WHERE route = 'demo_split')"
+                ).fetchone()[0]
+            )
+            if n
+            else 0
+        )
+        audits, cost, baseline = int(row["audits"]), float(row["cost"]), float(row["baseline"])
+        return {
+            "requests": n,
+            "of_requests": of,
+            "share": n / of if of else None,
+            "audits": audits,
+            "agreed": int(row["agreed"]),
+            "agreement": int(row["agreed"]) / audits if audits else None,
+            "cost_usd": cost,
+            "baseline_usd": baseline,
+            "saved_usd": baseline - cost,
+            "savings_pct": (baseline - cost) / baseline if baseline > 0 else None,
+        }
+
     # ---------- end users (FR-13.2, ADR 0080) ----------
     @_locked
     def no_train_add(
@@ -2994,6 +3032,35 @@ class Ledger:
         )
         self.db.commit()
         return int(cur.lastrowid)
+
+    @_locked
+    def ensure_hosted(self, base_model: str, eval_result: dict[str, Any]) -> tuple[Version, str | None]:
+        """The hosted student's one version row (FR-12.33, ADR 0146), in state `hosted`: created on first use, with no
+        adapter (`adapter_uri` empty, so no answer is ever the version's own, ADR 0073) and no training examples, and
+        its model and eval brought up to date when a new calibration changed them, in one transaction. Returns the
+        version and what changed: 'created', 'updated' or None. No release move starts from this state, so the row
+        stays there; the router reads it only while no version is live."""
+        doc = json.dumps(eval_result)
+        with self.transaction():
+            row = self.db.execute(
+                "SELECT id, base_model, eval FROM versions WHERE state=? ORDER BY id DESC LIMIT 1", (HOSTED_STATE,)
+            ).fetchone()
+            change: str | None = None
+            if row is None:
+                cur = self.db.execute(
+                    "INSERT INTO versions (created_ts, day, base_model, adapter_uri, train_examples, dataset_hash, eval,"
+                    " state, traffic_pct) VALUES (?,?,?,'',0,'',?,?,0)",
+                    (time.time(), self.day, base_model, doc, HOSTED_STATE),
+                )
+                vid, change = int(cur.lastrowid), "created"
+            else:
+                vid = int(row["id"])
+                if row["base_model"] != base_model or json.loads(row["eval"] or "{}") != eval_result:
+                    self.db.execute("UPDATE versions SET base_model=?, eval=? WHERE id=?", (base_model, doc, vid))
+                    change = "updated"
+        v = self.version(vid)
+        assert v is not None
+        return v, change
 
     @_locked
     def update_eval(self, vid: int, eval_result: dict[str, Any]) -> None:

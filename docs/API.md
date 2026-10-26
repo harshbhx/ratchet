@@ -414,6 +414,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
   },
   "ratchet": {
     "served_by": "student",
+    "route": "student",
     "student_version": 5,
     "confidence": 0.951,
     "escalated": false,
@@ -441,6 +442,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `ratchet` field | Meaning |
 |---|---|
 | `served_by` | `student` or `teacher` |
+| `route` | How it was served: one of the routes in the table below. `demo_split` marks the live demo's random share that went to the hosted Nano whatever its confidence ([ADR 0147](adr/0147-demo-split.md)) |
 | `student_version` | Version that answered; `null` when the teacher answered (including escalations), and when the hosted fallback student answered (no `RATCHET_STUDENT_BASE`): that answer is not any version's, and never counts toward a release ([ADR 0073](adr/0073-fallback-attribution.md)) |
 | `confidence` | Student confidence if a student was tried, else `null` |
 | `escalated` | `true` if the student was tried and was below its threshold |
@@ -1131,8 +1133,10 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   | `version` | The live version's id; on a cold start whose first student is in canary, the canary's; `null` for none |
   | `threshold` | The confidence threshold that model is held to (`Ratchet.threshold`): the version's calibrated one, or `RATCHET_CONFIDENCE_THRESHOLD` for the hosted fallback, which was never calibrated; `null` without a version |
   | `certified` | The version's eval carries a certificate that certifies (`certificate.certified`), and our adapter serves. Always `false` for `hosted_fallback`: the certificate was computed for our adapter, never for the hosted model |
+  | `tasks` | Only while the hosted student answers (`RATCHET_HOSTED_STUDENT`, FR-12.33): each task it answers with its measured threshold, `{"source-triage": 0.955}`; `version` is then its row (state `hosted`, never in `versions`), and `threshold` is the one task's threshold, or `null` for several. A hosted row that answers no task is reported as `none` |
 
   While `kind` is `hosted_fallback`, the pages say "Nano 30B · hosted" for a student answer (with the threshold, and "not covered by the certificate"), stop saying "your adapter", and hide the live version's golden precision ([SCOUT.md](SCOUT.md#who-answered)).
+- `demo_split` (FR-12.34, [ADR 0147](adr/0147-demo-split.md)): the live demo's split: `enabled`, `rate` (`RATCHET_DEMO_SPLIT`), `audit_rate`, and from the request rows still held `requests` (answered with route `demo_split`), `of_requests` (the requests of the tasks they came from), `share`, `audits` and `agreed` (audits that came back with a verdict, Ultra's answer against the Nano's) with `agreement`, and `cost_usd`, `baseline_usd`, `saved_usd`, `savings_pct` of those requests; null where there is nothing to divide. Counts and dollars only. `student_serving` gains `demo_split` (the rate) while the split is on.
 - `days`: one entry per `requests.day` (see `Ledger.stats_by_day`), including days whose rows retention folded into daily sums (`RATCHET_REQUEST_RETENTION_DAYS`); every figure in `days`, `tasks`, `clients` and `totals` adds those sums back. `/v1/embeddings` calls (route `passthrough`) are left out of `days`, `totals` and `clients`, and counted in `tasks` (the `embeddings` row) and in `cost`. `audit_agreement` is `null` on days without audits. `degraded` and `fallback_teacher` count that day's requests a stand-in answered because the teacher was unavailable (the routes of the same names below). `fallback_served` counts that day's student-served requests whose answer another model than their version's adapter wrote: the hosted fallback student, without `RATCHET_STUDENT_BASE` (v0.5, FR-12.32). They are in `student_share` and `audit_agreement`, but count toward no version's release (days whose rows retention folded report 0). `avg_latency_ms` averages the providers' time (`requests.latency_ms`). `p50_student_ms` (the day's student-served requests) and `p95_ms` (all of them) are nearest-rank percentiles of `requests.wall_ms`, the whole cascade on the gateway's clock (v0.5, FR-12.8): the numbers NFR-1's target (p50 under 1 s for student-served requests) is checked against. Each is `null` for a day without such rows, such as days logged before v0.5. In mock mode the models answer at once, so these are Ratchet's own time, while `avg_latency_ms` is the simulated model latency.
 - `tasks`: one entry per task name over all days, busiest first (`Ledger.stats_by_task`). `student_share` and `escalation_rate` are shares of that task's requests; `savings_pct = 1 − cost_usd / baseline_usd`. Pinned tasks always show `student_share` 0 and `savings_pct` 0. `pinned` is true for tasks that always go to the teacher and are never trained on (`research-plan`, `research-write`); the dashboard's **By task** table shows them as "pinned to teacher". `routes` counts the task's requests by how they were served (the ledger's `requests.route`), most frequent first, and adds up to `requests`:
 
@@ -1140,6 +1144,7 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   |---|---|---|
   | `student` | student | Its confidence reached the version's threshold (and, for `n` > 1 choices, at least `n` samples agreed) |
   | `confidence` | teacher | The student was unsure (below the threshold) |
+  | `demo_split` | student | The live demo's split (`RATCHET_DEMO_SPLIT`, FR-12.34) picked this request for the hosted Nano at random, not by confidence; the answer names the Nano and no version, is audited at `RATCHET_DEMO_SPLIT_AUDIT` and counts in no release |
   | `cold_start` | teacher | No version serves yet (no live version, and the canary was not picked) |
   | `pinned` | teacher | A pinned task (by its spec, or at runtime by an operator: [Admin](#admin)); before v0.5, also a request with a part only the teacher reads (now route `ineligible:content_type`) |
   | `student_error` | teacher | The student call failed (timeout, connection error, an error status, a lost adapter) |

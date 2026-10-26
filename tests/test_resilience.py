@@ -1801,7 +1801,8 @@ def test_every_request_row_has_a_route():
         "tools",
         "multimodal",
     ]
-    assert set(seen) == set(ROUTES)
+    # `demo_split` needs the hosted student's row and RATCHET_DEMO_SPLIT: tests/test_demo_split.py serves it.
+    assert set(seen) == set(ROUTES) - {"demo_split"}
     assert led.db.execute("SELECT COUNT(*) FROM requests WHERE route IS NULL").fetchone()[0] == 0
     by_task = {t["task"]: t["routes"] for t in led.stats_by_task()}
     assert by_task == {

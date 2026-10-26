@@ -168,7 +168,7 @@ function SendBox() {
         {res && !err && rb && (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <WhoBadge servedBy={(String(rb.served_by) as ServedBy) || "teacher"} model={String(res.body?.model ?? "")} />
+              <WhoBadge servedBy={(String(rb.served_by) as ServedBy) || "teacher"} model={String(res.body?.model ?? "")} route={res.route} />
               <Badge tone="outline">route: {res.route ? routeWords(res.route) : "not recorded"}</Badge>
               {rb.escalated === true && <Badge tone="rented">escalated</Badge>}
             </div>

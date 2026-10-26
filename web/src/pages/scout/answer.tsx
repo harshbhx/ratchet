@@ -141,6 +141,8 @@ export interface SourceFact {
   fact: string;
   servedBy: ServedBy;
   model: string;
+  /** The call's route; `demo_split` is labelled on its badge. */
+  route?: string;
 }
 
 export function AnswerBody({
@@ -227,7 +229,7 @@ export function AnswerBody({
                   {facts?.[c.url] && (
                     <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-snug text-muted">
                       <span>Key fact read by</span>
-                      <WhoBadge servedBy={facts[c.url].servedBy} model={facts[c.url].model} />
+                      <WhoBadge servedBy={facts[c.url].servedBy} model={facts[c.url].model} route={facts[c.url].route} />
                       <span className="basis-full text-ink-2">{facts[c.url].fact}</span>
                     </span>
                   )}
