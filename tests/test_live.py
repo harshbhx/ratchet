@@ -862,8 +862,14 @@ def test_train_parse_args_defaults_and_row_contract(tmp_path, monkeypatch):
         2048,
         8,
     )
-    # Nemotron-H mixes attention, Mamba and MLP layers: the default targets include the Mamba projections.
-    assert {"q_proj", "o_proj", "in_proj", "out_proj"} <= set(a.targets.split(","))
+    # Nemotron-H mixes attention, Mamba and MLP layers. The default targets are attention and MLP, what the measured
+    # adapters used (evidence/text2sql-round*/adapter/adapter_config.json); the Mamba projections stay one flag away.
+    assert a.targets == train.TARGETS_ATTENTION_MLP
+    for rnd in ("text2sql-round1", "text2sql-round2"):
+        config = json.loads((ROOT / "evidence" / rnd / "adapter" / "adapter_config.json").read_text(encoding="utf-8"))
+        assert set(config["target_modules"]) == set(a.targets.split(",")), rnd
+    mamba = train.parse_args(["--data", "d", "--out", "o", "--targets", train.TARGETS_WITH_MAMBA]).targets
+    assert {"in_proj", "out_proj"} <= set(mamba.split(",")) and set(a.targets.split(",")) < set(mamba.split(","))
     # The base model the job trains is the one the gateway, the job script and the endpoint script name.
     assert a.base == Settings().student_base_model
     for script in ("train_job.sh", "student_endpoint.sh"):
@@ -1519,6 +1525,24 @@ def test_deploy_scripts_parse_and_dry_run(tmp_path):
     backup = ROOT / "deploy" / "vm" / "backup.sh"
     r = subprocess.run([BASH, str(backup)], env={**env, "RATCHET_MODE": "mock"}, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0 and "mock mode: ledger is in memory, nothing to back up" in r.stdout
+
+
+@pytest.mark.req("FR-11.30")
+def test_both_cloudflare_workers_pass_the_visitor_ip():
+    """Every request reaches a demo container through its Worker, so the per-IP limits (RATCHET_IP_RPM, the simulation's
+    RATCHET_DEMO_RPM) would count the Worker's address unless the gateway trusts X-Forwarded-For and the Worker sets it
+    from Cloudflare's cf-connecting-ip. Both Workers do; the simulation's once did neither, so every visitor shared one
+    limit. The simulation's Worker never forwards a visitor's own X-Forwarded-For, and warms up as `make demo` does."""
+    for worker in ("cloudflare", "cloudflare-live"):
+        src = (ROOT / "deploy" / worker / "src" / "index.ts").read_text(encoding="utf-8")
+        assert 'RATCHET_TRUST_PROXY: "1"' in src, worker
+        assert 'request.headers.get("cf-connecting-ip")' in src and 'headers.set("x-forwarded-for", ip)' in src, worker
+    sim = (ROOT / "deploy" / "cloudflare" / "src" / "index.ts").read_text(encoding="utf-8")
+    assert "demo.fetch(withVisitorIp(request))" in sim and 'headers.delete("x-forwarded-for")' in sim
+    # The public simulation opens where `make demo` does: after a 4-day warm-up (a live student and a canary), as the
+    # site says; it once opened at day 2 with no student serving yet.
+    days = re.search(r"RATCHET_MOCK_WARMUP_DAYS=(\d+)", (ROOT / "Makefile").read_text(encoding="utf-8"))
+    assert days and f'RATCHET_MOCK_WARMUP_DAYS: "{days[1]}"' in sim and days[1] == "4"
 
 
 @pytest.mark.req("FR-11.1", "FR-11.2", "FR-11.30", "NFR-67", "INV-13")

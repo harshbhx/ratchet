@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]" (the dev extra includes ruff, which make lint needs)
-make test           # pytest -q (1934 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
+make test           # pytest -q (1950 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -126,7 +126,7 @@ Always run `make lint test reference` before committing.
 | `ratchet/similarity.py` | Free-text similarity for the `similarity` field type: `chrf`, `token_f1`, `rouge_l` (bit-parallel LCS), features built once per answer, stdlib only ([ADR 0054](docs/adr/0054-free-text-similarity-and-a-judge-gate.md)) |
 | `ratchet/vocab.py` | The built-in tasks' label vocabularies, shared with `sim/tickets.py` and `scout/prompts.py` |
 | `ratchet/providers.py` | OpenAI-compatible HTTP client (`Completion` with token logprobs and tool calls, `_tool_calls`; `embed` → `Embeddings` for the `/v1/embeddings` pass-through, parsed strictly); every failure raises `UpstreamError`. `GenParams` (a request's generation parameters) and `GenPolicy` (what each role sends, the token caps); `served_logprobs` (the token logprobs a client gets, aligned with the served text) |
-| `ratchet/resilience.py` | `RetryPolicy`, `retry_call` (full-jitter backoff, `Retry-After`, deadline, a read timeout retried once), `UpstreamError`, per-role `timeouts` ([ADR 0014](docs/adr/0014-upstream-failure-semantics.md)) |
+| `ratchet/resilience.py` | `RetryPolicy`, `retry_call` (full-jitter backoff, `Retry-After`, deadline, a read timeout, dropped connection or 504 retried once at most), `UpstreamError`, per-role `timeouts` ([ADR 0014](docs/adr/0014-upstream-failure-semantics.md)) |
 | `ratchet/nightschool/` | Dataset build, LoRA training script, golden eval, nightly orchestration; `notices.py` writes the NOTICE.md that travels with each adapter |
 | `ratchet/live.py` | Live Night School on Nebius: `python -m ratchet.live night|tick|reload|purge|export|seal` (a night that trains writes the BOM and NOTICE.md into `RATCHET_DATA_DIR/adapters/<name>/` and syncs again; `seal`: the savings receipts of every day that ended, also sealed before `purge` or a night folds request rows) |
 | `ratchet/liverun.py` | The live-run harness ([ADR 0121](docs/adr/0121-live-measurement-method.md)): `python -m ratchet.liverun plan|smoke|run|report|verify`; rounds of synthetic or file workload traffic through `/v1` under its own key (`RATCHET_LIVERUN_KEY`), keyed by the key's name and request-id ranges (`Ledger.client_window`), nights in process through `live.main`'s seams, a plan and a hard `--max-usd` cap, the planned gate profile (`RUN_PROFILE`), a control arm straight to the teacher (`_control_call` mirrors `Ratchet._teacher_complete`), template-label accuracy (`score`), the measured baseline (`control_estimate`), `results.json` with `live.*` claim ids, resume, the repeat run (`repeat_values`), `report` and `verify` |

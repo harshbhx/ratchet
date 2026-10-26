@@ -12,9 +12,9 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 
@@ -24,6 +24,7 @@ from .prompts import plan_messages, read_messages, triage_messages, write_messag
 from .search import Hit, SearchTool, SearchUnavailable
 
 Emit = Callable[[dict[str, Any]], None]
+T = TypeVar("T")
 
 
 @dataclass
@@ -106,6 +107,26 @@ def _step(agent: str, task: str | None, c: Call | None, detail: dict[str, Any], 
         "latency_ms": round(c.latency_ms, 1),
         "detail": detail,
     }
+
+
+def _map_or_cancel(workers: int, fn: Callable[[Hit], T], items: list[Hit]) -> list[T]:
+    """`fn` over `items` on `workers` threads, results in order. The first call to fail, whichever it is, cancels the
+    calls still queued at once (`pool.map` would wait for every earlier call first, while free threads kept starting
+    queued ones), so a failed run pays for the calls already running (each counted as its step arrives), not for the
+    rest of the batch whose answers nobody would read. Then its error propagates, and the caller ends the run with an
+    `error` event."""
+    pool = ThreadPoolExecutor(workers)
+    try:
+        futures = [pool.submit(fn, item) for item in items]
+        wait(futures, return_when=FIRST_EXCEPTION)
+        error = next((e for f in futures if f.done() and not f.cancelled() and (e := f.exception()) is not None), None)
+        if error is not None:
+            for f in futures:
+                f.cancel()  # a call already running cannot be cancelled: it finishes, and its spend counts
+            raise error
+        return [f.result() for f in futures]
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 class Scout:
@@ -209,8 +230,7 @@ class Scout:
             )
             return h, relevant
 
-        with ThreadPoolExecutor(self.workers) as pool:
-            triaged = list(pool.map(triage, hits))
+        triaged = _map_or_cancel(self.workers, triage, hits)
         relevant = [h for h, ok in sorted(triaged, key=lambda x: x[0].id) if ok][: self.max_reads]
 
         # 4. Read the relevant ones in parallel (distillable).
@@ -227,8 +247,7 @@ class Scout:
             send(_step("reader", "page-read", c, detail))
             return h, detail
 
-        with ThreadPoolExecutor(self.workers) as pool:
-            reads = sorted(pool.map(read, relevant), key=lambda x: x[0].id)
+        reads = sorted(_map_or_cancel(self.workers, read, relevant), key=lambda x: x[0].id)
 
         facts = []
         for h, d in reads:

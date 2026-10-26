@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import queue
 import random
 import sqlite3
 import statistics
@@ -32,6 +33,7 @@ from ratchet.ledger import AUDIT_TALLY_SQL, ROUTED_SQL, ROUTED_STATES, SHADOW_QU
 from ratchet.providers import OpenAICompatProvider
 from ratchet.release import ReleaseGate, ReleasePolicy
 from ratchet.router import Ratchet
+from ratchet.scout.prompts import EXAMPLE_QUESTIONS
 
 CHAT = "/v1/chat/completions"
 A = json.dumps({"category": "billing", "priority": "high", "reply": "I am checking the charge now."})
@@ -554,6 +556,46 @@ def test_request_path_ticks_at_most_once_per_interval(gw_env):
     clock.advance(5)
     assert c.post(CHAT, json={"messages": msgs}).status_code == 200
     assert len(calls) == 2
+
+
+@pytest.mark.req("FR-12.8", "FR-10.4")
+def test_a_failing_tick_never_fails_an_answered_request(gw):
+    """The release gate ticks after every answered request and every Scout run. A tick that raises is the gate's
+    failure, not the client's: the request that was answered (and paid for) is still a 200, a Scout run still ends with
+    `done`, and the failure is a `tick_error` event on the 1st, 10th, 100th ... failure, naming its class only. A Scout
+    stream always ends, even when what runs after the run (the guard's spend write) raises."""
+    rt = gw.rt
+
+    def boom() -> None:
+        raise RuntimeError("gate failed: a message that must not reach the log")
+
+    rt.gate.tick = boom
+    c = TestClient(gw.app, raise_server_exceptions=False)
+    msgs = rt.stream.sample(1).messages()
+    for _ in range(10):
+        r = c.post(CHAT, json={"messages": msgs})
+        assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"]
+    r = c.post("/scout/run", json={"question": EXAMPLE_QUESTIONS[0]})
+    assert r.status_code == 200 and r.json()["events"][-1]["type"] == "done"
+    rt.settings.mock_pace = 0
+    with c.stream("GET", "/scout/stream", params={"q": EXAMPLE_QUESTIONS[1]}) as s:
+        data = [json.loads(line[5:]) for line in s.iter_lines() if line.startswith("data:")]
+    assert s.status_code == 200 and data[-1]["type"] == "done"
+    assert (rt.tick_errors, rt.gateway_errors) == (12, 0)  # 10 requests and 2 runs; no unhandled error
+    errors = [e["detail"] for e in rt.ledger.events() if e["kind"] == "tick_error"]
+    assert errors == ["release gate tick: RuntimeError"] * 2  # the 1st and the 10th
+    assert rt.ledger.totals()["requests"] >= 10
+
+    # The run's own end raising (the guard's spend write) still ends the stream, with an error event first.
+    def broken_spend(*args: Any, **kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    rt.guard.add_spend = broken_spend
+    box: queue.Queue[dict[str, Any] | None] = queue.Queue()
+    gw._scout_worker(EXAMPLE_QUESTIONS[2], box, 0.0, False, "run12345")
+    events = [box.get_nowait() for _ in range(box.qsize())]
+    assert events[-1] is None and events[-2] == {"type": "error", "message": "run failed: OSError"}
+    assert [e["type"] for e in events[:-2]][-1] == "done"
 
 
 # ---------- the cached /ratchet/stats ----------

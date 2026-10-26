@@ -277,8 +277,9 @@ def _explain(r: dict[str, Any], policy: CostPolicy) -> str:
     # hosted_fallback: below the crossover, so per answer the hosted fallback is cheaper than the endpoint.
     if covers and not loss:
         return (
-            f"Self-hosting beats the teacher, but the hosted fallback would cost less per answer. {volume}, {position}, so "
-            f"its GPU-hours cost less than the teacher spend they avoid; below {_count(cross)} an hour the hosted fallback "
+            "Self-hosting costs less than the teacher, but the hosted fallback would cost less per answer. "
+            f"{volume}, {position}, so its GPU-hours cost less than the teacher spend they avoid; below {_count(cross)} an "
+            "hour the hosted fallback "
             f"is cheaper per answer ({rate}). {CROSSOVER_CAVEAT} Switch to it (leave RATCHET_STUDENT_BASE empty) only if "
             f"it serves about as many requests: compare the student's share of requests over a day on each. {money}"
         )

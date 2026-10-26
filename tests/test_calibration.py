@@ -560,6 +560,21 @@ def test_per_task_live_alert_once():
     assert [e["detail"].split(":")[0] for e in led.events() if e["kind"] == "alert"][-1] == f"v{canary} task bad_task"
 
 
+@pytest.mark.req("FR-14.1", "FR-12.31")
+def test_pending_offpath_audits_count_in_no_per_task_number():
+    """An off-path audit is logged pending (`audited` 1, `audit_agree` NULL) until its verdict arrives (ADR 0072). The
+    per-task numbers count audits with a verdict only, as the version's do: a pending audit is in neither the count nor
+    the precision, and a task whose audits are all pending is no task of the alert's yet."""
+    led = Ledger(":memory:")
+    live = _version(led, "live", {"threshold": 0.8})
+    _audits(led, live, "a", 20, 15)
+    for task, pending in (("a", 30), ("b", 5)):
+        for _ in range(pending):
+            led.log_request(task=task, served_by="student", student_version=live, audited=1, audit_agree=None)
+    assert led.task_live_quality(live) == {"a": (20, 0.75)}
+    assert led.version_live_quality(live, task="a") == (20, 0.75) and led.version_live_quality(live) == (20, 0.75)
+
+
 @pytest.mark.req("FR-14.1", "FR-6.7")
 def test_per_task_alert_is_written_once_across_processes(tmp_path):
     """The gateway's tick and a `python -m ratchet.live tick` cron can share one ledger file. `Ledger.event_once` checks
@@ -730,6 +745,23 @@ def test_ledger_merges_a_task_record_atomically():
     assert not led.db.in_transaction  # rolled back, so the next write starts clean
     led.merge_task_eval(vid, "B", {"threshold": 0.9})
     assert set(led.version(vid).eval["tasks"]) == {"A", "B"}
+
+
+@pytest.mark.req("FR-14.1", "FR-12.9")
+def test_a_task_disabled_inside_a_transaction_rolls_back_with_it():
+    """`ReleaseGate.admit` disables a failing task inside its one transaction: the record joins it (no commit of its own,
+    which once split the transaction), so a rollback takes the disabled task back with every other write."""
+    led = Ledger(":memory:")
+    vid = _version(led, "candidate", {"threshold": 0.8})
+    with pytest.raises(RuntimeError, match="a later step failed"), led.transaction():
+        led.merge_task_eval(vid, "A", {"threshold": SERVE_NOTHING, "disabled": "regressed"})
+        led.event("task_disabled", f"v{vid} A: regressed")
+        raise RuntimeError("a later step failed")
+    assert led.version(vid).eval == {"threshold": 0.8} and led.events() == []
+    with led.transaction():
+        led.merge_task_eval(vid, "A", {"disabled": "regressed"})
+        assert led.db.in_transaction  # still the caller's transaction: nothing committed on its own
+    assert led.version(vid).eval["tasks"] == {"A": {"disabled": "regressed"}} and not led.db.in_transaction
 
 
 # ---------- the loop ----------

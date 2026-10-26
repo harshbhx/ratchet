@@ -572,7 +572,7 @@ def test_explanation_between_break_even_and_the_hosted_crossover():
     assert r["views"]["gpu_hours"]["savings_usd"] == pytest.approx(2.0 - 0.0 - 1.0)  # baseline - teacher - endpoint
     assert r["recommendation"] == "hosted_fallback"
     text = r["explanation"]
-    assert text.startswith("Self-hosting beats the teacher, but the hosted fallback would cost less per answer.")
+    assert text.startswith("Self-hosting costs less than the teacher, but the hosted fallback would cost less per answer.")
     assert "at or above the break-even of 5.0" in text and "below 37,879 an hour" in text
     assert "Savings by GPU-hours paid: $1.00 (50%)" in text and cost.CROSSOVER_CAVEAT in text
     assert "does not pay" not in text and "below the break-even" not in text

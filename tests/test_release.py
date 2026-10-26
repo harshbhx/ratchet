@@ -638,6 +638,35 @@ def test_live_alert_uses_the_e_process():
     assert _kinds(led, "alert")[0]["detail"].startswith(f"live v{vid} audited precision 0.0% (n=20) below floor")
 
 
+@pytest.mark.req("FR-6.7", "FR-16.2")
+@pytest.mark.parametrize("alert_eprocess", [1, 0])
+def test_live_alert_is_written_once_across_gates(tmp_path, alert_eprocess):
+    """Each `python -m ratchet.live tick` builds a new gate, and the gateway ticks its own on the same ledger file. The
+    live alert's once-only is read from the ledger (`Ledger.event_once`), as the per-task alerts' is, so neither a new
+    gate nor a second process alerts on the same live version again (it once lived in one gate's memory). A log
+    listener still sees the alert, once."""
+    path = str(tmp_path / "ratchet.db")
+    led = Ledger(path)
+    seen: list[str] = []
+    led.add_event_listener(lambda row: seen.append(row["kind"]))
+    policy = ReleasePolicy(alert_eprocess=alert_eprocess)
+    vid = _version(led, "live", GOOD)
+    ten = max(_version(led, "retired", GOOD) for _ in range(9))  # v10: an id whose name starts like v1's
+    assert (vid, ten) == (1, 10)
+    _audit(led, vid, 30, agree_every=1)
+    for _ in range(2):
+        ReleaseGate(led, policy).tick()  # a cron tick: a new gate each time
+    ReleaseGate(Ledger(path), policy).tick()  # another process on the same file
+    assert len(_kinds(led, "alert")) == 1 and seen.count("alert") == 1
+    assert _kinds(led, "alert")[0]["detail"].startswith(f"live v{vid}")
+    led.set_version(vid, "retired", 0)
+    led.set_version(ten, "live", 100)
+    _audit(led, ten, 30, agree_every=1)
+    ReleaseGate(led, policy).tick()
+    details = [e["detail"] for e in _kinds(led, "alert")]
+    assert len(details) == 2 and details[1].startswith(f"live v{ten}")  # v10's alert: v1's is not v10's
+
+
 @pytest.mark.req("FR-16.1", "FR-16.2")
 def test_evidence_is_recomputed_from_the_counts():
     """`evidence` stores nothing: every number comes from the version's audit counts over its life and in its current
