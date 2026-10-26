@@ -57,6 +57,7 @@ export const ROUTE_WORDS: Record<string, string> = {
   task_disabled: "teacher: task disabled",
   student_disabled: "teacher: student turned off",
   passthrough: "passed through (embeddings)",
+  demo_split: "student: demo split, picked at random (not by confidence)",
 };
 
 export function routeWords(route: string | null | undefined): string {
@@ -68,7 +69,7 @@ export function routeWords(route: string | null | undefined): string {
 
 /** Whether a route ended with the student's answer. */
 export function studentRoute(route: string | null | undefined): boolean {
-  return route === "student" || route === "degraded";
+  return route === "student" || route === "degraded" || route === "demo_split";
 }
 
 /** Route counts summed over tasks, largest first. */

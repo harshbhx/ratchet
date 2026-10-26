@@ -78,6 +78,7 @@ Request and response details for each endpoint are in [API.md](API.md#scout-endp
 - Steps for parallel agents may arrive in any order. Use `detail.id` to match a triage step and its reader step to a search result.
 - An `error` event ends the stream. `/scout/stream` always answers HTTP 200 and reports problems as an `error` event, because browsers' `EventSource` cannot read status codes. `/scout/run` uses HTTP codes instead: 400 (empty question, a question over 300 characters, or a non-example question in mock mode), 429 (rate limit, daily run cap or budget), 503 (live mode without `TAVILY_API_KEY`), 502 (a model call failed during the run).
 - Every step keeps exactly the top-level keys above; new fields go inside `detail`.
+- A call the live demo's split sent to the hosted Nano at random (`RATCHET_DEMO_SPLIT`, [ADR 0147](adr/0147-demo-split.md)) has `detail.route = "demo_split"`, and `totals.demo_split_calls` counts them; the page labels such a call "Demo split" (picked at random, not by the confidence gate). Absent otherwise.
 
 ### When search is unavailable (v0.5)
 

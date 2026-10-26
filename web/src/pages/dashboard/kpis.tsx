@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import type { Stats } from "@/lib/api";
 import { cn, fmtPct, fmtUsd } from "@/lib/utils";
-import { NOT_CERTIFIED, hostedServing, precisionShown, studentCopy } from "@/lib/who-model";
+import { NOT_CERTIFIED, demoSplitStat, hostedServing, precisionShown, studentCopy } from "@/lib/who-model";
 import { cumulativeSaved, fmtPts, inFlight, latest, liveVersion, prev, stateLabel } from "./model";
 
 /** Tiny trend line. De-emphasis line with the current point in the owned accent. */
@@ -135,6 +135,31 @@ export function Kpis({ stats }: { stats: Stats }) {
           ) : (
             "Cold start: no student yet"
           )
+        }
+      />
+    </div>
+  );
+}
+
+/** The live demo's split (FR-12.34, ADR 0147), labelled as what it is: a random pick, not the confidence gate. Nothing while it is off. */
+export function DemoSplitTile({ stats }: { stats: Stats }) {
+  const s = demoSplitStat(stats.demo_split);
+  if (!s) return null;
+  const [what, ...rest] = s.lines;
+  return (
+    <div className="mt-3" data-demo-split>
+      <Tile
+        label={`${s.label} · share of calls sent to the hosted Nano`}
+        value={s.value}
+        foot={
+          <>
+            <span className="text-ink-2">{what}</span>
+            {rest.map((l) => (
+              <span key={l} className="block">
+                {l}
+              </span>
+            ))}
+          </>
         }
       />
     </div>

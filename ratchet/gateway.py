@@ -664,7 +664,8 @@ class Runtime:
         # With no live version the hosted student's row (FR-12.33) takes most requests, when it answers some task.
         stand_in = self.ledger.by_state(HOSTED_STATE) if v is None and s.hosted_student and s.mode == "live" else None
         tasks_served = hosted.served_tasks(stand_in.eval) if stand_in is not None else {}
-        if tasks_served:
+        split = s.demo_split if stand_in is not None else 0.0  # the demo split sends it a random share (FR-12.34)
+        if tasks_served or split > 0:
             v = stand_in
         elif v is None and serving:
             v = serving[-1]
@@ -691,6 +692,8 @@ class Runtime:
         if v.state == HOSTED_STATE:  # each task's own threshold; `threshold` only when there is one
             out["tasks"] = tasks_served
             out["threshold"] = next(iter(tasks_served.values())) if len(tasks_served) == 1 else None
+            if split > 0:  # a random share of eligible requests, whatever the threshold (ADR 0147)
+                out["demo_split"] = split
         return out
 
     # ----- auto tasks (RATCHET_AUTO_TASK=system_prompt, ADR 0048) -----
@@ -2400,6 +2403,8 @@ def _serve_held(
     rt.safe_tick()  # the request is answered and paid for: a failing gate is reported, never the client's 500
     meta = {
         "served_by": r.served_by,
+        # How it was served (`router.ROUTES`); `demo_split` marks the live demo's random share (FR-12.34, ADR 0147).
+        "route": r.route,
         "student_version": r.version,
         "confidence": r.confidence,
         "escalated": r.escalated,
@@ -3239,6 +3244,13 @@ def _stats_payload() -> dict[str, Any]:
         # The model that answers student calls now: our adapter, or the hosted fallback with the endpoint off (FR-7.40).
         "fallback_student": rt.settings.fallback_student_model,
         "student_serving": rt.student_serving(),
+        # The live demo's split (FR-12.34, ADR 0147): the configured share and what it did; counts and dollars.
+        "demo_split": {
+            "enabled": rt.settings.demo_split > 0,
+            "rate": rt.settings.demo_split,
+            "audit_rate": rt.settings.demo_split_audit,
+            **led.demo_split_stats(),
+        },
         "days": led.stats_by_day(),
         "tasks": led.stats_by_task(),
         # What the release gate reads for the canary and the live version, from their counts (ADR 0025); null otherwise.

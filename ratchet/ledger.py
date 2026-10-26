@@ -2495,6 +2495,41 @@ class Ledger:
             "no_train_end_users": no_train,
         }
 
+    @_locked
+    def demo_split_stats(self) -> dict[str, Any]:
+        """What the live demo's split did (FR-12.34, ADR 0147), from the request rows still held: the requests the hosted
+        student answered at random (route `demo_split`), the requests of the tasks they came from (the share's
+        denominator), the audits that came back with a verdict (Ultra's answer against the Nano's) and how many agreed,
+        and the cost against the all-Ultra baseline. Counts and dollars, never text."""
+        row = self.db.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(audit_agree IS NOT NULL), 0) audits, COALESCE(SUM(audit_agree = 1), 0) agreed,"
+            " COALESCE(SUM(cost_usd), 0) cost, COALESCE(SUM(baseline_cost_usd), 0) baseline"
+            " FROM requests WHERE route = 'demo_split'"
+        ).fetchone()
+        n = int(row["n"])
+        of = (
+            int(
+                self.db.execute(
+                    "SELECT COUNT(*) FROM requests WHERE task IN (SELECT DISTINCT task FROM requests WHERE route = 'demo_split')"
+                ).fetchone()[0]
+            )
+            if n
+            else 0
+        )
+        audits, cost, baseline = int(row["audits"]), float(row["cost"]), float(row["baseline"])
+        return {
+            "requests": n,
+            "of_requests": of,
+            "share": n / of if of else None,
+            "audits": audits,
+            "agreed": int(row["agreed"]),
+            "agreement": int(row["agreed"]) / audits if audits else None,
+            "cost_usd": cost,
+            "baseline_usd": baseline,
+            "saved_usd": baseline - cost,
+            "savings_pct": (baseline - cost) / baseline if baseline > 0 else None,
+        }
+
     # ---------- end users (FR-13.2, ADR 0080) ----------
     @_locked
     def no_train_add(

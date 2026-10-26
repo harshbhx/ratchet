@@ -102,7 +102,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
             <p className="mt-2.5 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
               {state.answer.servedBy ? (
                 <>
-                  Answered by <WhoBadge servedBy={state.answer.servedBy} model={state.answer.model} simulated={!live} />
+                  Answered by <WhoBadge servedBy={state.answer.servedBy} model={state.answer.model} route={state.answer.route} simulated={!live} />
                 </>
               ) : (
                 "The reply did not say which model answered."

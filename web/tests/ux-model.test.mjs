@@ -69,7 +69,8 @@ test("the live request is short, small and not stored", () => {
 
 test("the answer is read defensively", () => {
   const a = r.parseAnswer({ model: "m1", choices: [{ message: { content: " Hi " } }], ratchet: { served_by: "student" } });
-  assert.deepEqual(a, { text: "Hi", servedBy: "student", model: "m1" });
+  assert.deepEqual(a, { text: "Hi", servedBy: "student", model: "m1", route: null });
+  assert.equal(r.parseAnswer({ choices: [{ message: { content: "x" } }], ratchet: { served_by: "student", route: "demo_split" } }).route, "demo_split");
   assert.equal(r.parseAnswer({ choices: [{ message: { content: "x" } }] }).servedBy, null);
   assert.equal(r.parseAnswer({ choices: [{ message: { content: "x" } }], ratchet: { served_by: "upstream" } }).servedBy, null);
   assert.equal(r.parseAnswer({ choices: [] }), null);

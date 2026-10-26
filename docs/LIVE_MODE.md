@@ -41,6 +41,10 @@ make live-run MAX_USD=30         # results in evidence/live/<run id>/
 
 The [runbook](RUNBOOK.md#live-measurement-run) covers the prerequisites (the gateway runs `RATCHET_SEQUENTIAL=1` and `RATCHET_CANARY_AUDIT_RATE=0.5`), resuming, the repeat run, entering the Nebius bill and publishing.
 
+## The live demo's split
+
+The live demo can route a random share of calls to the hosted Nano 30B (`RATCHET_HOSTED_STUDENT=1`, `RATCHET_DEMO_SPLIT=0.4`) to show the economics on real calls: those answers have route `demo_split`, are labelled "Demo split: picked at random, not by the confidence gate" on the pages, are audited against Ultra (`RATCHET_DEMO_SPLIT_AUDIT`) and count in no release. The confidence gate decides only in normal mode, with the split off ([ADR 0147](adr/0147-demo-split.md)).
+
 ## Evidence on record
 
 | What | How |

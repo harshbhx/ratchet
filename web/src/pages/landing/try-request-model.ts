@@ -18,17 +18,20 @@ export interface Answer {
   text: string;
   servedBy: ServedBy | null;
   model: string | null;
+  /** `ratchet.route`: `demo_split` is labelled on the badge. */
+  route: string | null;
 }
 
 /** Read a chat completion defensively. null when it holds no usable choice. */
 export function parseAnswer(body: unknown): Answer | null {
-  const b = body as { model?: unknown; choices?: { message?: { content?: unknown } }[]; ratchet?: { served_by?: unknown; model?: unknown } } | null;
+  const b = body as { model?: unknown; choices?: { message?: { content?: unknown } }[]; ratchet?: { served_by?: unknown; model?: unknown; route?: unknown } } | null;
   const content = b?.choices?.[0]?.message?.content;
   if (typeof content !== "string") return null;
   const by = b?.ratchet?.served_by;
   const servedBy = by === "student" || by === "teacher" ? by : null;
   const model = typeof b?.model === "string" && b.model ? b.model : null;
-  return { text: content.trim(), servedBy, model };
+  const route = typeof b?.ratchet?.route === "string" && b.ratchet.route ? b.ratchet.route : null;
+  return { text: content.trim(), servedBy, model, route };
 }
 
 /** A calm message for a failed request, by HTTP status (0: no answer at all). */

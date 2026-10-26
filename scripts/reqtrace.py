@@ -1295,6 +1295,14 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.gateway:Runtime.student_serving",
         "ratchet.config:Settings._check_hosted",
     ),
+    "FR-12.34": (
+        "ratchet.router:DEMO_SPLIT_ROUTE",
+        "ratchet.router:Ratchet._demo_split",
+        "ratchet.router:Ratchet.handle",
+        "ratchet.ledger:Ledger.demo_split_stats",
+        "ratchet.gateway:Runtime.student_serving",
+        "ratchet.config:Settings._check_demo_split",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",

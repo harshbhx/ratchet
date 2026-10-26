@@ -12,7 +12,7 @@ import { hostedServing, servingLine } from "@/lib/who-model";
 import { CostChart, PrecisionChart, ShareChart } from "./charts";
 import { DemoControls, WORKLOADS, type Busy, type Notice } from "./controls";
 import { EconomicsPanel, hasEconomics } from "./economics";
-import { KpiSkeleton, Kpis } from "./kpis";
+import { DemoSplitTile, KpiSkeleton, Kpis } from "./kpis";
 import { MeasuredResults } from "./measured";
 import { Group, JumpBar, SECTIONS, type SectionId } from "./sections";
 import { armedFault, eventKey, fmtTime, newEvents, stateLabel } from "./model";
@@ -471,6 +471,7 @@ export default function DashboardPage() {
                 <Group id="overview" title="Overview" hint={mock ? "Simulation" : "Live"}>
                   <Reveal>
                     <Kpis stats={stats} />
+                    <DemoSplitTile stats={stats} />
                   </Reveal>
                   <Reveal delay={0.05}>
                     <Pipeline versions={stats.versions} faultId={fault?.id} demoLink={link} />

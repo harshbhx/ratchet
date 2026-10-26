@@ -112,14 +112,14 @@ A signed BOM is the operator's signed statement of the data and evaluation behin
 ## 8. The test suite and the requirements matrix
 
 ```bash
-make test                      # 1950 tests, no network, no GPU (Linux, macOS or WSL)
+make test                      # 1972 tests, no network, no GPU (Linux, macOS or WSL)
 python -m pytest -q            # the same suite without make
 python scripts/reqtrace.py --check
 ```
 
 Run the suite on Linux, macOS or WSL: Windows has no `make`, and `tests/test_watch.py` needs `fcntl`, which Windows lacks.
 
-Expected for the last command: `reqtrace: OK: 226 requirements …`. Every requirement and every invariant maps to code and to tests in [REQUIREMENTS.md](REQUIREMENTS.md).
+Expected for the last command: `reqtrace: OK: 228 requirements …`. Every requirement and every invariant maps to code and to tests in [REQUIREMENTS.md](REQUIREMENTS.md).
 
 ## What it cost
 

@@ -292,6 +292,8 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_DEMO_MAX_DAYS",
             "RATCHET_DEMO_MAX_REQUESTS",
             "RATCHET_DEMO_RPM",
+            "RATCHET_DEMO_SPLIT",
+            "RATCHET_DEMO_SPLIT_AUDIT",
             "RATCHET_DASHBOARD_KEYS",
             "RATCHET_DATA_DIR",
             "RATCHET_DB",
@@ -796,6 +798,10 @@ class Settings:
     # The hosted student (FR-12.33, ADR 0146): in live mode, while no version is live, the fallback model answers the
     # tasks `ratchet/hosted.py` calibrated it for, each at its own measured threshold. Off by default.
     hosted_student: bool = field(default_factory=lambda: _bool("RATCHET_HOSTED_STUDENT", "0"))
+    # The live demo's split (FR-12.34, ADR 0147): the share of eligible requests sent to the hosted student whatever its
+    # confidence, labelled route `demo_split`, to show the economics on real calls; 0 = off. Audited at its own rate.
+    demo_split: float = field(default_factory=lambda: _float("RATCHET_DEMO_SPLIT", "0"))
+    demo_split_audit: float = field(default_factory=lambda: _float("RATCHET_DEMO_SPLIT_AUDIT", "0.25"))
     # Open teachers added without a code change (ratchet/licenses.py, ADR 0090): a JSON list of {model, license, url,
     # note}, merged into a copy of the built-in registry at startup. Only allowed licenses, never a closed model family;
     # a bad file stops startup with every error listed. Empty = the built-in registry only.
@@ -1814,6 +1820,7 @@ class Settings:
             self._check_live(error, warning)
         if self.hosted_student is True:
             self._check_hosted(error, warning)
+        self._check_demo_split(error)
         self._check_prices(warning)
         _check_environ(env, live, warning)
         if not 600 <= self.watch_flag_max_age_s <= 604800:
@@ -1905,6 +1912,19 @@ class Settings:
                 f"RATCHET_AUDIT_RATE={rate:g} audits under 1% of student answers: a canary may never collect "
                 "RATCHET_MIN_AUDITS audits, so no release would be promoted or rolled back on evidence",
             )
+
+    def _check_demo_split(self, error: Callable[[str, str], None]) -> None:
+        """RATCHET_DEMO_SPLIT (FR-12.34, ADR 0147): a share from 0 to 1 of eligible requests the hosted student answers
+        whatever its confidence. It needs live mode and RATCHET_HOSTED_STUDENT=1 (the row and the resolver it uses), and
+        its audit rate is a share from 0 to 1."""
+        for var, value in (("RATCHET_DEMO_SPLIT", self.demo_split), ("RATCHET_DEMO_SPLIT_AUDIT", self.demo_split_audit)):
+            if not _number_in(value, 0.0, 1.0, False):
+                error(var, f"{var} must be a number from 0 to 1, not {value!r}")
+        if _number_in(self.demo_split, 0.0, 1.0, False) and self.demo_split > 0:
+            if self.mode != "live":
+                error("RATCHET_DEMO_SPLIT", "RATCHET_DEMO_SPLIT applies in live mode only: the mock fleet plays every student")
+            elif self.hosted_student is not True:
+                error("RATCHET_DEMO_SPLIT", "RATCHET_DEMO_SPLIT needs RATCHET_HOSTED_STUDENT=1: it sends requests to that model")
 
     def _check_hosted(self, error: Callable[[str, str], None], warning: Callable[[str, str], None]) -> None:
         """RATCHET_HOSTED_STUDENT (FR-12.33, ADR 0146): the hosted student's thresholds were measured for one model, one

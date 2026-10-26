@@ -124,7 +124,7 @@ export function StepMeta({ step, className }: { step: ScoutStep; className?: str
   const checked = step.served_by === "student" && step.baseline_usd > 0 && step.cost_usd > step.baseline_usd * 0.5;
   return (
     <div className={cn("flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-muted tabular", className)}>
-      <WhoBadge servedBy={step.served_by} model={step.model} />
+      <WhoBadge servedBy={step.served_by} model={step.model} route={"route" in step.detail ? step.detail.route : undefined} />
       {!tool && (
         <span className="font-mono text-[11.5px]" title={step.model}>
           {shortModel(step.model)}

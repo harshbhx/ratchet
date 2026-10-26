@@ -15,7 +15,7 @@ import type {
   TriageStep,
   WriterStep,
 } from "@/lib/api";
-import { hostedCalls, studentCopy } from "@/lib/who-model";
+import { demoSplitCalls, hostedCalls, studentCopy } from "@/lib/who-model";
 
 /** Server-side cap on reader calls per question (`Scout.max_reads`, docs/SCOUT.md). */
 export const READ_LIMIT = 6;
@@ -215,6 +215,8 @@ export interface Derived {
    * the student and the hosted fallback serves now (it tried them, or will try the next run's).
    */
   hosted: boolean;
+  /** Student calls of this run the live demo's split picked at random (labelled on the totals bar). */
+  demoSplit: number;
 }
 
 export function isLlm(servedBy: ServedBy) {
@@ -336,6 +338,7 @@ export function derive(s: RunState, fallback?: string | null, servingHosted = fa
     perAgent,
     citedByUrl,
     hosted: hosted > 0 || (servingHosted && student === 0),
+    demoSplit: demoSplitCalls(llm),
   };
 }
 

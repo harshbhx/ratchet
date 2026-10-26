@@ -20,7 +20,7 @@ export function WriterCard({ run, derived }: { run: RunState; derived: Derived }
   const facts: Record<string, SourceFact> = {};
   for (const r of Object.values(run.reader)) {
     const url = r.detail?.url || run.results[r.detail?.id]?.url;
-    if (url && r.detail?.key_fact) facts[url] = { fact: r.detail.key_fact, servedBy: r.served_by, model: r.model };
+    if (url && r.detail?.key_fact) facts[url] = { fact: r.detail.key_fact, servedBy: r.served_by, model: r.model, route: r.detail.route };
   }
   return (
     <Card className="h-full min-w-0 overflow-hidden">

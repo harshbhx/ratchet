@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1950 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page, test_livesim, test_attribution, test_exam_numbers, test_reasoning, test_toolcall_results, test_watch), ~120 s
+pytest -q                     # 1972 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page, test_livesim, test_attribution, test_exam_numbers, test_reasoning, test_toolcall_results, test_hosted_student, test_demo_split, test_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -70,10 +70,11 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_reasoning.py` | 7 |
 | `tests/test_toolcall_results.py` | 11 |
 | `tests/test_hosted_student.py` | 9 |
+| `tests/test_demo_split.py` | 13 |
 | `tests/test_watch.py` | 70 (38 functions; counted on Linux, the file imports `fcntl` and does not collect on Windows) |
-| **Total** | **1950** |
+| **Total** | **1972** |
 
-Tests without a table of their own yet: `test_model_routing`, `test_attribution`, `test_exam_numbers`, `test_reasoning`, `test_toolcall_results`, `test_hosted_student` and `test_judges_page` (the file names and the docstrings of their tests say what each covers); `test_watch` has a paragraph below and no table.
+Tests without a table of their own yet: `test_model_routing`, `test_attribution`, `test_exam_numbers`, `test_reasoning`, `test_toolcall_results`, `test_hosted_student`, `test_demo_split` and `test_judges_page` (the file names and the docstrings of their tests say what each covers); `test_watch` has a paragraph below and no table.
 
 There are three layers:
 

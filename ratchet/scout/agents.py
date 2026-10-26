@@ -39,10 +39,11 @@ class Call:
     cost_usd: float
     baseline_usd: float
     latency_ms: float
+    route: str = ""  # how it was served (`router.ROUTES`); `demo_split` is labelled on every page (FR-12.34)
 
     @classmethod
     def from_result(cls, r: Any) -> Call:
-        return cls(r.text, r.served_by, r.model, r.confidence, r.escalated, r.cost_usd, r.baseline_usd, r.latency_ms)
+        return cls(r.text, r.served_by, r.model, r.confidence, r.escalated, r.cost_usd, r.baseline_usd, r.latency_ms, r.route)
 
 
 CallFn = Callable[[list[dict[str, Any]], str], Call]
@@ -74,6 +75,7 @@ def http_caller(base_url: str, api_key: str = "unused", timeout: float = 120.0, 
             float(meta.get("cost_usd") or 0.0),
             float(meta.get("all_teacher_cost_usd") or 0.0),
             float(meta.get("latency_ms") or 0.0),
+            str(meta.get("route") or ""),
         )
 
     return call
@@ -105,7 +107,8 @@ def _step(agent: str, task: str | None, c: Call | None, detail: dict[str, Any], 
         "cost_usd": c.cost_usd,
         "baseline_usd": c.baseline_usd,
         "latency_ms": round(c.latency_ms, 1),
-        "detail": detail,
+        # Every step keeps its top-level keys (docs/SCOUT.md); a call the live demo's split picked says so inside `detail`.
+        "detail": {**detail, "route": c.route} if c.route == "demo_split" else detail,
     }
 
 
@@ -276,6 +279,8 @@ class Scout:
                 "llm_calls": len(llm),
                 "student_calls": sum(s["served_by"] == "student" for s in llm),
                 "teacher_calls": sum(s["served_by"] == "teacher" for s in llm),
+                # Student calls the live demo's split sent to the hosted Nano at random, not by confidence (FR-12.34).
+                "demo_split_calls": sum(s["detail"].get("route") == "demo_split" for s in llm),
                 "cost_usd": cost,
                 "baseline_usd": base,
                 "savings_pct": 0.0 if base == 0 else 1 - cost / base,
