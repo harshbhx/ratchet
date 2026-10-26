@@ -95,7 +95,7 @@ Each step's badge names the model that answered it (`web/src/lib/who-model.ts`, 
 
 | Step | Badge | Tooltip |
 |---|---|---|
-| `student`, `model` is a Night School adapter (`student-vN`) | Nano · yours | "Nemotron 3 Nano 4B with our LoRA adapter v[N], on a Nebius Serverless Endpoint" |
+| `student`, `model` is a Night School adapter (`student-vN`) | Nano + your adapter | "Nemotron 3 Nano 4B with our LoRA adapter v[N], built to run on a Nebius Serverless Endpoint" |
 | `student`, `model` is `fallback_student` | Nano 30B · hosted | "Untuned Nemotron 3 Nano 30B on Token Factory, held to confidence threshold [T]. Not covered by our adapter's precision certificate." [T] is `student_serving.threshold`. With daily endpoint windows (`student_serving.window`) it adds "Our adapter answers during the daily endpoint windows." |
 | `teacher` | Ultra · Token Factory | "Nemotron 3 Ultra on Nebius Token Factory" |
 | `tool` | Tavily, or Search | the tool's id |

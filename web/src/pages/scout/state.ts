@@ -211,7 +211,7 @@ export interface Derived {
   perAgent: AgentRow[];
   citedByUrl: Record<string, number>;
   /**
-   * Say "the student", not "your model": a student answer of this run came from the hosted fallback, or none came from
+   * Say "the student", not "your adapter": a student answer of this run came from the hosted fallback, or none came from
    * the student and the hosted fallback serves now (it tried them, or will try the next run's).
    */
   hosted: boolean;
@@ -223,7 +223,7 @@ export function isLlm(servedBy: ServedBy) {
 
 /**
  * `fallback` is the gateway's hosted fallback id and `servingHosted` whether it serves the student now (`/scout/status`):
- * student calls it answered are counted apart, and the run's copy stops saying "your model" (`Derived.hosted`). A run's
+ * student calls it answered are counted apart, and the run's copy stops saying "your adapter" (`Derived.hosted`). A run's
  * own answers decide over the serving state, which may have changed since they came back (endpoint windows).
  */
 export function derive(s: RunState, fallback?: string | null, servingHosted = false): Derived {

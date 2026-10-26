@@ -8,10 +8,11 @@ import { WhoBadge } from "@/components/ui/who";
 import type { ServedBy } from "@/lib/api";
 import { cn, fmtMs, fmtUsd } from "@/lib/utils";
 import surfaceText from "@/data/api-surface.json?raw";
+import { LiveRequest } from "@/pages/landing/sections/live-request";
 import { getJson, useGateway, useJudges } from "./data";
 import { baseUrl, routeWords } from "./judges-model";
 import { REAL } from "./real";
-import { Chapter, Ext, Panel, Unavailable } from "./ui";
+import { Chapter, Ext, Panel, SimLink, Unavailable } from "./ui";
 
 interface Surface {
   levels: { level: string; who: string }[];
@@ -41,7 +42,10 @@ function answerText(body: Record<string, unknown> | null): string {
   return typeof m?.content === "string" ? m.content : "";
 }
 
-/** Send one chat request to this gateway's /v1/chat/completions (mock demo only) and show what came back. */
+/**
+ * Send one chat request to this gateway's /v1/chat/completions and show what came back. On the mock demo: any task, and a
+ * bad request. On a live gateway: the landing page's one keyless request (`store: false`, sent once, never retried).
+ */
 function SendBox() {
   const { stats, mock, addSent, status } = useJudges();
   const [text, setText] = useState(DEFAULT_TEXT);
@@ -101,10 +105,13 @@ function SendBox() {
   if (!stats) return <Unavailable path="/ratchet/stats" read={{ state: "error", status: 0, message: "" }} />;
   if (!mock)
     return (
-      <p className="rounded-xl border border-line bg-bg-sunken/60 px-3.5 py-3 text-[13.5px] text-ink-2">
-        The send box works on the mock demo only. On a live gateway each request would call the paid teacher; use the examples above with an API
-        key instead.
-      </p>
+      <div className="min-w-0">
+        <LiveRequest mode={stats.mode} className="mt-0" />
+        <p className="mt-2.5 text-[13px] leading-relaxed text-muted">
+          Choosing a task and sending a bad request (temperature 3) run on the <SimLink hash="client">simulation demo</SimLink>, with mock
+          models.
+        </p>
+      </div>
     );
 
   const rb = ratchetBlock(res?.body ?? null);
@@ -268,6 +275,7 @@ const LEVEL_TONE: Record<string, "neutral" | "outline"> = {
 };
 
 export function ApiChapter() {
+  const { stats, mock } = useJudges();
   return (
     <Chapter
       id="api"
@@ -317,7 +325,15 @@ export function ApiChapter() {
           <Panel title="The error envelope">
             <pre className="overflow-x-auto rounded-lg bg-bg-sunken p-3 font-mono text-[11.5px] leading-5 text-ink-2">{SURFACE.error_example}</pre>
             <p className="mt-2 text-[12.5px] leading-snug text-muted">
-              Try it: "Send a bad one" above sends <code className="font-mono">temperature: 3</code>.
+              {stats && !mock ? (
+                <>
+                  Try it on the <SimLink hash="client">simulation demo</SimLink>: "Send a bad one" sends <code className="font-mono">temperature: 3</code>.
+                </>
+              ) : (
+                <>
+                  Try it: "Send a bad one" above sends <code className="font-mono">temperature: 3</code>.
+                </>
+              )}
             </p>
           </Panel>
         </div>

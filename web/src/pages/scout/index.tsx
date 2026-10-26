@@ -16,19 +16,21 @@ import { PlannerLane, ReaderLane, SearcherLane, TriageLane } from "./lanes";
 import { JudgeCode } from "./judge-code";
 import { ErrorAlert, RunSummary, WriterCard } from "./summary";
 import { announceText, phaseText } from "./state";
-import { runsLeftText, runsLeftToday } from "./scout-model";
+import { budgetLeft, runsLeftText, runsLeftToday } from "./scout-model";
 import { TotalsBar } from "./totals-bar";
 import { useScout } from "./use-scout";
 
+/** The budget a visitor's runs can still use today (the judges' reserve excluded), against the whole daily budget. */
 function BudgetLine({ status }: { status: NonNullable<ReturnType<typeof useScout>["status"]> }) {
-  if (status.mode !== "live" || status.budget_usd == null) return null;
-  const left = Math.max(0, status.budget_usd - status.spent_today_usd);
-  const share = status.budget_usd > 0 ? left / status.budget_usd : 0;
+  const b = budgetLeft(status);
+  if (!b) return null;
+  const share = b.share;
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[13px] text-muted sm:justify-center">
       <span className="inline-flex items-center gap-2">
         <span className="text-ink-2">
-          Demo budget left today: <span className="font-semibold text-ink tabular">{fmtUsd(left, 2)}</span> of {fmtUsd(status.budget_usd, 2)}
+          Left for visitors today: <span className="font-semibold text-ink tabular">{fmtUsd(b.left, 2)}</span> of the {fmtUsd(b.total, 2)} daily
+          budget
         </span>
         <span className="h-1.5 w-16 overflow-hidden rounded-full bg-line" aria-hidden>
           <span className={cn("block h-full rounded-full", share > 0.2 ? "bg-good" : "bg-warn")} style={{ width: `${share * 100}%` }} />
@@ -39,12 +41,12 @@ function BudgetLine({ status }: { status: NonNullable<ReturnType<typeof useScout
   );
 }
 
-/** "N runs left today", from the status fields the gateway already sends; hidden when either is missing. */
+/** "N runs left today" for a visitor (the judges' reserve excluded); hidden without a run cap. */
 function RunsLeft({ status }: { status: NonNullable<ReturnType<typeof useScout>["status"]> }) {
   const r = runsLeftToday(status);
   if (!r) return null;
   return (
-    <Badge tone={r.left <= 3 ? "warn" : "neutral"} className="text-[12.5px] tabular" title={`${r.used} of ${r.max} demo runs used today`}>
+    <Badge tone={r.left <= 3 ? "warn" : "neutral"} className="text-[12.5px] tabular" title={`${r.used} of the ${r.max} runs open to visitors today are used`}>
       {runsLeftText(r)}
     </Badge>
   );
@@ -157,7 +159,7 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
             Five research agents answer a question from the web. Every call goes through Ratchet: the narrow, repetitive ones move from Nemotron 3
             Ultra, which you rent, to Nano 4B with an adapter you own.
           </p>
-          <div className="mt-3 flex min-h-5 flex-col gap-1.5 sm:items-center">
+          <div className="mt-3 flex min-h-5 flex-col items-start gap-1.5 sm:items-center">
             {mode === "mock" && (
               <p className="inline-flex items-center gap-1.5 text-[13px] text-muted">
                 <Info className="size-3.5" aria-hidden /> Search results are simulated, and so are the models and prices.
@@ -260,7 +262,7 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
                   What each agent did
                 </h2>
                 <p className="mt-1.5 max-w-[68ch] text-[14.5px] text-muted">
-                  Every model call, who answered it, how sure {derived.hosted ? "the student" : "your model"} was, and what it cost against Ultra alone.
+                  Every model call, who answered it, how sure the student was, and what it cost against Ultra alone.
                 </p>
               </div>
               <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">

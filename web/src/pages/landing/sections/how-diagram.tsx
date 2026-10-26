@@ -38,7 +38,7 @@ const NODES: NodeDef[] = [
   { id: "student", x: COL[1], y: ROW[0], title: "Student", sub: "Nano 4B + LoRA", short: "Nano + LoRA", tone: "owned" },
   { id: "teacher", x: COL[2], y: ROW[0], title: "Teacher", sub: "Nemotron 3 Ultra", short: "Ultra", tone: "rented" },
   { id: "ledger", x: COL[2], y: ROW[1], title: "Ledger", sub: "answer + license", short: "+ license" },
-  { id: "school", x: COL[1], y: ROW[1], title: "Night School", sub: "planned Serverless Job", short: "nightly job" },
+  { id: "school", x: COL[1], y: ROW[1], title: "Night School", sub: "ready to run", short: "nightly job" },
   { id: "golden", x: COL[0], y: ROW[1], title: "Golden set", sub: "held out", short: "held out" },
 ];
 
@@ -52,7 +52,13 @@ const LOOP_X = (right(COL[0]) + left(COL[1])) / 2;
 const LOOP_Y = (bot(ROW[0]) + top(ROW[1])) / 2;
 const LOOP2_X = (right(COL[1]) + left(COL[2])) / 2 - 6;
 
-const EDGES: { id: EdgeId; d: string; head: string; label?: { x: number; y: number; text: string; anchor?: "start" | "middle" | "end"; rotate?: number } }[] = [
+const EDGES: {
+  id: EdgeId;
+  d: string;
+  head: string;
+  /** `compactY`: where the label sits on a phone, where the type is larger and the gap between boxes too narrow for it. */
+  label?: { x: number; y: number; compactY?: number; text: string; anchor?: "start" | "middle" | "end"; rotate?: number };
+}[] = [
   {
     id: "app-student",
     d: `M${right(COL[0])} ${ROW[0]} H${left(COL[1]) - 2}`,
@@ -62,7 +68,7 @@ const EDGES: { id: EdgeId; d: string; head: string; label?: { x: number; y: numb
     id: "student-teacher",
     d: `M${right(COL[1])} ${ROW[0]} H${left(COL[2]) - 2}`,
     head: arrowHead(left(COL[2]) - 2, ROW[0], "r"),
-    label: { x: (right(COL[1]) + left(COL[2])) / 2, y: ROW[0] - 9, text: "unsure" },
+    label: { x: (right(COL[1]) + left(COL[2])) / 2, y: ROW[0] - 9, compactY: top(ROW[0]) - 6, text: "unsure" },
   },
   {
     id: "teacher-ledger",
@@ -132,7 +138,7 @@ export function HowDiagram({ active, className, compact = false }: { active: num
             {e.label && (
               <text
                 x={e.label.x}
-                y={e.label.y}
+                y={compact && e.label.compactY != null ? e.label.compactY : e.label.y}
                 textAnchor={e.label.anchor ?? "middle"}
                 className="fill-muted font-mono"
                 style={{ fontSize: 10.5 * f }}

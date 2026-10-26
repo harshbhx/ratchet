@@ -2,11 +2,30 @@ import { useState } from "react";
 import { ArrowDown, ArrowUpRight, Hourglass } from "lucide-react";
 import { RealBadge } from "@/components/ui/real-badge";
 import { fmtDate, REAL_STATUSES, STATUS_TEXT, statusCounts, type RealEntry, type RealStatus } from "@/lib/real-model";
-import { cn } from "@/lib/utils";
+import { cn, DEMO_URL } from "@/lib/utils";
+import { useJudges } from "./data";
 import { Chapter, Command, useChapters } from "./ui";
 import { REAL } from "./real";
 
-const PATH = [
+interface PathStep {
+  /** The chapter on this page the step jumps to. */
+  to: string;
+  action: string;
+  where: string;
+  expect: string;
+  /** Another site the step opens instead (the simulation demo). */
+  href?: string;
+}
+
+const READ_REAL: PathStep = {
+  to: "real",
+  action: "Read what is real",
+  where: "What's real",
+  expect: "Which claims rest on real runs, which are simulation, and which are built and ready to run.",
+};
+
+/** On the simulation demo: mock models, and the demo controls that break a release on purpose. */
+const MOCK_PATH: PathStep[] = [
   {
     to: "client",
     action: "Send a request",
@@ -19,15 +38,30 @@ const PATH = [
     where: "Releases",
     expect: "The next version Night School trains goes into canary, fails its audits and is rolled back on its own, within a few simulated days. The log shows each step.",
   },
+  READ_REAL,
+];
+
+/** On the live gateway: one real, keyless request here; the release drill on the simulation demo, which has the controls. */
+const LIVE_PATH: PathStep[] = [
   {
-    to: "real",
-    action: "Read what is real",
-    where: "What's real",
-    expect: "Which claims rest on real runs, which are simulation, and which are built and ready to run.",
+    to: "client",
+    action: "Send one real request",
+    where: "Send a request",
+    expect: "An answer from Nemotron 3 Ultra on Nebius Token Factory, with a badge that says who answered. No key needed. It is a real call, so send a few at most; your text is not stored.",
   },
+  {
+    to: "release",
+    action: "Inject a bad deploy, then run simulated days",
+    where: "Simulation demo",
+    expect: "On the simulation demo (mock models): the next version Night School trains goes into canary, fails its audits and is rolled back on its own, within a few simulated days.",
+    href: `${DEMO_URL}/judges#release`,
+  },
+  READ_REAL,
 ];
 
 export function StartHere() {
+  const { mock } = useJudges();
+  const path = mock ? MOCK_PATH : LIVE_PATH;
   const ctl = useChapters();
   const jump = (id: string) => {
     ctl?.reveal(id);
@@ -39,7 +73,7 @@ export function StartHere() {
   return (
     <Chapter id="start" title="Try it in 90 seconds" lead={<p>Three things to click, in this order. Each one says what you should see.</p>}>
       <ol className="grid divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface shadow-card md:grid-cols-3 md:divide-x md:divide-y-0">
-        {PATH.map((p, i) => (
+        {path.map((p, i) => (
           <li key={p.to} className="flex min-w-0 flex-col p-5">
             <div className="flex items-center gap-3">
               <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-ink font-mono text-[13px] text-bg tabular-nums">{i + 1}</span>
@@ -50,13 +84,25 @@ export function StartHere() {
               <span className="text-muted">You should see: </span>
               {p.expect}
             </p>
-            <button
-              type="button"
-              onClick={() => jump(p.to)}
-              className="mt-4 inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
-            >
-              Go there <ArrowDown className="size-3.5" aria-hidden />
-            </button>
+            {p.href ? (
+              <a
+                href={p.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
+              >
+                Open the simulation <ArrowUpRight className="size-3.5" aria-hidden />
+                <span className="sr-only"> (opens in a new tab)</span>
+              </a>
+            ) : (
+              <button
+                type="button"
+                onClick={() => jump(p.to)}
+                className="mt-4 inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
+              >
+                Go there <ArrowDown className="size-3.5" aria-hidden />
+              </button>
+            )}
           </li>
         ))}
       </ol>
@@ -104,8 +150,8 @@ function Metrics({ e }: { e: RealEntry }) {
   if (!e.metrics.length) return null;
   return (
     <dl className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line">
-      {e.metrics.map((m) => (
-        <div key={m.id} className="min-w-0 bg-surface px-3 py-2.5">
+      {e.metrics.map((m, i) => (
+        <div key={m.id} className={cn("min-w-0 bg-surface px-3 py-2.5", e.metrics.length % 2 === 1 && i === e.metrics.length - 1 && "col-span-2")}>
           <dt className="text-[12px] leading-snug text-muted">{m.label}</dt>
           <dd className="mt-1">
             {m.value != null ? (

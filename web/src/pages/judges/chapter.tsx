@@ -89,6 +89,13 @@ export function useChapters(): ChapterControl | null {
   return useContext(ChapterContext);
 }
 
+const ChapterIdContext = createContext<string | null>(null);
+
+/** The id of the chapter a component is drawn in (its "Try it" strip links to the same chapter on the simulation demo). */
+export function useChapterId(): string | null {
+  return useContext(ChapterIdContext);
+}
+
 const ICONS: Record<string, LucideIcon> = {
   client: Send,
   api: Braces,
@@ -111,15 +118,7 @@ const ICONS: Record<string, LucideIcon> = {
  * (`FOLDING_GROUPS`) the head is a disclosure button; the body mounts on first open and opens with the grid trick (rows
  * 0fr to 1fr, plus a fade), so nothing in it is drawn, fetched or tabbed into until a reader asks.
  */
-export function Chapter({
-  id,
-  title,
-  lead,
-  status,
-  tryIt,
-  children,
-  aside,
-}: {
+interface ChapterProps {
   id: string;
   title: ReactNode;
   lead?: ReactNode;
@@ -127,7 +126,17 @@ export function Chapter({
   tryIt?: ReactNode;
   children?: ReactNode;
   aside?: ReactNode;
-}) {
+}
+
+export function Chapter(props: ChapterProps) {
+  return (
+    <ChapterIdContext.Provider value={props.id}>
+      <ChapterBody {...props} />
+    </ChapterIdContext.Provider>
+  );
+}
+
+function ChapterBody({ id, title, lead, status, tryIt, children, aside }: ChapterProps) {
   const ch = JUDGE_CHAPTERS.find((c) => c.id === id);
   const ctl = useChapters();
   const folds = !!ch && !!ctl && FOLDING_GROUPS.includes(ch.group);

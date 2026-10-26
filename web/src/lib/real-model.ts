@@ -5,8 +5,8 @@
  * `tests/real-model.test.mjs`, and `tests/test_judges_page.py` holds the file to its rules (evidence and a way to check on
  * every row, a value on every measured number, no number on a pending one).
  *
- * Filling in the exam once it is measured is one edit to real.json: set the `exam-result` entry's `status` to
- * "measured", give each of its `metrics` a `value` (text as it should print, such as "71.5%"), and update `date`.
+ * The `exam-result` and `toolcall-round3` entries are measured: each of their `metrics` holds its value as it prints. Change
+ * them only from `evidence/` (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`).
  */
 
 /** The status vocabulary, in the order the legend shows it. Keep on one line: the Python test reads it. */

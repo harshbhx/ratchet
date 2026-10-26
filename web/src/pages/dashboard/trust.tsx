@@ -156,7 +156,7 @@ function Clients({ clients, keys }: { clients: ClientStats[]; keys: boolean }) {
             <th className={th}>Client</th>
             <th className={thNum}>Requests</th>
             <th className={thNum} title="Share of requests answered by the student (Nano with your adapter)">
-              Your model
+              Your adapter
             </th>
             <th className={thNum}>Cost reduction</th>
           </tr>

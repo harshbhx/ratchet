@@ -66,7 +66,7 @@ export function TryIt({ mode = null }: { mode?: Mode | null }) {
               </div>
             </Step>
             <Step n="2" title="Paste one command">
-              <p className="text-[14px] leading-relaxed text-ink-2">It is the OpenAI API. The reply carries a `ratchet` block that says who answered and what it cost. This one is a real call, so please keep it to a few.</p>
+              <p className="text-[14px] leading-relaxed text-ink-2">It is the OpenAI API. The reply carries a <code className="font-mono text-[13px]">ratchet</code> block that says who answered and what it cost. This one is a real call, so please keep it to a few.</p>
               <CodeBlock title="terminal" copy={CURL} className="mt-auto">
                 {tok.k("curl")} {LIVE_URL.replace("https://", "")}/v1/chat/completions \
                 {"\n  "}-H {tok.s('"Content-Type: application/json"')} \

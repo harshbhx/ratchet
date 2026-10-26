@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { ArrowUpRight, Check, ChevronDown, CircleSlash, Copy, FlaskConical, Loader2, Lock, Play, ServerOff, ShieldAlert, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { ScrollX } from "@/components/ui/scroll-x";
+import { DEMO_URL, cn } from "@/lib/utils";
+import { useChapterId } from "./chapter";
 import { useJudges, type DemoAction } from "./data";
 import { unavailable, type Fetched } from "./judges-model";
 
-export { Chapter, ChapterProvider, useChapters } from "./chapter";
+export { Chapter, ChapterProvider, useChapterId, useChapters } from "./chapter";
 
 const ACTION_LABEL: Record<DemoAction, string> = {
   day: "Run a simulated day",
@@ -13,18 +15,39 @@ const ACTION_LABEL: Record<DemoAction, string> = {
   outage: "Start a 45 s student outage",
 };
 
+/** A link to the same place on the simulation demo (mock models), where the demo controls run. */
+export function SimLink({ hash, children }: { hash?: string | null; children: ReactNode }) {
+  return (
+    <a
+      href={`${DEMO_URL}/judges${hash ? `#${hash}` : ""}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-0.5 font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink"
+    >
+      {children}
+      <ArrowUpRight className="size-3 shrink-0" aria-hidden />
+      <span className="sr-only"> (opens in a new tab)</span>
+    </a>
+  );
+}
+
 /**
  * The "Try it" strip: buttons for the mock demo's own controls that move this chapter's numbers. Shown only on a mock
- * gateway with its controls on; the result line says what happened, in words.
+ * gateway with its controls on; the result line says what happened, in words. On a live gateway it links to the same
+ * chapter on the simulation demo.
  */
 export function TryIt({ actions, note, extra }: { actions: DemoAction[]; note?: ReactNode; extra?: ReactNode }) {
   const { mock, busy, act, stats } = useJudges();
+  const chapter = useChapterId();
   const [line, setLine] = useState<{ ok: boolean; text: string } | null>(null);
   if (!stats) return null;
   if (!mock)
     return (
-      <p className="mt-4 flex items-center gap-2 text-[13px] text-muted">
-        <CircleSlash className="size-3.5" aria-hidden /> Demo controls are on the mock demo only.
+      <p className="mt-4 flex items-start gap-2 text-[13px] text-muted">
+        <CircleSlash className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+        <span>
+          Demo controls run on the <SimLink hash={chapter}>simulation demo</SimLink> only.
+        </span>
       </p>
     );
   return (
@@ -101,14 +124,15 @@ export function Command({ cmd, label, className, wrap }: { cmd: string; label?: 
   const [done, setDone] = useState(false);
   return (
     <div className={cn("group flex min-w-0 items-stretch overflow-hidden rounded-xl border border-line bg-bg-sunken", className)}>
-      <pre
-        className={cn(
-          "min-w-0 flex-1 px-3.5 py-2.5 font-mono text-[12.5px] leading-6 text-ink-2",
-          wrap ? "whitespace-pre-wrap text-[12px] leading-5 [overflow-wrap:anywhere]" : "overflow-x-auto",
-        )}
-      >
-        <code>{cmd}</code>
-      </pre>
+      {wrap ? (
+        <pre className="min-w-0 flex-1 whitespace-pre-wrap px-3.5 py-2.5 font-mono text-[12px] leading-5 text-ink-2 [overflow-wrap:anywhere]">
+          <code>{cmd}</code>
+        </pre>
+      ) : (
+        <ScrollX as="pre" fade="var(--bg-sunken)" wrapClassName="flex-1" className="px-3.5 py-2.5 font-mono text-[12.5px] leading-6 text-ink-2">
+          <code>{cmd}</code>
+        </ScrollX>
+      )}
       <button
         type="button"
         onClick={async () => {

@@ -972,7 +972,7 @@ def test_story_page_helpers():
 @pytest.mark.skipif(not (WEB / "node_modules").is_dir(), reason="needs web/node_modules (cd web && npm ci)")
 def test_who_model_helpers():
     """Who answered a call (web/tests/who-model.test.mjs, `npm test`): a student answer whose model is the fallback id is
-    "Nano 30B · hosted" with its threshold and no certificate, any other is "Nano · yours", the teacher is "Ultra · Token
+    "Nano 30B · hosted" with its threshold and no certificate, any other is "Nano + your adapter", the teacher is "Ultra · Token
     Factory"; a run or page the hosted fallback answered stops saying "your model" and shows no precision figure."""
     r = subprocess.run(
         [NODE, "--experimental-strip-types", "--disable-warning=ExperimentalWarning", "--test", "tests/who-model.test.mjs"],

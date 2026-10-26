@@ -21,7 +21,7 @@ export function Provenance({ bom }: { bom: Stats["bill_of_materials"] }) {
   };
 
   return (
-    <Panel id="provenance" title="Provenance" description="Bill of materials for the training data behind your model.">
+    <Panel id="provenance" title="Provenance" description="Bill of materials for the training data behind your adapter.">
       {empty ? (
         <p className="rounded-xl border border-dashed border-line-strong bg-bg-sunken/60 px-4 py-6 text-center text-[13px] text-muted">
           No training data yet. Every teacher answer is logged with its teacher and license as it arrives.

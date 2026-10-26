@@ -102,7 +102,7 @@ export function TaskRegistryPanel({ state, mode, onChanged }: { state: RegistryS
     <Panel
       id="registry"
       title="Task registry"
-      description="Every task the gateway knows: where its spec comes from, how answers are compared, and whether it is distilled into your model or pinned to the teacher."
+      description="Every task the gateway knows: where its spec comes from, how answers are compared, and whether it is distilled into your adapter or pinned to the teacher."
       actions={
         registry && (
           <>
@@ -222,7 +222,7 @@ export function TaskRegistryPanel({ state, mode, onChanged }: { state: RegistryS
                     <td className={tdNum}>
                       <span className="text-ink-2">{fmtInt(t.requests)}</span>
                       {!t.pinned && t.requests > 0 && (
-                        <span className="ml-1.5 text-[11.5px] text-muted" title="Answered by your model, all days">
+                        <span className="ml-1.5 text-[11.5px] text-muted" title="Answered by your adapter, all days">
                           {fmtShare(t.student_share)}
                         </span>
                       )}

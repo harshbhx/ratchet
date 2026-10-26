@@ -36,7 +36,7 @@ function ChartTip({ active, payload }: TipProps) {
         </span>
         <span className="font-mono tabular text-ink">{fmtUsd(d.baselinePer1k, 3)}</span>
       </div>
-      <div className="mt-1.5 border-t border-line pt-1.5 text-muted">{fmtPct(d.student)} answered by your model</div>
+      <div className="mt-1.5 border-t border-line pt-1.5 text-muted">{fmtPct(d.student)} answered by your adapter</div>
     </div>
   );
 }

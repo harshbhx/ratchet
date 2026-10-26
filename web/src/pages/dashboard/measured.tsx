@@ -8,7 +8,7 @@ const LINK = "inline-flex items-center gap-1 font-medium text-ink underline deco
 
 /**
  * The one panel on this page that is not about the running gateway: what the trained adapters scored on the two exams (real
- * models, not the simulation). It sits first so a visitor who lands on a simulation gateway still sees what was measured.
+ * models, not a simulation). It sits first, so a visitor sees what was measured before the gateway's own numbers.
  * Every figure is from `src/data/exams.json`, which a test recomputes from the saved answers.
  */
 export function MeasuredResults() {
@@ -18,7 +18,7 @@ export function MeasuredResults() {
     <section aria-labelledby="measured-title" className="rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-6">
       <div className="flex flex-wrap items-center gap-2">
         <RealBadge status="measured" />
-        <span className="text-[12.5px] text-muted">Real models, two exams, 22 to 24 Oct 2026. Not the simulation below.</span>
+        <span className="text-[12.5px] text-muted">Real models, two exams, 22 to 24 Oct 2026. Not the simulation.</span>
       </div>
       <h2 id="measured-title" className="mt-3 text-balance text-[18px] font-semibold tracking-[-0.015em] text-ink sm:text-[20px]">
         The trained adapter scores {x2} to {x1} times the untrained model, on the strict exam

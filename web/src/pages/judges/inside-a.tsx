@@ -8,7 +8,7 @@ import { cn, fmtInt, fmtPct } from "@/lib/utils";
 import { eventLabel, eventTone, STATE_TONE, stateLabel } from "@/pages/dashboard/model";
 import { useGatewayText, useGateway, useJudges } from "./data";
 import { latestGlobalPeriod, parseLeaves, routeTotals, routeWords, shortHash, stageOf, studentRoute } from "./judges-model";
-import { Chapter, Facts, Loading, Panel, TryIt, Unavailable } from "./ui";
+import { Chapter, Facts, Loading, Panel, SimLink, TryIt, Unavailable } from "./ui";
 
 // ---------- the loop in one picture ----------
 
@@ -345,7 +345,16 @@ export function ReleaseChapter() {
           <div className="grid min-w-0 gap-4">
             <Panel title="Versions" aside={status && <RealBadge status={status} />}>
               {versions.length === 0 ? (
-                <p className="text-[13.5px] text-muted">No version yet: every request goes to the teacher until the first night.</p>
+                <p className="text-[13.5px] text-muted">
+                  {stats?.mode === "live" ? (
+                    <>
+                      No version on this live demo: Night School does not run here, so the teacher answers every request. Releases and rollbacks run on
+                      the <SimLink hash="release">simulation demo</SimLink>.
+                    </>
+                  ) : (
+                    "No version yet: every request goes to the teacher until the first night."
+                  )}
+                </p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[520px] text-left text-[13px]">

@@ -6,6 +6,7 @@ import { TextGenerate } from "@/components/fx/text-generate";
 import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container } from "@/components/ui/section";
+import type { Mode } from "@/lib/api";
 import { DEMO_URL, DOCS_URL, LIVE_URL, REPO_URL } from "@/lib/utils";
 import { LogoMark } from "@/components/ui/logo";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
@@ -30,7 +31,12 @@ const PROOF = [
   { value: "Apache‑2.0", label: "the code", sub: "model weights keep their own licenses" },
 ];
 
-export function OpenSource() {
+/**
+ * `mode` from the page's stats poll: Night School runs on the simulation, not on the live gateway, so on the live site the
+ * closing card sends a reader to the simulation's dashboard for versions, gates and rollbacks.
+ */
+export function OpenSource({ mode = null }: { mode?: Mode | null }) {
+  const sim = mode === "mock";
   return (
     <Chapter id="run" className="border-t border-line bg-bg-sunken/60 pb-16 sm:pb-20 lg:pb-24">
       <Container>
@@ -102,14 +108,16 @@ export function OpenSource() {
                 className="mx-auto max-w-[22ch] text-balance text-3xl font-semibold tracking-[-0.03em] text-ink sm:text-[2.75rem] sm:leading-[1.08]"
               />
               <p className="mx-auto mt-5 max-w-[52ch] text-pretty text-[17px] leading-relaxed text-ink-2">
-                Run Scout and watch each call get routed. Then open the dashboard to see every version, gate and rollback.
+                {sim
+                  ? "Run Scout and watch each call get routed. Then open the dashboard to see every version, gate and rollback."
+                  : "Run Scout and watch each call get routed. Then open the simulation's dashboard to see every version, gate and rollback, with mock models: Night School does not run on the live demo."}
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
                 <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="lg">
                   Try the live demo <ArrowUpRight aria-hidden />
                 </ButtonA>
-                <ButtonA href={DEMO_URL} target="_blank" rel="noopener noreferrer" size="lg" variant="outline">
-                  Open the simulation <ArrowUpRight aria-hidden />
+                <ButtonA href={sim ? DEMO_URL : `${DEMO_URL}/dashboard`} target="_blank" rel="noopener noreferrer" size="lg" variant="outline">
+                  {sim ? "Open the simulation" : "Open the simulation's dashboard"} <ArrowUpRight aria-hidden />
                 </ButtonA>
                 <MovingBorderLink to="/scout">
                   Try the Scout demo <ArrowRight aria-hidden />

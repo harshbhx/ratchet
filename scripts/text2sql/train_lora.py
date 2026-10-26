@@ -1,5 +1,5 @@
-"""Runs ON the training GPU: compile or install the Mamba kernels, train a LoRA adapter in 4-bit fp16, then answer the
-held-out rows with the base model and the adapter (scripts/measure_adapter.py generate). Writes /content/package.zip.
+"""Trains the LoRA adapter on one GPU: compile or install the Mamba kernels, train a LoRA adapter in 4-bit fp16, then answer
+the held-out rows with the base model and the adapter (scripts/measure_adapter.py generate). Writes /content/package.zip.
 
 Env: MODE=real|pipeline-test, EPOCHS (default 2), MAX_STEPS (default 0 = use epochs), MAX_SEQ (default 768).
 Everything it does is printed with a [stage] prefix, so the laptop log shows where it is."""
@@ -187,7 +187,7 @@ log("adapter saved")
 # ---- 3. Measure: raw answers on the held-out rows, base and base+adapter
 if (
     os.environ.get("DEFER_GEN") == "1"
-):  # answering in a child process while this one still holds GPU memory ran out of memory on a T4
+):  # answering in a child process while this one still holds GPU memory ran out of memory on the 16 GB training GPU
     if SMOKE:
         print("SMOKE_TRAIN_OK", flush=True)
     else:

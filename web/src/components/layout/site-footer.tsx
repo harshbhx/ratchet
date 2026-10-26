@@ -10,7 +10,7 @@ import { useWaking } from "@/lib/waking-store";
 import { FOOTER_WAKING, isWaking } from "@/lib/waking-model";
 
 function FooterLink({ item }: { item: NavItem }) {
-  const cls = "group inline-flex items-center gap-1 whitespace-nowrap rounded-md text-[14px] text-muted transition-colors hover:text-ink";
+  const cls = "group inline-flex max-w-full items-center gap-1 rounded-md text-[14px] text-muted transition-colors hover:text-ink";
   if (item.kind === "route") {
     return (
       <Link to={item.href} className={cls}>
@@ -28,7 +28,7 @@ function FooterLink({ item }: { item: NavItem }) {
   return (
     <a href={item.href} target="_blank" rel="noopener noreferrer" className={cls}>
       {item.label}
-      <ArrowUpRight aria-hidden className="size-3 opacity-60 transition-opacity group-hover:opacity-100" />
+      <ArrowUpRight aria-hidden className="size-3 shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />
       <span className="sr-only"> (opens in a new tab)</span>
     </a>
   );
@@ -100,7 +100,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
               {stats?.mode === "mock"
                 ? "Numbers on this page are simulation unless labelled Measured. "
                 : "Numbers from the gateway are its own traffic; reference runs are labelled Simulation and exam results Measured. "}
-              The adapter was trained on a borrowed GPU.
+              The adapters were trained on a borrowed GPU.
             </p>
             <div className="mt-4">
               <GatewayStatus stats={stats} error={error} />
