@@ -408,16 +408,21 @@ a static CSS grid. When: the home hero only.
 
 ### Page chrome
 
-`src/components/overrides/` replaces three of Lucode's components: `Hero` (the home page's first screen,
+`src/components/overrides/` replaces four of Lucode's components: `Hero` (the home page's first screen,
 `src/components/home/`), `PageTitle` (sidebar group as an eyebrow, title, the frontmatter `description` as the one-line
-summary, reading time on guides, "Edit on GitHub") and `Footer` ("Was this page right?" with the edit and issue links,
-previous and next pages, a credits line). Styles: `src/styles/theme.css` (tokens, light and dark), `chrome.css` (header,
-sidebar, "On this page", search), `content.css` (the page body) and `print.css`.
+summary, reading time on guides, "Edit on GitHub"), `Footer` ("Was this page right?" with the edit and issue links,
+previous and next pages, a credits line) and `Sidebar` (with `SidebarTree`: groups that fold, only the current page's
+group open at first, open groups and the scroll position kept from page to page, one gliding hover pill). Styles:
+`src/styles/theme.css` (tokens, light and dark), `chrome.css` (header, sidebar, "On this page", search), `content.css`
+(the page body), `motion.css` (page changes as view transitions, the reading-progress bar, the theme switch's reveal)
+and `print.css`. Pages are prefetched on hover (Chromium prerenders them through speculation rules).
 
 ### Credits
 
 Built with [Starlight](https://starlight.astro.build), the [Lucode](https://github.com/lucas-labs/lucode-starlight-theme) theme
-(MIT) and components adapted from [React Bits](https://reactbits.dev) by David Haz. The React Bits files in
+(MIT) and components adapted from [React Bits](https://reactbits.dev) by David Haz. The sidebar's hover pill, the
+reading-progress bar and the theme switch's reveal follow [beUI](https://beui.dev)'s Shared Layout Background, Scroll
+Progress and Theme Toggle (MIT, by Saurabh Chauhan), rewritten as CSS and a few lines of script with no React. The React Bits files in
 `src/components/rb/` keep their own license, MIT + Commons Clause (`src/components/rb/LICENSE.md`): they may be used and
 changed as part of this website, but not sold or redistributed as components. They are not covered by the repository's
 Apache-2.0 license.

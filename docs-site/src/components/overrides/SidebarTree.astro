@@ -1,0 +1,65 @@
+---
+/**
+ * One level of the sidebar (see Sidebar.astro): groups as <details> that fold, links as rows.
+ * A group starts open only when it holds the current page (or, with `openFirst`, when it is the first group);
+ * a nested group also starts open when its config says `collapsed: false`. A top-level group shows how many rows it holds.
+ */
+import { Icon } from '@astrojs/starlight/components';
+
+type Entry =
+  | { type: 'link'; label: string; href: string; isCurrent: boolean; badge?: Badge; attrs?: Record<string, string> }
+  | { type: 'group'; label: string; entries: Entry[]; collapsed?: boolean; badge?: Badge };
+/** The generated HTTP reference puts each operation's method here (GET, POST, DELETE) with a Starlight variant. */
+type Badge = { text: string; variant?: string };
+
+interface Props {
+  entries: Entry[];
+  nested?: boolean;
+  openFirst?: boolean;
+}
+
+const { entries, nested = false, openFirst = false } = Astro.props;
+const holds = (list: Entry[]): boolean => list.some((e) => (e.type === 'link' ? e.isCurrent : holds(e.entries)));
+let firstGroup = true;
+---
+
+<ul class:list={['rt-sb__list', { 'rt-sb__list--nested': nested }]} role="list">
+  {
+    entries.map((entry) => {
+      if (entry.type === 'link') {
+        return (
+          <li>
+            <a
+              href={entry.href}
+              class="rt-sb__link"
+              aria-current={entry.isCurrent ? 'page' : undefined}
+            >
+              <span class="rt-sb__label">{entry.label}</span>
+              {entry.badge && <span class="rt-sb__badge" data-variant={entry.badge.variant}>{entry.badge.text}</span>}
+            </a>
+          </li>
+        );
+      }
+      const current = holds(entry.entries);
+      const open = current || (openFirst && firstGroup) || (nested && entry.collapsed === false);
+      firstGroup = false;
+      return (
+        <li>
+          <details
+            class:list={['rt-sb__group', { 'rt-sb__group--nested': nested }]}
+            open={open}
+            data-group={entry.label}
+            data-current={current ? '' : undefined}
+          >
+            <summary class="rt-sb__summary">
+              <span class="rt-sb__label">{entry.label}</span>
+              {!nested && <span class="rt-sb__count">{entry.entries.length}</span>}
+              <Icon name="right-caret" class="rt-sb__caret" size="0.95rem" />
+            </summary>
+            <Astro.self entries={entry.entries} nested />
+          </details>
+        </li>
+      );
+    })
+  }
+</ul>

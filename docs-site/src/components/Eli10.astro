@@ -34,11 +34,7 @@ const { title = 'In plain words' } = Astro.props;
     padding: 1.15rem 1.35rem 1.3rem;
     border: 1px solid var(--rt-line);
     border-radius: var(--rt-radius-lg);
-    background:
-      linear-gradient(to right, var(--rt-grid) 1px, transparent 1px) 0 0 / 22px 22px,
-      linear-gradient(to bottom, var(--rt-grid) 1px, transparent 1px) 0 0 / 22px 22px,
-      linear-gradient(135deg, var(--rt-warn-soft), transparent 45%),
-      var(--rt-surface-2);
+    background: color-mix(in srgb, var(--rt-warn) 5%, var(--rt-surface));
   }
   .rt-eli10-head {
     display: flex;

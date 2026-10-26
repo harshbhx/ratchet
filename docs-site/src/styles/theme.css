@@ -52,7 +52,7 @@
   --rt-code-bg: #111113;
   --rt-glow-owned: rgb(57 135 229 / 0.22);
   --rt-glow-rented: rgb(217 89 38 / 0.14);
-  --rt-header-bg: rgb(11 11 12 / 0.78);
+  --rt-header-bg: rgb(11 11 12 / 0.97);
 
   /* React Bits tokens: the spotlight and the hero grid. */
   --rb-spot-owned: #3987e5;
@@ -134,7 +134,7 @@
   --rt-code-bg: #f7f6f2;
   --rt-glow-owned: rgb(42 120 214 / 0.14);
   --rt-glow-rented: rgb(235 104 52 / 0.1);
-  --rt-header-bg: rgb(251 250 247 / 0.82);
+  --rt-header-bg: rgb(251 250 247 / 0.97);
 
   --rb-spot-owned: #2a78d6;
   --rb-spot-rented: #eb6834;

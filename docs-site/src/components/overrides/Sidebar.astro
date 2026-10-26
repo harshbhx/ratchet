@@ -1,0 +1,133 @@
+---
+/**
+ * The docs sidebar, replacing Lucode's: every group folds (only the group holding the current page starts open),
+ * the list scrolls on its own with no fade over it, and one hover pill glides between rows (after beUI's Shared
+ * Layout Background, MIT). Groups open and close with a height transition where the browser supports it.
+ *
+ * Lucode's frame has no #starlight__sidebar, so Starlight's own persister never saved anything; this one keeps which
+ * groups are open and the scroll position in sessionStorage and restores them before the first paint (also when a
+ * prerendered page is shown, on `pagereveal`), so the sidebar looks the same from page to page.
+ *
+ * No element here has an `id`: Starlight's "On this page" script watches every `main [id]` and its later siblings,
+ * and walking back from a sidebar row to the nearest heading is exponential, which freezes the page.
+ */
+import SidebarTree from './SidebarTree.astro';
+
+type Entry =
+  | { type: 'link'; label: string; href: string; isCurrent: boolean }
+  | { type: 'group'; label: string; entries: Entry[] };
+
+const sidebar = Astro.locals.starlightRoute.sidebar as Entry[];
+const holds = (entries: Entry[]): boolean => entries.some((e) => (e.type === 'link' ? e.isCurrent : holds(e.entries)));
+// On a page outside the sidebar (404, the home page) the first group starts open.
+const anyCurrent = holds(sidebar);
+---
+
+<nav class="rt-sb" aria-label="Docs">
+  <div class="rt-sb__inner">
+    <span class="rt-sb__pill" aria-hidden="true"></span>
+    <SidebarTree entries={sidebar} openFirst={!anyCurrent} />
+  </div>
+</nav>
+
+<script is:inline aria-hidden="true">
+  (() => {
+    const KEY = 'rt-sidebar';
+    const nav = document.querySelector('nav.rt-sb');
+    if (!nav) return;
+    const restore = () => {
+      let state = null;
+      try {
+        state = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+      } catch {}
+      if (state && state.open) {
+        nav.querySelectorAll('details[data-group]').forEach((d) => {
+          if (d.dataset.current === '') return;
+          const v = state.open[d.dataset.group];
+          if (typeof v === 'boolean') d.open = v;
+        });
+      }
+      if (state && typeof state.scroll === 'number') nav.scrollTop = state.scroll;
+      // The current page's row is always in view, a third of the way down when it has to move.
+      const here = nav.querySelector('[aria-current="page"]');
+      if (here) {
+        const top = here.getBoundingClientRect().top - nav.getBoundingClientRect().top;
+        if (top < 0 || top > nav.clientHeight - 40) nav.scrollTop += top - nav.clientHeight / 3;
+      }
+    };
+    restore();
+    addEventListener('pagereveal', restore);
+  })();
+</script>
+
+<script>
+  const KEY = 'rt-sidebar';
+  const nav = document.querySelector<HTMLElement>('nav.rt-sb');
+  const inner = nav?.querySelector<HTMLElement>('.rt-sb__inner');
+  const pill = nav?.querySelector<HTMLElement>('.rt-sb__pill');
+
+  if (nav && inner && pill) {
+    const save = () => {
+      try {
+        const open: Record<string, boolean> = {};
+        nav.querySelectorAll<HTMLDetailsElement>('details[data-group]').forEach((d) => {
+          open[d.dataset.group as string] = d.open;
+        });
+        sessionStorage.setItem(KEY, JSON.stringify({ open, scroll: nav.scrollTop }));
+      } catch {}
+    };
+
+    // Groups stay as the reader left them on the next page, so the row just clicked does not move.
+    nav.addEventListener('click', (event) => {
+      const target = event.target as Element;
+      if (target.closest('summary')) {
+        hidePill();
+        requestAnimationFrame(save);
+      } else if (target.closest('a')) {
+        save();
+      }
+    });
+    addEventListener('pagehide', save);
+    addEventListener('pageswap', save);
+
+    // The hover pill: one element that slides to the row under the pointer or the keyboard focus.
+    let shown = false;
+    const rowOf = (el: Element | null) => el?.closest<HTMLElement>('.rt-sb__link, .rt-sb__summary') ?? null;
+    const moveTo = (row: HTMLElement) => {
+      const box = inner.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      pill.style.setProperty('--y', `${r.top - box.top}px`);
+      pill.style.setProperty('--x', `${r.left - box.left}px`);
+      pill.style.setProperty('--w', `${r.width}px`);
+      pill.style.setProperty('--h', `${r.height}px`);
+      if (!shown) {
+        // Appear in place, then glide from there on.
+        pill.dataset.jump = '';
+        void pill.offsetWidth;
+        delete pill.dataset.jump;
+        pill.dataset.shown = '';
+        shown = true;
+      }
+    };
+    const hidePill = () => {
+      delete pill.dataset.shown;
+      shown = false;
+    };
+    inner.addEventListener('pointerover', (event) => {
+      if ((event as PointerEvent).pointerType === 'touch') return;
+      const row = rowOf(event.target as Element);
+      if (row) moveTo(row);
+    });
+    inner.addEventListener('pointerleave', () => {
+      if (!inner.contains(document.activeElement)) hidePill();
+    });
+    inner.addEventListener('focusin', (event) => {
+      const row = rowOf(event.target as Element);
+      if (row && (event.target as HTMLElement).matches(':focus-visible')) moveTo(row);
+    });
+    inner.addEventListener('focusout', (event) => {
+      if (!inner.contains(event.relatedTarget as Node | null)) hidePill();
+    });
+    nav.addEventListener('toggle', hidePill, true);
+  }
+</script>
