@@ -11,6 +11,11 @@ import SqlResults from '../../../components/SqlResults.astro';
 import Flow from '../../../components/Flow.astro';
 import FlowStep from '../../../components/FlowStep.astro';
 import Compare from '../../../components/Compare.astro';
+import extra from '../../../data/sql-extra.json';
+import exams from '../../../data/exams.json';
+
+export const S = exams.scores;
+export const pct = (c) => (100 * c.agree / c.n).toFixed(1) + '%';
 
 <Summary>A small open model learned to write SQLite queries from a bigger open model's answers, but only from answers that were actually run on a database, and its score comes from whole databases it never trained on, so anyone can recompute that score.</Summary>
 
@@ -88,7 +93,7 @@ flowchart TB
   C -->|"no"| X["Thrown away<br/>and counted"]
   C -->|"yes"| S{{"Which database?"}}
   S -->|"training: 25 industries"| TR[("Training set")]
-  S -->|"exam: new databases,<br/>5 more industries"| EX[("Exam set")]
+  S -->|"exam: new databases,<br/>2 industries never in training"| EX[("Exam set")]
   TR --> L["Train the adapter<br/>QLoRA, borrowed GPU"]
   L --> M["Adapter answers<br/>every exam question"]
   EX --> M
@@ -196,9 +201,24 @@ sequenceDiagram
 
 ## What it scored
 
-The numbers below are read from the run's `results.json` when the site is built. Nothing here is typed by hand.
+The numbers below are read from the runs' results files when the site is built. Nothing here is typed by hand.
 
-Round 1, the half of the exam that measures the confidence gate (86 of 172 questions). Round 2 and the second exam are below.
+The headline is the round 2 adapter on two exams: exam 1, written by the teacher, and exam 2, written by a different model on industries that appear in neither the training data nor exam 1. Every question is scored strictly by running the query.
+
+<table>
+  <thead><tr><th>Who answered</th><th>Exam 1 ({S.exam1.base.n} questions)</th><th>Exam 2 ({S.exam2.base.n} questions)</th></tr></thead>
+  <tbody>
+    {[['Base model (untrained Nano 4B)', 'base'], ['Teacher (Nemotron 3 Ultra)', 'teacher'], ['Adapter, round 2', 'r2']].map(([name, id]) => (
+      <tr><td>{name}</td><td>{S.exam1[id].agree} of {S.exam1[id].n} = <strong>{pct(S.exam1[id])}</strong></td><td>{S.exam2[id].agree} of {S.exam2[id].n} = <strong>{pct(S.exam2[id])}</strong></td></tr>
+    ))}
+  </tbody>
+</table>
+
+At the 95% precision target the round 2 adapter answers {extra.round2.gate.answered} of {extra.round2.gate.of} questions on exam 1's measurement half and {extra.exam2.gate.answered} of {extra.exam2.gate.of} on exam 2's, so it does not replace the teacher yet. The ranges, round 1 and the details are on the [Results](/guides/results/) page.
+
+### Round 1
+
+The round 1 adapter on the half of exam 1 that measures the confidence gate (86 of 172 questions). Round 2 and the second exam are in the table above and on the [Results](/guides/results/) page.
 
 <SqlResults />
 
@@ -206,14 +226,14 @@ More on how to read them is on the [Results](/guides/results/) page, and the ful
 
 ## Reproduce it and check it
 
-Where the code lives: the data and training scripts are in the repository under [`scripts/text2sql/`](https://github.com/harshbhx/ratchet/tree/main/scripts/text2sql) (`gen_sql_data.py`, `train_t4.py`), and the scoring script with the SQL checks is `scripts/measure_adapter.py`. They are tools you run by hand, not part of the gateway. The three commands that matter:
+Where the code lives: the data and training scripts are in the repository under [`scripts/text2sql/`](https://github.com/harshbhx/ratchet/tree/main/scripts/text2sql) (`gen_sql_data.py` and the training script), and the scoring script with the SQL checks is `scripts/measure_adapter.py`. They are tools you run by hand, not part of the gateway. The three commands that matter:
 
 ```bash
 # 1. Build the data (needs a Token Factory key; the teacher is paid per token, capped by --max-usd)
 python scripts/text2sql/gen_sql_data.py --out out/sql --max-usd 3
 
 # 2. Train on a GPU and answer the exam
-#    train_t4.py trains the adapter, then runs: scripts/measure_adapter.py generate ...
+#    the training script in scripts/text2sql/ trains the adapter, then runs: scripts/measure_adapter.py generate ...
 
 # 3. Score and verify (CPU only; this is the part anyone can rerun)
 python scripts/measure_adapter.py report --raw raw.jsonl --golden golden.jsonl --dbs dbs.json \
@@ -233,7 +253,7 @@ python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json 
 - **"Matches the teacher" is not "is what the user meant".** The teacher is a model too and can be wrong. The score measures how well the student copies the teacher, on queries that run.
 - **Small slices mean little.** The split by difficulty or by industry has few questions per cell.
 - **The cost is an estimate.** Token counts are measured. Prices are inputs. No student endpoint was run, so no GPU-hour bill is included. See [Cost and savings](/guides/cost-and-savings/).
-- **Trained on a borrowed GPU.** Both rounds were trained on a borrowed GPU; the teacher ran on Nebius Token Factory. The training script is written to run unchanged as a Nebius Serverless Job, scripted and tested offline and ready to run with `make nebius-up`.
+- **Trained on a borrowed GPU.** Both rounds were trained on a borrowed GPU with the training script in `scripts/text2sql/`; the teacher ran on Nebius Token Factory. Night School's Nebius Serverless Job is separate: it trains with `ratchet.nightschool.train` through `deploy/train_job.sh`, scripted and tested offline, ready to run with `make nebius-up`.
 
 ## The license chain
 
@@ -248,11 +268,10 @@ python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json 
 | What | Where |
 |---|---|
 | Data generation and sandbox | `gen_sql_data.py`: `build_db`, `run_select`, `make_db`, `HELD_OUT_DOMAINS`, the `teacher_manifest.json` it writes |
-| Training | `train_t4.py` (QLoRA, rank 16, fp16, 4-bit nf4, completion-only loss), run on a borrowed GPU |
+| Training | The training script in `scripts/text2sql/` (QLoRA, rank 16, fp16, 4-bit nf4, completion-only loss), run on a borrowed GPU |
 | Scoring | `scripts/measure_adapter.py`: `report` runs each answer and the reference query on the same database and compares the rows; `verify` recomputes every number from the raw answers |
 | The second exam | `gen_exam2.py` (a different model writes databases, questions and reference queries; every query is run before it is kept), `teacher_selfcheck.py` (the teacher answers an exam) |
 | The numbers on the pages | `exam_numbers.py` scores the saved answers of both exams and writes the data the landing page, the judges' page and these docs read; a test fails when they drift |
-| Training on a borrowed GPU | `modal_train.py`: one detached job that trains, then answers the exam, with a cost cap enforced in code |
 | In-gateway SQL tasks | [`ratchet/sqlcheck.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/sqlcheck.py): `SqlSpec`, `Sandbox`, `parse_query` |
 | Statistics used for the ranges | Wilson 95% interval in `measure_adapter.py`; exact intervals in [`ratchet/stats.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/stats.py) |
 
@@ -280,7 +299,7 @@ Not the same file. The gateway's `sql` task format in `ratchet/sqlcheck.py` foll
 
 ### Where do the numbers come from?
 
-From `results.json`, made by `measure_adapter.py report`, and copied into the site at build time. If the results panel says they are pending, the run has not finished.
+From the runs' files in `evidence/`, copied into the site at build time. The Round 1 panel reads the `results.json` that `measure_adapter.py report` wrote; the headline table reads the exam scores that `scripts/text2sql/exam_numbers.py` computes from the saved answers (its `--check` fails when the copy differs).
 
 ## Related
 

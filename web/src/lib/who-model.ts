@@ -34,7 +34,7 @@ export interface WhoInput {
 
 /** The badge texts. The colour tokens keep their names (`owned`, `rented`); only these words are visible. */
 export const WHO_TEXT = {
-  owned: "Nano · yours",
+  owned: "Nano + your adapter",
   hosted: "Nano 30B · hosted",
   rented: "Ultra · Token Factory",
   tavily: "Tavily",
@@ -71,7 +71,7 @@ export function fmtThreshold(t?: number | null): string | null {
 }
 
 export function ownedTitle(version?: number | null): string {
-  return `Nemotron 3 Nano 4B with our LoRA adapter${version != null ? ` v${version}` : ""}, on a Nebius Serverless Endpoint`;
+  return `Nemotron 3 Nano 4B with our LoRA adapter${version != null ? ` v${version}` : ""}, built to run on a Nebius Serverless Endpoint`;
 }
 
 /**
@@ -105,7 +105,7 @@ export function hostedCalls(steps: readonly { served_by: ServedBy; model?: strin
 }
 
 export interface StudentCopy {
-  /** A metric's label: "Answered by your model". */
+  /** A metric's label: "Answered by your adapter". */
   label: string;
   /** The same on a phone. */
   short: string;
@@ -117,21 +117,21 @@ export interface StudentCopy {
   tried: string;
   /** A table column. */
   column: string;
-  /** In a compact progress line ("3 yours"). */
+  /** In a compact progress line ("3 adapter"). */
   compact: string;
-  /** In a sentence or a chart's tooltip: "your model 84%". */
+  /** In a sentence or a chart's tooltip: "your adapter 84%". */
   name: string;
 }
 
 const OWNED_COPY: StudentCopy = {
-  label: "Answered by your model",
-  short: "Your model",
-  by: "by your model",
-  byShort: "by your model",
-  tried: "your model",
-  column: "Yours",
-  compact: "yours",
-  name: "your model",
+  label: "Answered by your adapter",
+  short: "Your adapter",
+  by: "by your adapter",
+  byShort: "by your adapter",
+  tried: "your adapter",
+  column: "Adapter",
+  compact: "adapter",
+  name: "your adapter",
 };
 const HOSTED_COPY: StudentCopy = {
   label: "Answered by the student",
@@ -144,7 +144,7 @@ const HOSTED_COPY: StudentCopy = {
   name: "the student",
 };
 
-/** The words for student answers on a run or a page: "your model" only while no answer came from the hosted fallback. */
+/** The words for student answers on a run or a page: "your adapter" only while no answer came from the hosted fallback. */
 export function studentCopy(hosted: boolean): StudentCopy {
   return hosted ? HOSTED_COPY : OWNED_COPY;
 }

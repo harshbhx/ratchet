@@ -532,6 +532,8 @@ _INDEX_DDL = re.compile(r"CREATE INDEX IF NOT EXISTS (\w+) ON (\w+) \(([\w, ]+)\
 EVIDENCE_TABLES = ("version_leaves", "teacher_checks", "meta", "receipts", "spend", "backfill_jobs", "tombstones", "erasures")
 APPEND_ONLY_TABLES = ("version_leaves", "receipts")  # INV-17: UPDATE, DELETE and replacing INSERTs are refused
 LEAF_SPLITS = ("train", "golden")  # the splits a version commits to (version_leaves.split)
+# The end user's hashes on a request row (FR-13.2): kept for erasure and no-train lookups, never returned or exported (INV-23).
+END_USER_COLUMNS = frozenset({"end_user", "end_user_secondary"})
 # Spend rows whose `detail` may be rewritten after they are written: a Scout run's row, updated with its cost so far while
 # it runs (ADR 0120). Every other kind (a backfill's bill, a Tavily search) is written once and never edited.
 MUTABLE_SPEND_KINDS = ("scout_run",)
@@ -1263,9 +1265,11 @@ class Ledger:
 
     @_reads
     def request_record(self, request_id: str) -> dict[str, Any] | None:
-        """The `requests` row (metadata only: the table holds no text) the gateway logged under `request_id`, or None."""
+        """The `requests` row (metadata only: the table holds no text) the gateway logged under `request_id`, or None.
+        Without the end user's hashes (`END_USER_COLUMNS`): the request lookups return this row, and an end user's hash
+        is never shown (INV-23), as the NDJSON export leaves it out."""
         r = self._rdb.execute("SELECT * FROM requests WHERE request_id=? ORDER BY id LIMIT 1", (request_id,)).fetchone()
-        return dict(r) if r is not None else None
+        return {k: r[k] for k in r.keys() if k not in END_USER_COLUMNS} if r is not None else None
 
     @_reads
     def failures_for(self, request_id: str) -> list[dict[str, Any]]:
@@ -1535,8 +1539,8 @@ class Ledger:
         Nested calls join the outermost one. Events written inside (`event`) are committed with it and handed to the
         listeners after the commit; an exception rolls everything back, events included, and invalidates every cache a
         write inside may have refreshed. Inside, call only reads, `event`, `transition`, `promote_live`, `record_admin`,
-        `set_flag` and the task-override writers: any other writer commits at once, which would split the transaction
-        (checked at the commit)."""
+        `set_flag`, `merge_task_eval` and the task-override writers: any other writer commits at once, which would split
+        the transaction (checked at the commit)."""
         with self._lock:
             if self._txn_depth:
                 self._txn_depth += 1
@@ -2426,7 +2430,7 @@ class Ledger:
         return out
 
     def _export_requests(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
-        return [{k: r[k] for k in r.keys() if k not in ("end_user", "end_user_secondary")} for r in rows]
+        return [{k: r[k] for k in r.keys() if k not in END_USER_COLUMNS} for r in rows]
 
     def _export_versions(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         out = []
@@ -3031,22 +3035,29 @@ class Ledger:
     @_locked
     def merge_task_eval(self, vid: int, task: str, changes: Mapping[str, Any]) -> None:
         """Merge `changes` into version `vid`'s per-task record `eval['tasks'][task]` (FR-14.1), creating it if needed.
-        The read and the write are one transaction, so another process's eval write cannot be lost in between. KeyError
-        for a version that does not exist."""
+        The read and the write are one transaction, so another process's eval write cannot be lost in between. Inside
+        `transaction()` (the golden gate's `admit` disables a task this way) they join it: committed with it, and rolled
+        back with it. KeyError for a version that does not exist."""
+        if self._txn_depth:  # the caller's transaction commits it, or rolls it back with everything else
+            self._merge_task_eval(vid, task, changes)
+            return
         self._begin()
         try:
-            row = self.db.execute("SELECT eval FROM versions WHERE id=?", (vid,)).fetchone()
-            if row is None:
-                raise KeyError(f"no version {vid}")
-            ev = json.loads(row["eval"] or "{}")
-            records = ev.get("tasks") if isinstance(ev.get("tasks"), dict) else {}
-            current = records.get(task) if isinstance(records.get(task), dict) else {}
-            ev["tasks"] = {**records, task: {**current, **changes}}
-            self.db.execute("UPDATE versions SET eval=? WHERE id=?", (json.dumps(ev), vid))
+            self._merge_task_eval(vid, task, changes)
             self.db.commit()
         except BaseException:
             self.db.rollback()
             raise
+
+    def _merge_task_eval(self, vid: int, task: str, changes: Mapping[str, Any]) -> None:
+        row = self.db.execute("SELECT eval FROM versions WHERE id=?", (vid,)).fetchone()
+        if row is None:
+            raise KeyError(f"no version {vid}")
+        ev = json.loads(row["eval"] or "{}")
+        records = ev.get("tasks") if isinstance(ev.get("tasks"), dict) else {}
+        current = records.get(task) if isinstance(records.get(task), dict) else {}
+        ev["tasks"] = {**records, task: {**current, **changes}}
+        self.db.execute("UPDATE versions SET eval=? WHERE id=?", (json.dumps(ev), vid))
 
     @_locked
     def set_version(self, vid: int, state: str, traffic_pct: int | None = None) -> None:
@@ -3950,8 +3961,9 @@ class Ledger:
         """Log `detail` as a `kind` event unless an event of `kind` whose detail starts with `detail_prefix` was logged
         already; True when it wrote one. The check and the write are one write transaction (`_begin`), so two processes
         on one ledger file (the gateway's tick after a request and a `python -m ratchet.live tick` cron) cannot both
-        write it: what keeps a once-only event (a per-task alert, FR-14.1) once-only across processes and restarts.
-        ValueError when `detail` does not start with `detail_prefix`, since the event could never be found again."""
+        write it: what keeps a once-only event (a per-task alert, FR-14.1; the live version's alert) once-only across
+        processes and restarts. A written event goes to the listeners as `event`'s do (the log line, ADR 0062). ValueError
+        when `detail` does not start with `detail_prefix`, since the event could never be found again."""
         if not detail.startswith(detail_prefix):
             raise ValueError(f"event detail {detail!r} does not start with {detail_prefix!r}")
         self._begin()
@@ -3960,14 +3972,17 @@ class Ledger:
                 "SELECT 1 FROM events WHERE kind=? AND substr(detail, 1, ?)=? LIMIT 1",
                 (kind, len(detail_prefix), detail_prefix),
             ).fetchone()
+            row: dict[str, Any] | None = None
             if found is None:
-                self.db.execute(
-                    "INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (time.time(), self.day, kind, detail)
-                )
+                ts, day = time.time(), self.day
+                cur = self.db.execute("INSERT INTO events (ts, day, kind, detail) VALUES (?,?,?,?)", (ts, day, kind, detail))
+                row = {"id": int(cur.lastrowid), "ts": ts, "day": day, "kind": kind, "detail": detail}
             self.db.commit()
         except BaseException:
             self.db.rollback()
             raise
+        if row is not None:
+            self._announce(tuple(self._listeners), row)
         return found is None
 
     def _stage_start(self, vid: int, current_stage_only: bool) -> int:
@@ -4019,10 +4034,12 @@ class Ledger:
 
     @_locked
     def task_live_quality(self, vid: int, current_stage_only: bool = True) -> dict[str, tuple[int, float | None]]:
-        """{task: (audits, audited precision)} for a version, `version_live_quality` per task in one query (FR-14.1)."""
+        """{task: (audits, audited precision)} for a version, `version_live_quality` per task in one query (FR-14.1).
+        Only audits with a verdict count (ADR 0072): an off-path audit still pending (`audit_agree` NULL) is in neither
+        number, and a task whose audits are all pending is left out."""
         rows = self.db.execute(
-            "SELECT task, COUNT(*) n, AVG(audit_agree) a FROM requests WHERE student_version=? AND audited=1"
-            " AND served_by='student' AND id>? GROUP BY task ORDER BY task",
+            "SELECT task, COUNT(audit_agree) n, AVG(audit_agree) a FROM requests WHERE student_version=? AND audited=1"
+            " AND served_by='student' AND id>? GROUP BY task HAVING COUNT(audit_agree) > 0 ORDER BY task",
             (vid, self._stage_start(vid, current_stage_only)),
         )
         return {r["task"]: (int(r["n"]), None if r["a"] is None else float(r["a"])) for r in rows}

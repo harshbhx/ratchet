@@ -449,6 +449,31 @@ def test_end_user_is_an_hmac_and_the_raw_value_is_stored_nowhere(gw_env):
     assert stats["privacy"]["no_train_end_users"] == 1 and stats["privacy"]["end_user_key"] == "ledger"
 
 
+@pytest.mark.req("FR-13.2", "INV-23")
+def test_request_lookups_never_show_the_end_users_hashes(gw_env):
+    """GET /ratchet/requests/{id} and an API key's own GET /v1/ratchet/requests/{id} return the request's row without
+    `end_user` and `end_user_secondary`: the row keeps the hashes (erasure and no-train lookups need them), and a lookup
+    never shows them, as the NDJSON export leaves them out."""
+    gw = _gateway(gw_env, RATCHET_API_KEYS=f"acme:{ACME_KEY}")
+    c = TestClient(gw.app)
+    body = {"messages": _ask(0), "user": "bob@example.com", "safety_identifier": "sid-ZQX-unique-7731"}
+    r = c.post(CHAT, json=body, headers=_auth(ACME_KEY))
+    assert r.status_code == 200
+    rid = r.headers["x-request-id"]
+    led = gw.rt.ledger
+    with led.locked():
+        stored = led.db.execute("SELECT end_user, end_user_secondary FROM requests WHERE request_id=?", (rid,)).fetchone()
+    hashes = [stored["end_user"], stored["end_user_secondary"]]
+    assert all(h and HEX16.fullmatch(h) for h in hashes)  # the row has both
+    for path, headers in ((f"/ratchet/requests/{rid}", {}), (f"/v1/ratchet/requests/{rid}", _auth(ACME_KEY))):
+        found = c.get(path, headers=headers)
+        assert found.status_code == 200, path
+        row = found.json()["request"]
+        assert row["request_id"] == rid and row["client"] == "acme", path
+        assert not {"end_user", "end_user_secondary"} & set(row), path
+        assert not any(h in found.text for h in hashes), path
+
+
 @pytest.mark.req("FR-13.2")
 def test_end_user_hash_survives_reopening_the_file_ledger(tmp_path):
     path = str(tmp_path / "ratchet.db")

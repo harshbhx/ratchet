@@ -24,14 +24,54 @@ export interface RunsLeft {
   used: number;
 }
 
-/** Runs left today from the fields /scout/status already sends. null (so the counter hides) when either one is missing. */
-export function runsLeftToday(status: Pick<ScoutStatus, "runs_today" | "max_runs_per_day"> | null | undefined): RunsLeft | null {
+type RunsFields = Pick<ScoutStatus, "runs_today" | "max_runs_per_day" | "public_runs_left_today" | "judge">;
+
+const count = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
+
+/**
+ * Runs a visitor can still start today. A gateway that sends `public_runs_left_today` (ADR 0120) says it directly: the
+ * judges' reserve is excluded, so the count never promises runs a visitor cannot have; `max` is then the cap minus that
+ * reserve. An older gateway: the cap minus the runs so far. null (so the counter hides) without a cap.
+ */
+export function runsLeftToday(status: Partial<RunsFields> | null | undefined): RunsLeft | null {
   if (!status) return null;
-  const max = status.max_runs_per_day;
-  const used = status.runs_today;
-  if (typeof max !== "number" || !Number.isFinite(max) || max <= 0) return null;
-  if (typeof used !== "number" || !Number.isFinite(used) || used < 0) return null;
-  return { left: Math.max(0, Math.floor(max - used)), max: Math.floor(max), used: Math.floor(used) };
+  const cap = count(status.max_runs_per_day);
+  if (cap == null || cap <= 0) return null;
+  const pub = count(status.public_runs_left_today);
+  if (pub != null) {
+    const reserve = count(status.judge?.enabled === false ? 0 : status.judge?.reserved_runs_per_day) ?? 0;
+    const max = Math.max(pub, cap - reserve);
+    return { left: pub, max, used: max - pub };
+  }
+  const used = count(status.runs_today);
+  if (used == null) return null;
+  return { left: Math.max(0, cap - used), max: cap, used };
+}
+
+export interface BudgetLeft {
+  /** US dollars a visitor's runs can still spend today. */
+  left: number;
+  /** The whole daily budget, judges' reserve included. */
+  total: number;
+  /** left / total, between 0 and 1. */
+  share: number;
+}
+
+/**
+ * The live demo's budget a visitor can still use today: `public_budget_left_usd` when the gateway sends it (judges'
+ * reserve excluded), else the budget minus today's spend. null in mock mode or without a budget.
+ */
+export function budgetLeft(
+  status: Partial<Pick<ScoutStatus, "mode" | "budget_usd" | "spent_today_usd" | "public_budget_left_usd">> | null | undefined,
+): BudgetLeft | null {
+  if (!status || status.mode !== "live") return null;
+  const total = status.budget_usd;
+  if (typeof total !== "number" || !Number.isFinite(total) || total <= 0) return null;
+  const pub = status.public_budget_left_usd;
+  const spent = typeof status.spent_today_usd === "number" && Number.isFinite(status.spent_today_usd) ? status.spent_today_usd : 0;
+  const raw = typeof pub === "number" && Number.isFinite(pub) ? pub : total - spent;
+  const left = Math.min(total, Math.max(0, raw));
+  return { left, total, share: left / total };
 }
 
 export function runsLeftText(r: RunsLeft): string {

@@ -122,7 +122,6 @@ QUESTIONS: list[Question] = [
     ),
 ]
 
-BY_KEY = {q.key: q for q in QUESTIONS}
 BY_TEXT = {q.question: q for q in QUESTIONS}
 QUERY_INDEX = {qq: q for q in QUESTIONS for qq in q.queries}
 EXAMPLES = [q.question for q in QUESTIONS]

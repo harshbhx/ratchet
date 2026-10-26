@@ -12,36 +12,37 @@
       "id": "teacher-labels",
       "claim": "A real teacher wrote the text-to-SQL training data",
       "status": "real",
-      "evidence": "Nemotron 3 Ultra on Nebius Token Factory wrote the databases, questions and SQL. Every SQL query ran in a sandbox and was kept only if it ran and returned rows. 821 training rows; 172 exam rows on databases that are not in training (57 of them from two industries never trained on).",
+      "evidence": "Nemotron 3 Ultra on Nebius Token Factory wrote the databases, questions and SQL. Every SQL query ran in a sandbox and was kept only if it ran and returned rows. Round 1 (22 Oct): 821 training rows, and 172 exam rows on databases that are not in training (57 of them from two industries never trained on). Round 2 (23 Oct): 3,507 new rows from new databases; with round 1's rows, minus duplicates and 6 rows that shared a question or a query with the exam, 4,322 training rows. None of the 172 exam rows appears in them.",
       "check": {
         "label": "Read the generator: a query is kept only if it runs and returns rows",
         "href": "https://github.com/harshbhx/ratchet/blob/main/scripts/text2sql/gen_sql_data.py"
       },
-      "paths": ["scripts/text2sql/gen_sql_data.py", "scripts/text2sql/README.md"],
-      "date": "2026-10-22",
+      "paths": ["scripts/text2sql/gen_sql_data.py", "scripts/text2sql/README.md", "evidence/text2sql-round2/README.md"],
+      "date": "2026-10-23",
       "facts": [
-        { "label": "Training rows", "value": "821" },
+        { "label": "Training rows, round 2", "value": "4,322 (round 1: 821)" },
         { "label": "Exam rows (held-out domains)", "value": "172" },
-        { "label": "Teacher spend", "value": "$2.87 of a $5 cap" }
+        { "label": "Teacher spend", "value": "$2.87 for round 1, $9.18 for round 2's new rows" }
       ],
       "metrics": []
     },
     {
       "id": "adapter-training",
-      "claim": "A LoRA adapter was trained on that data",
+      "claim": "LoRA adapters were trained on that data",
       "status": "real",
-      "evidence": "Trained on a borrowed GPU: a 4-bit LoRA (r=16) on Nemotron 3 Nano 4B, 206 steps over 2 epochs in 66 minutes. Training loss went from 0.334 to 0.075; a training loss is not a quality result.",
+      "evidence": "Trained on a borrowed GPU: a 4-bit LoRA (r=16) on Nemotron 3 Nano 4B, 2 epochs each. Round 2, the headline adapter: 4,322 rows, 1,080 steps in about 5.2 hours, training loss 0.345 to 0.087. Round 1: 821 rows, 206 steps in 66 minutes, training loss 0.334 to 0.075. A training loss is not a quality result.",
       "check": {
         "label": "Read the training script",
-        "href": "https://github.com/harshbhx/ratchet/blob/main/scripts/text2sql/train_t4.py"
+        "href": "https://github.com/harshbhx/ratchet/blob/main/scripts/text2sql/train_lora.py"
       },
-      "paths": ["scripts/text2sql/train_t4.py"],
-      "date": "2026-10-22",
+      "paths": ["scripts/text2sql/train_lora.py", "evidence/text2sql-round2/adapter/run_info.json", "evidence/text2sql-round1/adapter/run_info.json"],
+      "date": "2026-10-23",
       "facts": [
         { "label": "Hardware", "value": "A borrowed GPU" },
         { "label": "Adapter", "value": "4-bit LoRA, r=16" },
-        { "label": "Steps", "value": "206 over 2 epochs in 66 minutes" },
-        { "label": "Training loss", "value": "0.334 to 0.075" }
+        { "label": "Round 2", "value": "4,322 rows, 1,080 steps over 2 epochs in about 5.2 hours" },
+        { "label": "Round 1", "value": "821 rows, 206 steps over 2 epochs in 66 minutes" },
+        { "label": "Training loss", "value": "0.345 to 0.087 (round 2), 0.334 to 0.075 (round 1)" }
       ],
       "metrics": []
     },
@@ -150,11 +151,12 @@
       "status": "not-run",
       "evidence": "The public demo has no student endpoint yet, so the teacher answers every request. The Serverless Endpoint and Night School job scripts are tested offline and ready to run with make nebius-plan. Both text-to-SQL rounds were trained on a borrowed GPU.",
       "check": {
-        "label": "The day-1 checks, with a Token Factory key",
-        "command": "make day1"
+        "label": "Print every command the Nebius path runs (it changes nothing)",
+        "command": "make nebius-plan"
       },
       "paths": [
-        "scripts/day1_check.py"
+        "deploy/nebius/nebius.sh",
+        "deploy/student_endpoint.sh"
       ],
       "date": "2026-10-24",
       "facts": [],
@@ -288,11 +290,11 @@
       "date": "2026-10-24",
       "facts": [
         {
-          "label": "Hard exam, untrained nano 4b",
+          "label": "Hard exam, untrained Nano 4B",
           "value": "94 of 150"
         },
         {
-          "label": "Hard exam, teacher (nemotron 3 ultra)",
+          "label": "Hard exam, teacher (Nemotron 3 Ultra)",
           "value": "137 of 150"
         },
         {
@@ -300,11 +302,11 @@
           "value": "136 of 150"
         },
         {
-          "label": "BFCL exam, untrained nano 4b",
+          "label": "BFCL exam, untrained Nano 4B",
           "value": "232 of 300"
         },
         {
-          "label": "BFCL exam, teacher (nemotron 3 ultra)",
+          "label": "BFCL exam, teacher (Nemotron 3 Ultra)",
           "value": "265 of 300"
         },
         {

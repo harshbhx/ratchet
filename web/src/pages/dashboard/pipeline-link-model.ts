@@ -1,4 +1,5 @@
-// When the live dashboard points at the demo gateway: only on a live gateway with no days, requests or versions yet.
+// When the live dashboard points at the demo gateway: on a live gateway with no trained version (Night School does not run
+// there), whatever traffic it has had.
 export const PIPELINE_LINK = {
   title: "See the full pipeline in action",
   line: "Four days of traffic, a trained student, a canary and a rollback, on the demo gateway.",
@@ -8,5 +9,5 @@ type Shape = { mode?: string; days?: readonly unknown[]; versions?: readonly unk
 
 export function showPipelineLink(stats: Shape): boolean {
   if (!stats || stats.mode !== "live") return false;
-  return (stats.days?.length ?? 0) === 0 && (stats.versions?.length ?? 0) === 0 && (stats.totals?.requests ?? 0) === 0;
+  return (stats.versions?.length ?? 0) === 0;
 }

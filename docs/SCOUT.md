@@ -2,7 +2,7 @@
 
 Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two of its agents make many narrow, repetitive calls. Ratchet learns those calls and moves them from Nemotron 3 Ultra to the student. The other two agents make open-ended calls, which stay on Ultra. In the simulation the student takes over most of the narrow calls. On the live demo no trained student is served yet, so every call is answered by Ultra; the three recorded live runs in `evidence/scout` show Scout working end to end, not savings.
 
-It exists to show Ratchet on real agent traffic: the case NVIDIA Research estimates covers 40–70% of LLM calls in agent systems ([arXiv 2506.02153](https://arxiv.org/html/2506.02153v1)).
+It exists to show Ratchet on real agent traffic: the kind of narrow call that, NVIDIA Research estimates, could go to small models, in the three open agent systems it studied (about 40%, 60% and 70% of their LLM queries; [arXiv 2506.02153](https://arxiv.org/abs/2506.02153), v3, Sep 22, 2026).
 
 ## Agents
 
@@ -87,7 +87,7 @@ A search that fails (any HTTP or transport error, for example a revoked key's 40
 - Triage and reader run on what earlier queries found. With nothing found they make no calls, and the writer gets an empty fact list (its prompt already says to say when the facts do not answer the question). The answer text is the model's own, never rewritten.
 - The writer step's `detail.search_unavailable` is `true`, and the `done` event's `search` is `{"available": false, "partial": <bool>, "reason": "<reason>"}` (`partial`: some results were found first). `/scout/run` answers 200: the run finished.
 - The planner is pinned to the teacher and runs before any search, so every admitted run makes a runtime Token Factory call, with or without search.
-- This is a fallback, not a hidden failure: `/scout/status.search` shows the last failure and the failures today, a broken key still needs fixing (and the Tavily prize needs working Tavily calls), and failures (not credit refusals) write a `search_error` event on the 1st, 10th, 100th and 1000th.
+- This is a fallback, not a hidden failure: `/scout/status.search` shows the last failure and the failures today, a broken key still needs fixing, and failures (not credit refusals) write a `search_error` event on the 1st, 10th, 100th and 1000th.
 
 ## Who answered
 
@@ -95,12 +95,12 @@ Each step's badge names the model that answered it (`web/src/lib/who-model.ts`, 
 
 | Step | Badge | Tooltip |
 |---|---|---|
-| `student`, `model` is a Night School adapter (`student-vN`) | Nano · yours | "Nemotron 3 Nano 4B with our LoRA adapter v[N], on a Nebius Serverless Endpoint" |
+| `student`, `model` is a Night School adapter (`student-vN`) | Nano + your adapter | "Nemotron 3 Nano 4B with our LoRA adapter v[N], built to run on a Nebius Serverless Endpoint" |
 | `student`, `model` is `fallback_student` | Nano 30B · hosted | "Untuned Nemotron 3 Nano 30B on Token Factory, held to confidence threshold [T]. Not covered by our adapter's precision certificate." [T] is `student_serving.threshold`. With daily endpoint windows (`student_serving.window`) it adds "Our adapter answers during the daily endpoint windows." |
 | `teacher` | Ultra · Token Factory | "Nemotron 3 Ultra on Nebius Token Factory" |
 | `tool` | Tavily, or Search | the tool's id |
 
-In mock mode the tooltips start with "Simulation: a mock model plays". When a student answer of the run came from the hosted fallback, or none came from the student while the hosted fallback serves, the totals read "Answered by the student" and the summary says "answered by the hosted Nano (untuned)" instead of "by your model". The lite page (`/lite/scout`) uses the same words.
+In mock mode the tooltips start with "Simulation: a mock model plays". When a student answer of the run came from the hosted fallback, or none came from the student while the hosted fallback serves, the totals read "Answered by the student" and the summary says "answered by the hosted Nano (untuned)" instead of "by your adapter". The lite page (`/lite/scout`) uses the same words.
 
 ## Budget guard (live mode)
 

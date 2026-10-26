@@ -330,7 +330,9 @@ class ReleaseGate:
     def __init__(self, ledger: Ledger, policy: ReleasePolicy | None = None):
         self.ledger = ledger
         self.policy = policy or ReleasePolicy()
-        self._alerted: set[int] = set()  # live versions already alerted on (one alert per version)
+        # Live versions known to have their alert in the ledger: a cache in front of `Ledger.event_once`, which is what
+        # makes the alert once-only across gates and processes (one alert per version).
+        self._alerted: set[int] = set()
         # (version, task) pairs known to have their per-task alert in the ledger: a cache in front of `Ledger.event_once`,
         # which is what makes the alert once-only across gates and processes (FR-14.1).
         self._task_alerted: set[tuple[int, str]] = set()
@@ -783,7 +785,9 @@ class ReleaseGate:
         never rolled back automatically; see docs/RUNBOOK.md). By default (`alert_eprocess=1`, FR-16.2) when the mixture
         e-value against 'precision >= floor' reaches 1/alpha_alert: valid however often the gate looks, so a version at or
         above the floor is alerted on with probability at most alpha_alert, and no minimum audit count is needed. With
-        `alert_eprocess=0`, when the Wilson upper bound after at least `min_audits` audits is below the floor."""
+        `alert_eprocess=0`, when the Wilson upper bound after at least `min_audits` audits is below the floor. Once-only
+        is read from the ledger's events, in the transaction that writes the alert (`Ledger.event_once`), as for the
+        per-task alerts: each `python -m ratchet.live tick` builds a new gate, and a new gate must not alert again."""
         if live is None:
             return
         p = self.policy
@@ -796,19 +800,22 @@ class ReleaseGate:
             log_e = log_e_bernoulli(s, n, p.live_floor, "below")
             if log_e >= math.log(1 / p.alpha_alert):
                 self._alerted.add(live.id)
-                self.ledger.event(
+                key = f"live v{live.id}:"
+                self.ledger.event_once(
                     "alert",
-                    f"live v{live.id}: {s}/{n} audits agree; {_e_text(log_e, p.alpha_alert)}; {_cs_text(s, n)}; "
+                    key,
+                    f"{key} {s}/{n} audits agree; {_e_text(log_e, p.alpha_alert)}; {_cs_text(s, n)}; "
                     "investigate or roll back manually (docs/RUNBOOK.md)",
                 )
             return
         n, prec = self.ledger.version_live_quality(live.id)
         if live.id not in self._alerted and n >= p.min_audits and prec is not None and wilson(prec * n, n)[1] < p.live_floor:
             self._alerted.add(live.id)
-            self.ledger.event(
+            key = f"live v{live.id} audited precision "
+            self.ledger.event_once(
                 "alert",
-                f"live v{live.id} audited precision {prec:.1%} (n={n}) below floor; "
-                "investigate or roll back manually (see docs/RUNBOOK.md)",
+                key,
+                f"{key}{prec:.1%} (n={n}) below floor; investigate or roll back manually (see docs/RUNBOOK.md)",
             )
 
     def _tick_tasks(self, live: Version | None) -> None:
@@ -947,7 +954,10 @@ class ReleaseGate:
         3. Futility: `max_stage_audits` audits in this stage and no decision: retired, traffic back as on a rollback.
            It counts audits, not time, so a canary without audits holds, as under the Wilson rule.
 
-        No audit means no decision."""
+        No audit means no decision. Every move is compare-and-set (`Ledger.transition`, `Ledger.promote_live`, which
+        writes `live_retired` for the old live version), as under the Wilson rule, so the gateway's tick and a cron tick
+        make each decision once; an operator's freeze (`releases_frozen`, ADR 0064) holds an advance or a promotion,
+        never a rollback or a retirement for futility, which only take traffic away."""
         p = self.policy
         back = f"live v{live.id}" if live else "the teacher"
         n_st, s_st = self.ledger.audit_counts(canary.id, canary.stage_since)  # first, so the life counts include them
@@ -955,11 +965,17 @@ class ReleaseGate:
         if n > 0:
             log_e = log_e_bernoulli(s, n, p.live_floor, "below")
             if log_e >= math.log(1 / p.alpha_rollback):
-                self.ledger.set_version(canary.id, "rolled_back", 0)
-                self.ledger.event(
-                    "rollback",
-                    f"v{canary.id} rolled back: {s}/{n} audits agree; {_e_text(log_e, p.alpha_rollback)}; "
-                    f"{_cs_text(s, n)}; traffic back to {back}",
+                self.ledger.transition(
+                    canary.id,
+                    "canary",
+                    canary.traffic_pct,
+                    "rolled_back",
+                    0,
+                    (
+                        "rollback",
+                        f"v{canary.id} rolled back: {s}/{n} audits agree; {_e_text(log_e, p.alpha_rollback)}; "
+                        f"{_cs_text(s, n)}; traffic back to {back}",
+                    ),
                 )
                 return
         if n_st > 0 and n_st >= p.min_audits:
@@ -972,27 +988,41 @@ class ReleaseGate:
                 earned = prec >= p.live_floor
                 why = f"point estimate at or above {p.live_floor:.0%}"
             if earned:
+                if self.ledger.flags().releases_frozen:
+                    return  # an operator froze releases: no advance and no promotion until they lift it (ADR 0064)
                 evidence = f"{why}; {_cs_text(s_st, n_st)}"
                 nxt = [step for step in CANARY_STEPS if step > canary.traffic_pct]
                 if nxt:
-                    self.ledger.set_version(canary.id, "canary", nxt[0])
-                    self.ledger.event(
-                        "canary", f"v{canary.id} audited precision {prec:.1%} (n={n_st}); canary {nxt[0]}%; {evidence}"
+                    self.ledger.transition(
+                        canary.id,
+                        "canary",
+                        canary.traffic_pct,
+                        "canary",
+                        nxt[0],
+                        ("canary", f"v{canary.id} audited precision {prec:.1%} (n={n_st}); canary {nxt[0]}%; {evidence}"),
                     )
                 else:
-                    if live:
-                        self.ledger.set_version(live.id, "retired", 0)
-                    self.ledger.set_version(canary.id, "live", 100)
-                    self.ledger.event(
-                        "live", f"v{canary.id} promoted to 100% (audited precision {prec:.1%}, n={n_st}); {evidence}"
+                    self.ledger.promote_live(
+                        canary.id,
+                        "canary",
+                        canary.traffic_pct,
+                        ("live", f"v{canary.id} promoted to 100% (audited precision {prec:.1%}, n={n_st}); {evidence}"),
+                        old_live=live.id if live else None,
+                        retired_event=("live_retired", f"v{live.id} retired: v{canary.id} replaces it as live") if live else None,
                     )
                 return
         if p.max_stage_audits and n_st >= p.max_stage_audits:
-            self.ledger.set_version(canary.id, "retired", 0)
-            self.ledger.event(
-                "inconclusive",
-                f"v{canary.id} retired after {n_st} audits at canary {canary.traffic_pct}% without enough evidence either "
-                f"way ({s_st}/{n_st} agree); {_cs_text(s_st, n_st)}; traffic back to {back}",
+            self.ledger.transition(
+                canary.id,
+                "canary",
+                canary.traffic_pct,
+                "retired",
+                0,
+                (
+                    "inconclusive",
+                    f"v{canary.id} retired after {n_st} audits at canary {canary.traffic_pct}% without enough evidence "
+                    f"either way ({s_st}/{n_st} agree); {_cs_text(s_st, n_st)}; traffic back to {back}",
+                ),
             )
 
     def evidence(self, v: Version) -> dict[str, Any]:

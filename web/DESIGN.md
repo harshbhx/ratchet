@@ -22,7 +22,7 @@ Use this metaphor with restraint: a few deliberate moments, not on every heading
 
 | Token | Means | Use |
 |---|---|---|
-| `owned` (blue) | the student: Nano with the adapter **you own** | "Nano · yours" badges, student share, Ratchet cost line |
+| `owned` (blue) | the student: Nano with the adapter **you own** | "Nano + your adapter" badges, student share, Ratchet cost line |
 | `rented` (orange) | the teacher you **rent** per token | "Ultra · Token Factory" badges, all-teacher baseline, escalations |
 | `good` / `warn` / `bad` | status only | live, holding, rolled back / rejected. Always with an icon or a word, never color alone |
 | `ink`, `ink-2`, `muted` | text | text never wears a series color |
@@ -38,12 +38,12 @@ One function, `whoLabel` in `src/lib/who-model.ts`, gives every badge its words 
 
 | Who | Badge | Tone | Tooltip |
 |---|---|---|---|
-| Our adapter (`student-vN`) | Nano · yours | `owned` | "Nemotron 3 Nano 4B with our LoRA adapter v[N], on a Nebius Serverless Endpoint" |
+| Our adapter (`student-vN`) | Nano + your adapter | `owned` | "Nemotron 3 Nano 4B with our LoRA adapter v[N], built to run on a Nebius Serverless Endpoint" |
 | The hosted fallback | Nano 30B · hosted | `outline` | "Untuned Nemotron 3 Nano 30B on Token Factory, held to confidence threshold [T]. Not covered by our adapter's precision certificate." (plus "Our adapter answers during the daily endpoint windows." when the gateway reports windows) |
 | The teacher | Ultra · Token Factory | `rented` | "Nemotron 3 Ultra on Nebius Token Factory" |
 | A tool | Tavily, or Search | `neutral` | the tool's id |
 
-While `student_serving.kind` is `hosted_fallback`: say "the student" or "the hosted Nano (untuned)", never "your model" (`studentCopy`); hide the live version's golden precision and say "not covered by the certificate" instead (`precisionShown`); the dashboard header names the serving student (`servingLine`). Never call the teacher "rented" in a badge; name where it runs.
+While `student_serving.kind` is `hosted_fallback`: say "the student" or "the hosted Nano (untuned)", never "your adapter" (`studentCopy`; otherwise "Answered by your adapter", never "your model": the customer owns an adapter, not a model); hide the live version's golden precision and say "not covered by the certificate" instead (`precisionShown`); the dashboard header names the serving student (`servingLine`). Never call the teacher "rented" in a badge; name where it runs.
 
 ### Live and simulation: the switch, the strip and the shared notice (FR-11.30, FR-11.31)
 
@@ -66,7 +66,7 @@ The demo VM serves a live gateway and a simulation ([ADR 0133](../docs/adr/0133-
 - `@/components/ui/button`: `Button`, `ButtonLink` (router), `ButtonA` (external); variants `primary | owned | outline | ghost | subtle | danger`, sizes `sm | md | lg | icon`.
 - `@/components/ui/badge`: `Badge` with `tone` `neutral | owned | rented | good | warn | bad | outline`.
 - `@/components/ui/who`: `WhoBadge servedBy="student|teacher|tool" model=... fallback=...`: the one vocabulary for who answered (`whoLabel`, above). A page that knows the gateway's fallback id wraps its badges in `WhoProvider`.
-- `@/components/ui/card`, `@/components/ui/section` (`Container`, `Eyebrow`, `H2`, `Lead`), `@/components/ui/code-block` (`CodeBlock`, `tok`), `@/components/ui/stat` (`Stat`, `CountUp`), `@/components/ui/logo`.
+- `@/components/ui/card`, `@/components/ui/section` (`Container`, `Eyebrow`, `H2`, `Lead`), `@/components/ui/code-block` (`CodeBlock`, `tok`), `@/components/ui/stat` (`CountUp`), `@/components/ui/logo`.
 - `@/lib/api`: typed client (`api.stats()`, `api.cost()`, `api.tasks()`, `api.task(name)`, `api.validateTask()`, `api.putTask()`, `api.deleteTask()` (these three take the admin key as an argument), `api.demoDay()`, `api.breakNext()`, `api.studentOutage()`, `api.reset()`, `api.scoutExamples()`, `api.scoutStatus()`, `streamScout()`), and all response types. `ApiError.body` holds a parsed error body (a 422's `errors`).
 - `src/pages/dashboard/drawer.tsx`: `Drawer`, `DrawerBody`, `DrawerFooter`, a side sheet for detail and editing (modal, focus kept inside, Escape and a click outside close it, focus returns to the opener).
 - `@/lib/hooks`: `useStats(intervalMs)`, `useTheme()`, `useCountUp()`, `useInterval()`.

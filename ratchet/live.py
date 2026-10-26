@@ -1,5 +1,7 @@
 """Live-mode Night School on Nebius: train on a Serverless Job, hot-load the adapter into vLLM, evaluate.
 
+Built to run inside a Nebius Serverless Job; scripted and tested offline.
+
     python -m ratchet.live night        # run one night against the live ledger
     python -m ratchet.live tick         # advance the release gate (run every few minutes via cron)
     python -m ratchet.live reload       # re-load live/canary/shadow adapters after an endpoint restart (the gateway
@@ -583,8 +585,8 @@ def main(
         print(f"day {e['day']}: [{e['kind']}] {e['detail']}")
     if not synced:  # after the report, so the night's outcome is on screen; a non-zero exit for cron
         raise SystemExit(
-            "RATCHET_SYNC_CMD failed after the night: the BOM and NOTICE.md copies are local only (RATCHET_SYNC_CMD failed "
-            "after training, see above); run it again to upload them"
+            "RATCHET_SYNC_CMD failed after the night: the BOM and NOTICE.md copies are local only (see the sync error "
+            "above); run it again to upload them"
         )
 
 

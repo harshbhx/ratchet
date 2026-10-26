@@ -554,7 +554,7 @@ function GraphLabel({ l }: { l: Label }) {
     meta.route === "pinned" ? (
       <span className="text-rented-ink">pinned · Ultra</span>
     ) : meta.route === "distillable" ? (
-      <span className="text-owned-ink">{left ? "learns · yours" : "learns · moves to yours"}</span>
+      <span className="text-owned-ink">{left ? "learns · adapter" : "learns · to your adapter"}</span>
     ) : (
       <span className="text-muted">{left ? "tool · search" : "tool · web search"}</span>
     );

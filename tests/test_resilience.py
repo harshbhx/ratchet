@@ -587,8 +587,27 @@ def test_read_timeout_is_retried_exactly_once():
     provider, _ = _provider(up, RetryPolicy(max_attempts=5))
     assert provider.complete(HI, OPEN_TEACHER)[0].text == "hi" and len(up.requests) == 3
 
+    # A connection dropped mid-response and a 504 may come after the model started generating: like a read timeout, one
+    # retry at most, and one in all, whichever came first (each could bill what the model generated).
+    for steps, attempts in (
+        ((httpx.RemoteProtocolError,), 2),
+        ((504,), 2),
+        ((httpx.ReadTimeout, httpx.RemoteProtocolError), 2),
+        ((504, httpx.ReadTimeout), 2),
+        ((httpx.RemoteProtocolError, 503, 504), 3),
+        ((504, 200), 2),
+    ):
+        up = Upstream(*steps)
+        provider, waits = _provider(up, RetryPolicy(max_attempts=5))
+        if steps[-1] == 200:
+            assert provider.complete(HI, OPEN_TEACHER)[0].text == "hi"
+        else:
+            with pytest.raises(UpstreamError):
+                provider.complete(HI, OPEN_TEACHER)
+        assert (len(up.requests), len(waits)) == (attempts, attempts - 1), steps
+
     # A connection that never opened reached no model: retried up to max_attempts, then 502 upstream_unreachable.
-    for exc in (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError):
+    for exc in (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
         up = Upstream(exc)
         provider, waits = _provider(up, RetryPolicy(max_attempts=4))
         with pytest.raises(UpstreamError) as e:
@@ -746,6 +765,8 @@ def _cold_start(gw_env: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, up
         ),
         pytest.param(httpx.ConnectError, 502, "api_error", "teacher_unavailable", False, None, 3, id="connect-error"),
         pytest.param(httpx.ReadTimeout, 504, "api_error", "teacher_timeout", False, None, 2, id="read-timeout"),
+        pytest.param(504, 504, "api_error", "teacher_timeout", False, None, 2, id="gateway-timeout"),
+        pytest.param(httpx.RemoteProtocolError, 502, "api_error", "teacher_unavailable", False, None, 2, id="dropped"),
         pytest.param(401, 502, "api_error", "upstream_auth_error", True, None, 1, id="auth"),
         pytest.param(403, 502, "api_error", "upstream_auth_error", True, None, 1, id="forbidden"),
         pytest.param(404, 502, "api_error", "upstream_not_found", True, None, 1, id="model-not-found"),

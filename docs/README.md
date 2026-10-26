@@ -37,7 +37,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md) | Where every part runs today (laptop, Cloudflare, Token Factory) and where it is designed to run on Nebius, and the one command that hosts it all there (scripted and tested offline, ready to run) |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Local mock mode and live mode on Nebius step by step, cost estimates, keeping the demo alive |
 | [LIVE_MODE.md](LIVE_MODE.md) | Running against real Token Factory, the student endpoint and nightly jobs, measuring a live run |
-| [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | Hosting the public demo on one Nebius CPU VM: setup, mock to live, costs, monitoring, backups, security, teardown |
+| [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | An alternative host: the Nebius CPU VM kit (scripted and tested offline). Setup, mock to live, costs, monitoring, backups, security, teardown |
 | [RUNBOOK.md](RUNBOOK.md) | Daily checks, event meanings, manual rollback and promotion, incident playbooks, backups |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Security and privacy: assets, trust boundaries, threats, mitigations present vs planned |
 
@@ -50,7 +50,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Generated traceability matrix: every PRD requirement and invariant with its code, tests and how it is verified (`make trace`) |
 | [../evidence/text2sql-round1](../evidence/text2sql-round1), [round2](../evidence/text2sql-round2), [exam2](../evidence/text2sql-exam2) | The measured text-to-SQL results: data, exams, every answer, scores and the scripts that recompute them |
 | [../evidence/toolcall](../evidence/toolcall) | The measured tool-calling results (round 3): both exams, every saved answer, the exams' own scorers, `results.json` and the drafts rendered from it; `python scripts/toolcall_results.py --check` recomputes it all |
-| [../evidence/live-smoke-2026-10-23](../evidence/live-smoke-2026-10-23) | A real run through the live gateway: 20 requests to Token Factory, about $0.01, every record published |
+| [../evidence/live-smoke-2026-10-23](../evidence/live-smoke-2026-10-23) | A real run through the live gateway: 20 requests to Token Factory, about $0.013 including control calls ($0.010 teacher only), every record published |
 | [../evidence/scout](../evidence/scout) | Three recorded live Scout runs (real Token Factory and Tavily calls), replayed by the gateway |
 
 ## Business and research
@@ -63,7 +63,17 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 ## Images
 
-`img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel) are screenshots from the simulation (mock models). `img/toolcall-results.svg` is the tool-calling chart, drawn by `scripts/toolcall_results_svg.py` from `evidence/toolcall/results.json` (`--check` compares only). `img/results.svg` is the README's results chart, drawn from the exam data by `scripts/readme_results_svg.py`. `img/architecture.svg` and its two PNGs (`architecture-light.png`, `architecture-dark.png`, and a 1200 by 800 copy for Devpost) are the architecture diagram, drawn by `scripts/render_architecture.py`. `img/where-it-runs.svg` and its two PNGs (`where-it-runs-light.png`, `where-it-runs-dark.png`) are the map of where everything runs, drawn in the same style and rendered by the same script. `img/run-on-nebius.svg` is the README's text-only "Run on Nebius" badge. `img/anim/` holds the README's animations (`readme-banner.gif`, `readme-stats.gif`, `readme-runs.gif` and `readme-footer.gif` are the front page's banner, at-a-glance strip, where-it-runs map and footer; `ratchet-how-it-works-light.gif` is the animated walkthrough the README links under the architecture diagram, and `ratchet-demo-reel.gif`, `ratchet-terminal-demo.gif` and the other task gifs are the demo reel and its parts).
+Screenshots from the simulation (mock models): `img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel).
+
+Charts and diagrams:
+
+- `img/sql-results-16x9.png`: the README's text-to-SQL chart (both exams). `img/results.svg` is a static chart of the same scores, drawn from the exam data by `scripts/readme_results_svg.py` (`--check` compares only); no page embeds it now.
+- `img/toolcall-results.svg`: the tool-calling chart, drawn by `scripts/toolcall_results_svg.py` from `evidence/toolcall/results.json` (`--check` compares only); `img/toolcall-results-16x9.png` is the still the README links.
+- `img/architecture.svg` and its PNGs (`architecture-light.png`, `architecture-dark.png`, and `architecture-devpost-1200x800.png` for Devpost): the architecture diagram, drawn by `scripts/render_architecture.py`.
+- `img/where-it-runs.svg` and its PNGs (`where-it-runs-light.png`, `where-it-runs-dark.png`): the map of where everything runs, drawn in the same style by the same script.
+- `img/try-it-16x9.png`: the README's "try it" card (four links in order). `img/run-on-nebius.svg`: the README's text-only "Run on Nebius" badge. `img/demo-reel-poster.png`: the demo reel's still, shown instead of the animation when motion is reduced. `img/social-preview.png`: the repository's share image. `img/hf/`: the Hugging Face models, datasets and demos pages, linked from the README.
+
+Animations in `img/anim/`: `readme-banner.gif`, `readme-stats.gif` and `readme-footer.gif` are the README's banner, at-a-glance strip and footer; `ratchet-demo-reel.gif` is the demo reel; `ratchet-how-it-works-light.gif` is the animated walkthrough the README links under the architecture diagram; `tool-calling-results.gif` is the animated tool-calling chart; `judge-box-howto.gif` shows the Scout page's judge box (README and [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md)).
 
 ## Repo-level files
 

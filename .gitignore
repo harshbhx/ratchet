@@ -27,6 +27,8 @@ CLAUDE.md
 *.db-wal
 *.db-shm
 out/
+.venv/
+build/
 
 # Cloudflare local emulator state and the Workers' installed packages
 .wrangler/

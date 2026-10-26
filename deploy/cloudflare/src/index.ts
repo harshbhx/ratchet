@@ -11,7 +11,7 @@ export class RatchetDemo extends Container {
   sleepAfter = "20m"; // sleeps after 20 minutes without a request
   envVars = {
     RATCHET_MODE: "mock",
-    RATCHET_MOCK_WARMUP_DAYS: "2",
+    RATCHET_MOCK_WARMUP_DAYS: "4", // as `make demo`: a live student and a canary when the first page opens
     RATCHET_DEMO_RPM: "30",
     RATCHET_DEMO_MAX_DAYS: "30",
     RATCHET_DEMO_MAX_REQUESTS: "200000",
@@ -19,6 +19,9 @@ export class RatchetDemo extends Container {
     RATCHET_IP_RPM: "60",
     RATCHET_MAX_INFLIGHT: "8",
     RATCHET_STATS_TTL_S: "2",
+    // Every request reaches the container from this Worker, so the per-IP limits (RATCHET_IP_RPM, RATCHET_DEMO_RPM) read
+    // the visitor's address from X-Forwarded-For, which `withVisitorIp` sets from cf-connecting-ip, as the live Worker does.
+    RATCHET_TRUST_PROXY: "1",
   };
 }
 
@@ -32,6 +35,15 @@ const WAKE_AFTER_MS = 2000;
 const READY_CHECK_MS = 2500;
 
 const sleep = (ms: number) => new Promise<null>((resolve) => setTimeout(() => resolve(null), ms));
+
+/** The visitor's address, from Cloudflare's cf-connecting-ip, as X-Forwarded-For: what the gateway's per-IP limits count. */
+function withVisitorIp(request: Request): Request {
+  const ip = request.headers.get("cf-connecting-ip");
+  const headers = new Headers(request.headers);
+  if (ip) headers.set("x-forwarded-for", ip);
+  else headers.delete("x-forwarded-for"); // never a visitor's own header: the gateway trusts this one
+  return new Request(request, { headers });
+}
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -51,7 +63,7 @@ export default {
     }
 
     const wantsPage = request.method === "GET" && (request.headers.get("accept") ?? "").includes("text/html");
-    const pending = demo.fetch(request); // starts the container if it is asleep
+    const pending = demo.fetch(withVisitorIp(request)); // starts the container if it is asleep
     if (!wantsPage) return pending; // scripts and API calls simply wait
 
     const first = await Promise.race([pending.catch(() => null), sleep(WAKE_AFTER_MS)]);

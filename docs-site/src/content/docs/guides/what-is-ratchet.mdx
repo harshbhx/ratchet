@@ -34,7 +34,7 @@ Ratchet puts an apprentice next to the head chef. The apprentice cooks each dish
 
 ## The problem, in numbers you can check
 
-- **The bill grows with traffic.** Enterprise spend on model APIs was $12.5B in 2025 ([Menlo Ventures](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/), 2025 report). Much of it is narrow and repetitive: labelling, extraction, ticket triage, steps inside agents.
+- **The bill grows with traffic.** Enterprise spend on model APIs was $12.5B in 2025 ([Menlo Ventures](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/), report of Dec 9, 2025, read Oct 26, 2026). Much of it is narrow and repetitive: labelling, extraction, ticket triage, steps inside agents.
 - **The obvious fix is often not allowed.** Training a cheaper model on a closed model's answers breaks the terms of the largest vendors. [OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/) and [Anthropic Commercial Terms §D.4(a)](https://www.anthropic.com/legal/commercial-terms) (both pages read Oct 21, 2026) forbid using outputs to train competing models. A tool that distills that traffic puts its users at risk. Not legal advice.
 - **Doing it by hand is slow.** Logging, cleaning, fine-tuning, evaluating, deploying and watching for regressions are separate chores, and most tools cover one.
 
@@ -143,13 +143,13 @@ Ratchet also reports the bill honestly: savings per token and by GPU-hours actua
 
 | Part | Status |
 |---|---|
-| Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,922 tests that need no network and no GPU |
+| Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,934 tests that need no network and no GPU |
 | Teacher calls | <span class="rt-badge rt-badge--live">Real</span> Nemotron 3 Ultra on Nebius Token Factory. Real teacher calls built the text-to-SQL data on Oct 22, 2026 |
 | Student endpoint | **Scripted and tested offline, ready to run with `make nebius-up`.** The public demo has no student endpoint yet, so the teacher answers every request. If a trained version were live without a GPU endpoint, its calls would go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages would say so |
 | A text-to-SQL adapter | Trained on a borrowed GPU. Its measured results are on [Results](/guides/results/) |
 | A tool-calling adapter | Trained on a borrowed GPU. Hard exam 136 of 150 (90.7%) against 94 of 150 (62.7%) untrained and 137 of 150 (91.3%) for Ultra; BFCL exam 241 of 300 (80.3%) against 232 (77.3%) untrained and 265 (88.3%) for Ultra. SQL stays the headline result. See [Results](/guides/results/) |
 | Savings and precision figures from `sim.simulate` and the story page | <span class="rt-badge rt-badge--sim">Simulation</span> Mock models show how the loop behaves, not real model quality |
-| Live mode, model ids and prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
+| Model ids and list prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
 | Token Factory Terms of Service §5(f) ("competing service") | **Open question.** Asked Nebius support in writing on Oct 19, 2026; no final answer. Not legal advice |
 
 <div class="rt-callout rt-callout--sim">

@@ -42,7 +42,8 @@ function TrafficBar({ pct, live }: { pct: number; live: boolean }) {
   );
 }
 
-export function VersionsTable({ versions }: { versions: Version[] }) {
+/** `live`: Night School does not run on the live gateway, so its empty state says so instead of promising a first night. */
+export function VersionsTable({ versions, live = false }: { versions: Version[]; live?: boolean }) {
   const rows = versions.slice().reverse();
   return (
     <Panel
@@ -53,7 +54,9 @@ export function VersionsTable({ versions }: { versions: Version[] }) {
     >
       {rows.length === 0 ? (
         <Empty icon={Boxes} title="No versions yet">
-          Day 1 is all teacher (cold start). Night School trains v1 on the teacher's answers that night.
+          {live
+            ? "Night School does not run on this live demo, so no student is trained here and the teacher answers every request."
+            : "Day 1 is all teacher (cold start). Night School trains v1 on the teacher's answers that night."}
         </Empty>
       ) : (
         <DataTable caption="Model versions" minWidth={860}>
@@ -122,7 +125,7 @@ export function ShareBar({ share, esc }: { share: number; esc: number }) {
 export function TasksTable({ tasks, hosted = false }: { tasks: TaskStats[]; hosted?: boolean }) {
   const hasPinned = tasks.some(isPinned);
   return (
-    <Panel id="tasks" title="By task" description="All days. Each task is distilled into your model unless it is pinned to the teacher.">
+    <Panel id="tasks" title="By task" description="All days. Each task is distilled into your adapter unless it is pinned to the teacher.">
       {tasks.length === 0 ? (
         <Empty icon={ListTree} title="No traffic yet">
           Tasks appear here as requests arrive with an <span className="font-mono">X-Ratchet-Task</span> header.

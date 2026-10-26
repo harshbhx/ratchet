@@ -13,7 +13,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix } from 'node:path';
 import GithubSlugger from 'github-slugger';
-import { DROP_SECTIONS, EDITS } from './public-edits.mjs';
+import { DROP_SECTIONS, EDITS, GENERATED_EDITS } from './public-edits.mjs';
 import {
   DOCS_DIR,
   GITHUB_REF,
@@ -615,8 +615,17 @@ function main() {
     ['cli.md', cliPage()],
   ]) {
     const path = join(API_DIR, name);
-    if (text) writeFileSync(path, text.split('\n').map((l) => scrubAdr(l.replace(/ \((?:[A-Z]+-[\d.]+, )*ADRs? \d+\)/g, ''))).join('\n'));
-    else {
+    if (text) {
+      let page = text;
+      for (const [pattern, replacement] of GENERATED_EDITS[name] ?? []) {
+        if (!pattern.test(page)) {
+          warn(`public edit for api/${name} no longer matches: ${pattern}`);
+          continue;
+        }
+        page = page.replace(pattern, replacement);
+      }
+      writeFileSync(path, page.split('\n').map((l) => scrubAdr(l.replace(/ \((?:[A-Z]+-[\d.]+, )*ADRs? \d+\)/g, ''))).join('\n'));
+    } else {
       rmSync(path, { force: true });
       warn(`api/${name} not generated: run python docs-site/scripts/export-reference.py`);
     }

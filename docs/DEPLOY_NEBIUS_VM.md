@@ -1,4 +1,4 @@
-# Hosting the public demo on a Nebius CPU VM
+# An alternative host: the Nebius CPU VM kit (scripted and tested offline)
 
 > **Where the public demo runs today:** the live gateway (live.ratchet.dualmindlab.tech) and the simulation (demo.ratchet.dualmindlab.tech) run on Cloudflare Workers with Containers, see [deploy/cloudflare-live/README.md](../deploy/cloudflare-live/README.md). The Nebius CPU VM kit below is the alternative host: it is written and tested offline, ready to run with `make nebius-plan`. Where this guide says a restart never resets the Scout caps, that holds where the ledger is on a volume (this kit); on the Cloudflare Containers demo the ledger is on the container's disk and a restart resets the day's counters.
 

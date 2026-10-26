@@ -383,7 +383,8 @@ def test_unhandled_error_is_a_500_envelope_and_an_event(gw_env, monkeypatch):
 @pytest.mark.req("FR-1.8", "FR-1.10", "FR-9.7")
 def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_path):
     """The strict mock (RATCHET_MOCK_STRICT=1) knows only demo requests, as v0.4 did: anything else is a 400. Without it
-    the generic mock world answers the same requests with a 200."""
+    the generic mock world answers the same requests with a 200, so a KeyError there is a bug in the gateway, as in live
+    mode: a 500 and its `gateway_error` event, never a 400 that blames the client."""
     unknown = [
         HI,  # not a demo ticket
         [{"role": "system", "content": "only a system message"}],  # no user message at all
@@ -404,6 +405,16 @@ def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_
         assert r.status_code == 200, r.text[:200]
         assert r.json()["choices"][0]["message"]["content"].startswith("[mock teacher] ")
     assert gw.rt.gateway_errors == 0 and gw.rt.ledger.totals()["requests"] == len(unknown)
+
+    def mock_bug(*args: Any, **kwargs: Any) -> Any:
+        raise KeyError("threshold")
+
+    monkeypatch.setattr(gw.rt.ratchet, "handle", mock_bug)
+    r = c.post(CHAT, json={"messages": HI})
+    assert r.status_code == 500 and _error(r)["type"] == "api_error" and "threshold" not in r.text
+    assert gw.rt.gateway_errors == 1 and [e["detail"] for e in gw.rt.ledger.events() if e["kind"] == "gateway_error"] == [
+        "KeyError (unhandled error 1)"
+    ]
 
     # In live mode a KeyError is a bug in the gateway, not a client mistake.
     live = _gateway(

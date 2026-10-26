@@ -143,8 +143,8 @@ Next steps
   2. Open https://${SHOWN_DOMAIN}/   then /scout and /dashboard.
      The simulation (mock models; run days, break a deploy, watch the rollback) is at https://sim.${SHOWN_DOMAIN}/
      (sslip.io resolves it; your own domain needs a DNS record for sim.<name> first).
-  3. Own domain: add a DNS A record, e.g. ratchet.dualmindlab.tech -> ${IP}, then on the VM:
-       sudo -u ratchet sed -i 's|^RATCHET_DOMAIN=.*|RATCHET_DOMAIN=ratchet.dualmindlab.tech|' /opt/ratchet/deploy/vm/.env
+  3. Own domain: add a DNS A record, e.g. gateway.example.com -> ${IP}, then on the VM:
+       sudo -u ratchet sed -i 's|^RATCHET_DOMAIN=.*|RATCHET_DOMAIN=gateway.example.com|' /opt/ratchet/deploy/vm/.env
        cd /opt/ratchet/deploy/vm && sudo -u ratchet docker compose up -d
   4. Live mode, keys and the budget guard: docs/DEPLOY_NEBIUS_VM.md
 

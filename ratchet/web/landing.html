@@ -230,7 +230,7 @@ r = client.chat.completions.create(
       <div class="tiles">
         <div class="tile"><div class="v" id="sSaved">-</div><div class="l">saved vs all-teacher</div></div>
         <div class="tile"><div class="v" id="sPct">-</div><div class="l">cost reduction, all traffic</div></div>
-        <div class="tile"><div class="v" id="sShare">-</div><div class="l" id="sShareL">answered by your model (latest day)</div></div>
+        <div class="tile"><div class="v" id="sShare">-</div><div class="l" id="sShareL">answered by your adapter (latest day)</div></div>
         <div class="tile"><div class="v" id="sLive">-</div><div class="l">live student version</div></div>
         <div class="tile"><div class="v" id="sReq">-</div><div class="l">requests</div></div>
       </div>
@@ -244,19 +244,19 @@ r = client.chat.completions.create(
         <div><div class="v">85–87%</div><div class="l">cost saved vs all-teacher at steady state</div></div>
         <div><div class="v">41%</div><div class="l">audited precision of a corrupted v3 deploy, which was rolled back automatically</div></div>
       </div>
-      <p class="note">Source: README simulation table (seed 7, 2,000 tickets a day, corrupted deploy of v3). Mock models show how the loop behaves, not real model quality.</p>
+      <p class="note">Simulation, mock models. Source: <code>python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3</code> (seed 7, 2,000 tickets a day, corrupted deploy of v3). Mock models show how the loop behaves, not real model quality.</p>
     </div>
 
     <!-- How it works -->
     <section id="how" aria-labelledby="how-title">
       <p class="eyebrow">How it works</p>
-      <h2 id="how-title">Your traffic trains your model</h2>
+      <h2 id="how-title">Your traffic trains your adapter</h2>
       <p class="lead">Ratchet sits between your app and the models. A small model, NVIDIA's open Nano base with an adapter you own, answers what it can. A large open model answers the rest, and those answers become tomorrow's training data.</p>
       <div class="how">
         <div class="panel diagram">
           <svg viewBox="0 0 400 612" role="img" aria-labelledby="dg-title dg-desc">
             <title id="dg-title">Ratchet request and training loop</title>
-            <desc id="dg-desc">Your app calls the Ratchet gateway. The gateway tries the student first: Nemotron 3 Nano 4B with a LoRA adapter, which you own. When the student is unsure, the teacher, Nemotron 3 Ultra on Nebius Token Factory, answers. Teacher answers go to the provenance ledger with their license. Each night Night School trains a new student (designed as a Nebius Serverless Job; not run there yet). The release gate moves it through shadow, canary 10%, 50% and 100%, with rollback, and the new version becomes the student.</desc>
+            <desc id="dg-desc">Your app calls the Ratchet gateway. The gateway tries the student first: Nemotron 3 Nano 4B with a LoRA adapter, which you own. When the student is unsure, the teacher, Nemotron 3 Ultra on Nebius Token Factory, answers. Teacher answers go to the provenance ledger with their license. Each night Night School trains a new student (built to run as a Nebius Serverless Job; scripted and tested offline, ready to run). The release gate moves it through shadow, canary 10%, 50% and 100%, with rollback, and the new version becomes the student.</desc>
             <defs>
               <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head" d="M0 0 L10 5 L0 10 z"/></marker>
               <marker id="ahA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="d-head acc" d="M0 0 L10 5 L0 10 z"/></marker>
@@ -338,7 +338,7 @@ r = client.chat.completions.create(
             <li><h3>Every teacher answer keeps its provenance</h3><p>The ledger records which teacher wrote it and the license that permits training on it.</p></li>
             <li><h3>Night School trains and releases a new student</h3><p>Each night Night School fine-tunes a new student (built to run as a Nebius Serverless Job; scripted and ready to run) and tests it on a held-out golden set. It then goes out step by step: shadow, canary 10% → 50% → 100%, with automatic rollback.</p></li>
           </ol>
-          <p class="after">Your bill falls as your own model takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.</p>
+          <p class="after">Your bill falls as your adapter takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.</p>
         </div>
       </div>
     </section>
@@ -469,9 +469,9 @@ pytest -q</code></pre>
     $("sSaved").textContent = usd(t.saved_usd);
     $("sPct").textContent = pct(t.savings_pct || 0);
     $("sShare").textContent = last ? pct(last.student_share) : "0%";
-    // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your model" (FR-7.40).
+    // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your adapter" (FR-7.40).
     const hostedNow = !!s.student_serving && s.student_serving.kind === "hosted_fallback";
-    $("sShareL").textContent = hostedNow ? "answered by the student (hosted Nano 30B while our GPU endpoint is off)" : "answered by your model (latest day)";
+    $("sShareL").textContent = hostedNow ? "answered by the student (hosted Nano 30B while our GPU endpoint is off)" : "answered by your adapter (latest day)";
     $("sLive").textContent = live ? "v" + live.id : "none yet (cold start)";
     $("sLive").style.fontSize = live ? "" : "18px";
     $("sReq").textContent = (Number(t.requests) || 0).toLocaleString("en-US");

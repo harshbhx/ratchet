@@ -478,7 +478,7 @@ def render(r: dict) -> dict[str, str]:
         "date": when or "",
         "facts": [
             {
-                "label": f"{EXAM_LABEL[e]}, {MODEL_LABEL[m].lower()}",
+                "label": f"{EXAM_LABEL[e]}, {MODEL_LABEL[m][:1].lower()}{MODEL_LABEL[m][1:]}",  # product names keep their capitals
                 "value": f"{r['scores'][e][m]['agree']} of {r['scores'][e][m]['n']}",
             }
             for e in EXAMS

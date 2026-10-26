@@ -1,6 +1,7 @@
 /**
  * Pure helpers for the judges' console: what an endpoint's failure means to a reader, route names in words, nano-USD,
- * and the summaries the chapters print. No DOM, no JSX: tested by `tests/judges-model.test.mjs`.
+ * and the summaries the chapters print. No DOM, no JSX: `tests/live-empty.test.mjs` and `tests/tour-model.test.mjs` run them, and
+ * `tests/test_judges_page.py` holds `ROUTE_WORDS` to the router's routes.
  */
 
 /** The result of one read from the gateway. `status` 0: no answer at all (a static preview, or the network). */

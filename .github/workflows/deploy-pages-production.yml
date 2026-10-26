@@ -1,5 +1,6 @@
 # Publishes the story site and the docs to PRODUCTION (ratchet.dualmindlab.tech and ratchet-docs.pages.dev) from main.
 # MANUAL ONLY: it never runs on a push, a merge or a schedule. Run it from the Actions tab (Run workflow) and type "deploy-pages".
+# Every job also checks that the run is on main: dispatched from any other branch, it deploys nothing.
 # It uses the same repository secrets as the other deploys; the token needs the "Cloudflare Pages: Edit" permission.
 name: deploy-pages-production
 
@@ -16,7 +17,7 @@ permissions:
 
 jobs:
   web:
-    if: ${{ inputs.confirm == 'deploy-pages' }}
+    if: ${{ inputs.confirm == 'deploy-pages' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -30,7 +31,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   docs:
-    if: ${{ inputs.confirm == 'deploy-pages' }}
+    if: ${{ inputs.confirm == 'deploy-pages' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -52,7 +53,7 @@ jobs:
     # Final check from outside once the deploy is done: pages, /healthz mode, /readyz and /scout/status (never runs Scout,
     # never sends a key or a completion). A waking-up demo gets about two minutes of retries to answer.
     needs: [web, docs]
-    if: ${{ inputs.confirm == 'deploy-pages' }}
+    if: ${{ inputs.confirm == 'deploy-pages' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1943 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page, test_livesim, test_attribution, test_exam_numbers, test_reasoning, test_toolcall_results, test_hosted_student, test_watch), ~120 s
+pytest -q                     # 1950 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page, test_livesim, test_attribution, test_exam_numbers, test_reasoning, test_toolcall_results, test_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as in CI)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -24,44 +24,44 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_tasks.py` | 129 (44 functions; one has 37 cases, one has 20) |
 | `tests/test_registry.py` | 30 |
 | `tests/test_nightschool.py` | 31 (25 functions; one has 5 cases) |
-| `tests/test_release.py` | 41 (32 functions; one has 8 cases, two have 2) |
+| `tests/test_release.py` | 43 (33 functions; one has 8 cases, three have 2) |
 | `tests/test_system.py` | 21 |
 | `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
-| `tests/test_resilience.py` | 88 (50 functions; one has 20 cases, two have 7, one has 6, one has 3) |
-| `tests/test_scout.py` | 46 |
-| `tests/test_contract.py` | 57 (45 functions; one has 9 cases, one has 4) |
+| `tests/test_resilience.py` | 90 (50 functions; one has 22 cases, two have 7, one has 6, one has 3) |
+| `tests/test_scout.py` | 47 |
+| `tests/test_contract.py` | 59 (47 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 47 (23 functions; one has 23 cases) |
-| `tests/test_live.py` | 79 (3 of them strict xfails for NFR-60) |
+| `tests/test_live.py` | 80 (3 of them strict xfails for NFR-60) |
 | `tests/test_nebius_script.py` | 12 |
 | `tests/test_livesim.py` | 19 |
 | `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
 | `tests/test_receipts.py` | 44 (32 functions; one has 8 cases, one has 5) |
-| `tests/test_privacy.py` | 26 |
+| `tests/test_privacy.py` | 27 |
 | `tests/test_erasure.py` | 58 (37 functions; one has 13 cases, one has 4, three have 2) |
 | `tests/test_redaction.py` | 45 (27 functions; one has 9 cases, one has 7, one has 3) |
 | `tests/test_kpis.py` | 13 (9 functions; one has 5 cases) |
 | `tests/test_licensing.py` | 10 |
 | `tests/test_feedback.py` | 32 |
 | `tests/test_docs_claims.py` | 10 |
-| `tests/test_perf.py` | 24 |
+| `tests/test_perf.py` | 25 |
 | `tests/test_security.py` | 12 |
-| `tests/test_observability.py` | 28 |
+| `tests/test_observability.py` | 29 (28 functions; one has 2 cases) |
 | `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
 | `tests/test_idempotency.py` | 25 |
 | `tests/test_offpath.py` | 32 |
 | `tests/test_attribution.py` | 10 |
 | `tests/test_limits.py` | 29 |
-| `tests/test_admin.py` | 38 (26 functions; one has 13 cases) |
-| `tests/test_calibration.py` | 26 (24 functions; one has 3 cases) |
+| `tests/test_admin.py` | 39 (27 functions; one has 13 cases) |
+| `tests/test_calibration.py` | 28 (26 functions; one has 3 cases) |
 | `tests/test_mock_world.py` | 21 |
 | `tests/test_structured.py` | 45 |
 | `tests/test_tools.py` | 26 (20 functions; one has 7 cases) |
 | `tests/test_model_routing.py` | 26 |
 | `tests/test_routing.py` | 54 (22 functions; one has 33 cases) |
-| `tests/test_adjacent_endpoints.py` | 22 |
+| `tests/test_adjacent_endpoints.py` | 24 |
 | `tests/test_sqlcheck.py` | 25 (22 run SQL, which needs Python 3.11 or later, and one needs Linux: skipped elsewhere) |
 | `tests/test_drift.py` | 48 (42 functions; one has 5 cases, two have 2; 6 of them slow: skipped without `--runslow`) |
 | `tests/test_teacher_watch.py` | 49 (45 functions; one has 3 cases, two have 2; 1 of them slow: skipped without `--runslow`) |
@@ -71,7 +71,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_toolcall_results.py` | 11 |
 | `tests/test_hosted_student.py` | 9 |
 | `tests/test_watch.py` | 70 (38 functions; counted on Linux, the file imports `fcntl` and does not collect on Windows) |
-| **Total** | **1943** |
+| **Total** | **1950** |
 
 Tests without a table of their own yet: `test_model_routing`, `test_attribution`, `test_exam_numbers`, `test_reasoning`, `test_toolcall_results`, `test_hosted_student` and `test_judges_page` (the file names and the docstrings of their tests say what each covers); `test_watch` has a paragraph below and no table.
 
@@ -514,7 +514,7 @@ The contract tests ([Contract tests](#contract-tests)). Gateway tests use `gw_en
 | `test_story_simulation_numbers_match_reference_run` | FR-7.23, NFR-11, INV-20: every simulation number the story page prints (`web/src/lib/sim.ts`) is the reference run's at the precision its literal is written with: the honest bill's `SIM_COST_REPORT` (both cost views, the break-even, the crossover, the recommendation and its explanation word for word, read as strict JSON up to its `// end` marker), "Watch it learn"'s ten days and totals, the command the page says reproduces them (parsed into the same simulator inputs) and the GPU-hour line that command prints (which `web/tests/story-model.test.mjs` pins `simulateLine` to); the four recommendations the chapter explains are `cost.RECOMMENDATIONS` in order, and its "idle more than half" is `IDLE_SHARE`. Uses the session's `reference_run` |
 | `test_story_page_helpers` | FR-7.23, FR-7.24: runs `web/tests/story-model.test.mjs` under Node's test runner (skipped without Node 22.6+ or `web/node_modules`): the reference report and a live one render through the same `billOf`; a field the gateway did not send stays unknown, never zero; the break-even and crossover formulas hold for the rounded numbers the page prints them with (the divisor to three significant digits), and the formula divides the endpoint rate the report recorded (`endpoint_usd_per_hour`), not the configured price; idle time is described in the report's buckets (`idle_granularity`); the three bills share one dollar scale and a tiny part keeps a sliver; the meter's rows and log scale; the four recommendations with the report's marked; the simulator's GPU-hour line rebuilt exactly; the trust chapter's redaction list and clipped event text |
 | `test_story_trust_claims_match_code` | FR-7.24, INV-14, INV-21: the story's "Built to be checked" chapter claims only what the code does: every file it names exists; its redaction labels are `redact.PATTERNS` in order, and redaction is on by default as it says; its gate numbers (precision, regression tolerance, audits, floor) are `ReleasePolicy`'s defaults; the invariants it cites (4, 6, 12, 14) say what it says; every route it names is served; its BOM commands work as printed (a signed BOM fetched from a mock gateway with `RATCHET_BOM_SIGNING_KEY` verifies offline with the key from `/ratchet/bom/public-key` and prints the page's line; an edited one prints the page's failure); the BOM carries the Clopper–Pearson certificate the v0.5 note mentions and `python -m ratchet.stats check` passes on it; CI runs the traceability command it prints; its link lands on the dashboard's `#redactor`; it names v0.5 work only where the PRD plans it and its foundations exist, and no evidence tour before `ratchet/tour.py` exists |
-| `test_who_model_helpers` | FR-7.40: runs `web/tests/who-model.test.mjs` under Node's test runner (skipped without Node 22.6+ or `web/node_modules`): a student call whose model is `student-v3` is "Nano · yours" with its adapter version in the tooltip; one whose model is the gateway's `fallback_student` (case and spaces ignored) is "Nano 30B · hosted", its tooltip naming the threshold and "Not covered by our adapter's precision certificate", the window sentence only when `student_serving.window` is set; the teacher is "Ultra · Token Factory"; a tool is "Tavily" or "Search"; every text matches the label table; the badge context `whoContext` builds from `/ratchet/stats` or `/scout/status` (an older gateway's reads as before); the dashboard header's serving line for each kind; no precision figure while `hosted_fallback` serves; Scout counts hosted calls and a run they answered (or, serving hosted, a run with no student answer) stops saying "your model", while a run our adapter answered keeps it |
+| `test_who_model_helpers` | FR-7.40: runs `web/tests/who-model.test.mjs` under Node's test runner (skipped without Node 22.6+ or `web/node_modules`): a student call whose model is `student-v3` is "Nano + your adapter" with its adapter version in the tooltip; one whose model is the gateway's `fallback_student` (case and spaces ignored) is "Nano 30B · hosted", its tooltip naming the threshold and "Not covered by our adapter's precision certificate", the window sentence only when `student_serving.window` is set; the teacher is "Ultra · Token Factory"; a tool is "Tavily" or "Search"; every text matches the label table; the badge context `whoContext` builds from `/ratchet/stats` or `/scout/status` (an older gateway's reads as before); the dashboard header's serving line for each kind; no precision figure while `hosted_fallback` serves; Scout counts hosted calls and a run they answered (or, serving hosted, a run with no student answer) stops saying "your adapter", while a run our adapter answered keeps it |
 | `test_student_serving_kinds_match_the_ui` | FR-7.40: the `StudentServingKind` union in `web/src/lib/api.ts` lists exactly `STUDENT_SERVING_KINDS`, and `/ratchet/stats` reports one of them with `fallback_student` equal to the setting the live resolver uses |
 | `test_stats_contract` | FR-7.1 to FR-7.4, FR-7.7, US-9: every key in `tests/fixtures/stats_keys.json`, with its JSON type, on a fresh gateway (lists empty) and after two simulated days and nights plus a keyed request (every list has items, each item checked); the fixture still holds the keys this item named; totals, days, tasks and clients add up to the same requests and dollars, and the savings are positive; each task's `routes` add up to its requests and use only known routes |
 | `test_demo_endpoints_are_403_in_live_mode` | INV-8: in live mode `POST /ratchet/demo/day` (also with bad arguments), `break-next`, `student-outage` and `reset`, and `GET /ratchet/demo/sample-example`, get 403 and change nothing in the ledger |
@@ -612,7 +612,7 @@ Every test here carries `NFR-10` through a module-level `pytestmark`.
 | `test_check_cli_passes_and_writes_the_committed_matrix` | `--check` exits 0 and prints `OK`; writing to `--out` reproduces the committed matrix |
 | `test_mini_world_is_clean_and_renders` | A tiny PRD, AGENTS.md and test file pass every core rule and render the expected rows, an empty section, xfail tests and a live check; a table inside a code block is not parsed |
 | `test_each_mistake_gives_exactly_one_error` (23 cases) | Bad status wording, a cited replaced id, a duplicate id, an unknown marker id, a malformed id, an FR row in the wrong section, a metric status on an FR row, a missing replacement target, a done row without a test, a planned id without strict xfail, a `Not met` metric without one, a cited `Not checked` metric, a known gap that has a test, a grown `KNOWN_GAPS`, a tested manual exemption, missing evidence, a live row without a live exemption or without an offline test, a broken or missing `CODE` ref, a non-literal marker, an untested invariant and a requirement proved only by a skipped test each give exactly one error |
-| `test_status_grammar` | Each status form gives its flags; the old wording (`untested live`), free text after `Done (vX);` that does not end in `planned`, a metric status on an FR row and an empty status are errors |
+| `test_status_grammar` | Each status form gives its flags; the old wordings (`untested live`, `untested (on Nebius)`, now `ready to run (on Nebius)`), free text after `Done (vX);` that does not end in `planned`, a metric status on an FR row and an empty status are errors |
 | `test_scan_reads_markers_and_counts_cases` | The AST scan reads module, class and function marks, nested classes, stacked and name-referenced `parametrize`, skips fixtures and classes with `__init__`, reports an uncountable `parametrize`, and treats a `@pytest.mark.skip` test as no proof |
 | `test_missing_sources_are_findings_not_crashes` | With no PRD, AGENTS.md, API.md or CONFIGURATION.md, every rule reports what is missing instead of raising |
 | `test_doc_rules_catch_drift` | A wrong "N tests" line and a wrong per-file count are reported with file and line; a route documented without its method is reported; the env-var scan finds `os.environ.get`, `getenv`, `_env`, `os.environ[...]` and `_int` reads and skips non-literal names and writes |
@@ -722,7 +722,7 @@ Utilization-aware cost accounting (FR-15.1 to FR-15.4, NFR-11, [ADR 0023](adr/00
 | `test_training_interval_is_closed_when_train_raises` | FR-15.2, FR-4.2: `run_night(train_gpu=...)` closes the interval at the failure time with a note and re-raises; a successful night records the job's duration and version; without a rate it records nothing |
 | `test_report_math_on_a_hand_built_ledger` | FR-15.3, FR-15.4, NFR-11: every total, both views (a negative GPU-hour saving, not clamped), s̄, break-even, the hosted-fallback price and crossover, observed volume, utilization, idle hours, the `hosted_fallback` recommendation, the daily rows, the headline following `RATCHET_STUDENT_COST_MODEL`, and the window arguments |
 | `test_recommendation_for_each_branch` | FR-15.4: `self_host` ("Self-hosting pays." with positive GPU-hour savings), `hosted_fallback`, `scale_to_zero` (idle days, and below break-even with a pricier hosted fallback), `insufficient_data` (no uptime; uptime but no student answer), an empty ledger with no division by zero or NaN |
-| `test_explanation_between_break_even_and_the_hosted_crossover` | FR-15.4, NFR-11: above break-even and below the crossover the recommendation is `hosted_fallback` and the explanation says self-hosting beats the teacher with the GPU-hour savings, the hosted fallback's crossover and the equal-coverage caveat, never "does not pay" or "below the break-even"; the same with the endpoint idle most hours (`scale_to_zero`) |
+| `test_explanation_between_break_even_and_the_hosted_crossover` | FR-15.4, NFR-11: above break-even and below the crossover the recommendation is `hosted_fallback` and the explanation says self-hosting costs less than the teacher with the GPU-hour savings, the hosted fallback's crossover and the equal-coverage caveat, never "does not pay" or "below the break-even"; the same with the endpoint idle most hours (`scale_to_zero`) |
 | `test_break_even_uses_the_recorded_rate_and_never_says_pays_at_a_loss` | FR-15.4, NFR-11: break-even and the crossover at the rate the intervals recorded (2 GPUs against a setting of 1); an endpoint above break-even with a training job that leaves the window at a loss is kept without the words "Self-hosting pays" |
 | `test_live_ledger_days_count_from_the_first_request` | FR-15.3: a live ledger's days start at its first request; uptime before it is day 0; idle time in hours (49 of 51); a one-day window takes that day's hours; a reopened file reports the same days |
 | `test_live_ledger_counts_observed_volume_and_idle_time_by_hour` | FR-15.3, FR-15.4: an endpoint up for one hour is credited with that hour's answers only, the later ones are priced per token as the hosted fallback's (with a warning), the daily row matches the totals, and a 24/7 endpoint with one request a day is told to scale to zero |
@@ -1896,7 +1896,7 @@ Writing these docs turned up ten gaps in v0.1. Each one is fixed in v0.1.1 and c
 | 7 | Stale docstring and column comment | Fixed | n/a |
 | 8 | Unknown `X-Ratchet-Task` values were stored forever in `tasks.REGISTRY` | Unknown names get a temporary whole-text task; names must match `[A-Za-z0-9_.-]{1,64}` | `test_unknown_tasks_do_not_grow_registry` |
 | 9 | `ReleasePolicy` could only be changed in code | `ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` (e.g. `RATCHET_MIN_AUDITS`) | `test_policy_from_env` |
-| 10 | LoRA targets might miss Nemotron-H Mamba layers | `train.py --targets` (default adds `in_proj,out_proj`); confirm names on day 1 | The default: `test_train_parse_args_defaults_and_row_contract`; the module names: manual (GPU) |
+| 10 | LoRA targets might miss Nemotron-H Mamba layers | `train.py --targets` (default attention and MLP, `TARGETS_ATTENTION_MLP`, as the measured adapters; `TARGETS_WITH_MAMBA` adds `in_proj,out_proj`, to confirm on day 1) | The default: `test_train_parse_args_defaults_and_row_contract`; the module names: manual (GPU) |
 
 Still open: `RATCHET_SYNC_CMD` and `RATCHET_TRAIN_CMD` run without a shell, so pipes and `&&` do not work; wrap them in a script.
 

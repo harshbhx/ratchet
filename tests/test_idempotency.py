@@ -617,15 +617,15 @@ def test_openai_sdk_retry_after_a_server_error_is_not_a_repeat(gw_env, monkeypat
     """What the real OpenAI SDK sends: its retry of a request that failed after the example was stored (a 500 from the
     gateway's own code) carries `x-stainless-retry-count: 1`, so the example's `seen` stays 1 in any mode."""
     gw = _gateway(gw_env, monkeypatch)
-    real_tick = gw.rt.tick
-    failures = iter([RuntimeError("tick failed")])
+    real_add = gw.rt.meter.add
+    failures = iter([RuntimeError("meter failed")])
 
-    def tick(force: bool = False) -> bool:  # fails once, after the cascade stored the teacher's answer
+    def add(*args: Any, **kwargs: Any) -> Any:  # fails once, after the cascade stored the teacher's answer
         for e in failures:
             raise e
-        return real_tick(force)
+        return real_add(*args, **kwargs)
 
-    monkeypatch.setattr(gw.rt, "tick", tick)
+    monkeypatch.setattr(gw.rt.meter, "add", add)
     calls: list[Any] = []
     client = make_openai_client(gw.app, calls=calls, max_retries=1)
     monkeypatch.setattr("openai._base_client.BaseClient._calculate_retry_timeout", lambda *a, **k: 0.0)

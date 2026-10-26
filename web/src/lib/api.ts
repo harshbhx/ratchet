@@ -445,6 +445,9 @@ export interface ScoutStatus {
   /** v0.5: a step whose `model` is this id came from the hosted fallback, not our adapter (FR-7.40). */
   fallback_student?: string;
   student_serving?: StudentServing;
+  /** ADR 0120: what the public can still use today, the judges' reserve excluded; null without a cap or budget (mock mode). */
+  public_runs_left_today?: number | null;
+  public_budget_left_usd?: number | null;
   /** ADR 0120: judge access. Read through `parseJudge` (src/pages/scout/judge-model.ts), which treats a missing block as off. */
   judge?: { enabled?: boolean; session?: boolean; reserved_runs_per_day?: number | null; runs_today?: number; runs_left_today?: number | null };
 }

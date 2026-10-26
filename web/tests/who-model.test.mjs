@@ -18,15 +18,15 @@ const WINDOWS = " Our adapter answers during the daily endpoint windows.";
 
 test("the badge words and tooltips are the label table's", () => {
   assert.deepEqual(m.WHO_TEXT, {
-    owned: "Nano · yours",
+    owned: "Nano + your adapter",
     hosted: "Nano 30B · hosted",
     rented: "Ultra · Token Factory",
     tavily: "Tavily",
     search: "Search",
   });
   assert.equal(m.TEACHER_TITLE, "Nemotron 3 Ultra on Nebius Token Factory");
-  assert.equal(m.ownedTitle(3), "Nemotron 3 Nano 4B with our LoRA adapter v3, on a Nebius Serverless Endpoint");
-  assert.equal(m.ownedTitle(null), "Nemotron 3 Nano 4B with our LoRA adapter, on a Nebius Serverless Endpoint");
+  assert.equal(m.ownedTitle(3), "Nemotron 3 Nano 4B with our LoRA adapter v3, built to run on a Nebius Serverless Endpoint");
+  assert.equal(m.ownedTitle(null), "Nemotron 3 Nano 4B with our LoRA adapter, built to run on a Nebius Serverless Endpoint");
   assert.equal(m.hostedTitle(0.8), HOSTED_TITLE_080);
   assert.equal(
     m.hostedTitle(0.8, true),
@@ -40,8 +40,8 @@ test("the badge words and tooltips are the label table's", () => {
 test("our adapter's answer is owned, the fallback's is hosted", () => {
   assert.deepEqual(m.whoLabel({ servedBy: "student", model: "student-v3", fallback: FALLBACK }), {
     kind: "owned",
-    text: "Nano · yours",
-    title: "Nemotron 3 Nano 4B with our LoRA adapter v3, on a Nebius Serverless Endpoint",
+    text: "Nano + your adapter",
+    title: "Nemotron 3 Nano 4B with our LoRA adapter v3, built to run on a Nebius Serverless Endpoint",
   });
   const hosted = m.whoLabel({ servedBy: "student", model: FALLBACK, fallback: FALLBACK, threshold: 0.8 });
   assert.deepEqual(hosted, { kind: "hosted", text: "Nano 30B · hosted", title: HOSTED_TITLE_080 });
@@ -74,8 +74,8 @@ test("the teacher is Ultra on Token Factory, a tool is a search", () => {
 
 test("in mock mode the tooltip says a mock model plays the real one; the words stay", () => {
   const owned = m.whoLabel({ servedBy: "student", model: "student-v2", simulated: true });
-  assert.equal(owned.text, "Nano · yours");
-  assert.equal(owned.title, "Simulation: a mock model plays Nemotron 3 Nano 4B with our LoRA adapter v2, on a Nebius Serverless Endpoint");
+  assert.equal(owned.text, "Nano + your adapter");
+  assert.equal(owned.title, "Simulation: a mock model plays Nemotron 3 Nano 4B with our LoRA adapter v2, built to run on a Nebius Serverless Endpoint");
   assert.equal(m.whoLabel({ servedBy: "teacher", simulated: true }).title, "Simulation: a mock model plays Nemotron 3 Ultra on Nebius Token Factory");
   assert.equal(m.whoLabel({ servedBy: "tool", model: "tavily", simulated: true }).title, "tavily");
 });
@@ -104,7 +104,7 @@ test("thresholds, adapter versions and model ids", () => {
   assert.equal(m.sameModel(null, undefined), false);
 });
 
-test("a run that the hosted fallback answered stops saying 'your model'", () => {
+test("a run that the hosted fallback answered stops saying 'your adapter'", () => {
   const steps = [
     { served_by: "teacher", model: ULTRA },
     { served_by: "student", model: FALLBACK },
@@ -114,14 +114,14 @@ test("a run that the hosted fallback answered stops saying 'your model'", () => 
   assert.equal(m.hostedCalls(steps, FALLBACK), 1);
   assert.equal(m.hostedCalls(steps, null), 0);
   assert.deepEqual(m.studentCopy(false), {
-    label: "Answered by your model",
-    short: "Your model",
-    by: "by your model",
-    byShort: "by your model",
-    tried: "your model",
-    column: "Yours",
-    compact: "yours",
-    name: "your model",
+    label: "Answered by your adapter",
+    short: "Your adapter",
+    by: "by your adapter",
+    byShort: "by your adapter",
+    tried: "your adapter",
+    column: "Adapter",
+    compact: "adapter",
+    name: "your adapter",
   });
   const hosted = m.studentCopy(true);
   assert.equal(hosted.label, "Answered by the student");
@@ -150,7 +150,7 @@ test("the dashboard header names the serving student", () => {
     kind: "owned",
     text: "Nano 4B + LoRA v3 · Nebius Serverless Endpoint",
     detail: null,
-    title: "Nemotron 3 Nano 4B with our LoRA adapter v3, on a Nebius Serverless Endpoint",
+    title: "Nemotron 3 Nano 4B with our LoRA adapter v3, built to run on a Nebius Serverless Endpoint",
   });
   assert.deepEqual(m.servingLine({ kind: "hosted_fallback", model: FALLBACK, version: 3, threshold: 0.8, certified: false }), {
     kind: "hosted",
@@ -204,10 +204,10 @@ test("the landing strip's share item while the hosted fallback answers", () => {
     sub: "hosted Nano 30B while our GPU endpoint is off",
   });
   assert.deepEqual(m.studentShareCopy({ kind: "endpoint", model: "student-v1", version: 1, threshold: 0.5, certified: false }), {
-    label: "Answered by your model",
+    label: "Answered by your adapter",
     sub: null,
   });
-  assert.deepEqual(m.studentShareCopy(undefined), { label: "Answered by your model", sub: null });
+  assert.deepEqual(m.studentShareCopy(undefined), { label: "Answered by your adapter", sub: null });
 });
 
 test("Scout counts hosted calls and its done text names the hosted Nano", () => {
@@ -240,7 +240,7 @@ test("Scout counts hosted calls and its done text names the hosted Nano", () => 
   const ours = scout.derive(run);
   assert.equal(ours.totals.hosted, 0);
   assert.equal(ours.hosted, false);
-  assert.equal(scout.phaseText(run, ours), "Done. 1 of 2 model calls answered by your model.");
+  assert.equal(scout.phaseText(run, ours), "Done. 1 of 2 model calls answered by your adapter.");
   // The run's own answers decide: our adapter answered its student call, so a later switch to hosted does not relabel it.
   assert.equal(scout.derive(run, "another-model", true).hosted, false);
 

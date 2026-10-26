@@ -99,7 +99,7 @@ function CallGrid() {
 function Bill({ title, who, tone, costPer1k, student, note }: { title: string; who: string; tone: "rented" | "owned"; costPer1k: number; student: number; note: string }) {
   const owned = tone === "owned";
   return (
-    <div className={cn("flex h-[300px] flex-col justify-between p-5 pt-12 sm:h-[320px] sm:p-7 sm:pt-12", owned ? "items-end bg-surface text-right" : "bg-bg-sunken")}>
+    <div className={cn("flex h-[320px] flex-col justify-between p-5 pt-12 sm:p-7 sm:pt-12", owned ? "items-end bg-surface text-right" : "bg-bg-sunken")}>
       <div className={cn("max-w-[60%]", owned && "flex flex-col items-end")}>
         <p className="font-mono text-[11.5px] uppercase tracking-[0.12em] text-muted">{title}</p>
         <p className={cn("mt-2 text-[40px] font-semibold leading-none tracking-[-0.04em] tabular sm:text-[52px]", owned ? "text-owned-ink" : "text-rented-ink")}>
@@ -115,7 +115,8 @@ function Bill({ title, who, tone, costPer1k, student, note }: { title: string; w
         <div className={cn("mt-2 flex h-2.5 overflow-hidden rounded-full bg-rented", owned && "justify-end")} aria-hidden>
           <span className="h-full rounded-full bg-owned" style={{ width: `${(owned ? student : 0) * 100}%` }} />
         </div>
-        <p className={cn("mt-2.5 text-[12px] leading-relaxed text-muted", owned ? "ml-auto max-w-[62%]" : "max-w-[62%]")}>{note}</p>
+        {/* The handle starts at 58%: each caption stays on its own side of it, so neither is cut mid-word at first sight. */}
+        <p className={cn("mt-2.5 text-pretty text-[12px] leading-relaxed text-muted", owned ? "ml-auto max-w-[36%]" : "max-w-[50%]")}>{note}</p>
       </div>
     </div>
   );

@@ -42,7 +42,7 @@ Cloudflare dashboard: Workers & Pages, `ratchet-live`, Settings, Variables and S
 it sleeps 30 minutes after the last request, or press Redeploy on the Worker to apply it at once. A value that the gateway rejects stops the container at startup
 with its config check; `python -m ratchet.config check` runs the same check on your laptop.
 
-## Spending is capped three ways (the defaults are in `src/index.ts`; override any of them as above)
+## Spending is capped four ways (the defaults are in `src/index.ts`; override any of them as above)
 
 | Cap | Value |
 |---|---|

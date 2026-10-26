@@ -63,7 +63,7 @@ export function Kpis({ stats }: { stats: Stats }) {
   const cum = cumulativeSaved(days);
   const live = liveVersion(versions);
   const flight = inFlight(versions).pop();
-  // While the hosted fallback answers, the share is not "your model", and the live adapter's precision does not
+  // While the hosted fallback answers, the share is not "your adapter", and the live adapter's precision does not
   // describe the answers being served (FR-7.40).
   const who = studentCopy(hostedServing(stats.student_serving));
 

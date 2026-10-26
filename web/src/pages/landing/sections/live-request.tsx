@@ -4,6 +4,7 @@ import type { Mode } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WhoBadge } from "@/components/ui/who";
+import { cn } from "@/lib/utils";
 import { gatewayFetch, useWaking } from "@/lib/waking-store";
 import { RUN_WAKING, isWaking } from "@/lib/waking-model";
 import { DEFAULT_PROMPT, EMPTY_TEXT, MAX_PROMPT_CHARS, buildBody, errorText, parseAnswer, type Answer } from "../try-request-model";
@@ -15,7 +16,7 @@ type State = { kind: "idle" } | { kind: "sending" } | { kind: "done"; answer: An
  * It is sent once and never retried, and it waits while the demo wakes up. `mode` comes from the page's stats poll: on the
  * simulation host the same box sends a request to mock models and says so.
  */
-export function LiveRequest({ mode }: { mode: Mode | null }) {
+export function LiveRequest({ mode, className }: { mode: Mode | null; className?: string }) {
   const waking = isWaking(useWaking());
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [state, setState] = useState<State>({ kind: "idle" });
@@ -44,7 +45,7 @@ export function LiveRequest({ mode }: { mode: Mode | null }) {
   };
 
   return (
-    <div className="mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6" aria-labelledby="live-req-title">
+    <div className={cn("mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6", className)} aria-labelledby="live-req-title">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <h3 id="live-req-title" className="text-[16px] font-semibold tracking-[-0.01em] text-ink">
           Try a real request
@@ -72,7 +73,7 @@ export function LiveRequest({ mode }: { mode: Mode | null }) {
           maxLength={MAX_PROMPT_CHARS}
           autoComplete="off"
           spellCheck={false}
-          className="h-11 min-w-0 flex-1 rounded-xl border border-line-strong bg-bg px-3.5 text-[16px] text-ink outline-none focus-visible:border-owned focus-visible:shadow-[0_0_0_4px_var(--owned-soft)] sm:text-[15px]"
+          className="h-11 w-full min-w-0 shrink-0 rounded-xl border border-line-strong bg-bg px-3.5 text-[16px] text-ink outline-none focus-visible:border-owned focus-visible:shadow-[0_0_0_4px_var(--owned-soft)] sm:w-auto sm:flex-1 sm:text-[15px]"
         />
         <Button type="submit" size="md" className="h-11 sm:px-5" disabled={sending || waking || !mode || !prompt.trim()}>
           {waking ? (

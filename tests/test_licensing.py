@@ -341,7 +341,7 @@ def test_live_night_reports_a_failed_second_sync(tmp_path, monkeypatch, capsys):
             if syncs == 2:
                 raise subprocess.CalledProcessError(1, argv)
 
-    with pytest.raises(SystemExit, match="RATCHET_SYNC_CMD failed after training"):
+    with pytest.raises(SystemExit, match="RATCHET_SYNC_CMD failed after the night"):
         _live_main(["night"], RecordingRun(on_call))
     out = capsys.readouterr().out
     # The night finished and its files are written; the event says what failed (the class only), and the report printed.

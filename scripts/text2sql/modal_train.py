@@ -1,12 +1,12 @@
-"""Round 2 of the text-to-SQL adapter on Modal: one detached pipeline that trains on a T4, answers the exam, and reports
-its progress to a status endpoint a phone can read. No keys are in this file.
+"""Runs the round 2 training job on one borrowed GPU: one detached pipeline that trains the text-to-SQL adapter, answers
+the exam, and reports its progress to a status endpoint a phone can read. No keys are in this file.
 
-  python -m modal run modal_train.py::build                   # once: compile the Mamba kernels for the T4 (done)
+  python -m modal run modal_train.py::build                   # once: compile the Mamba kernels for the GPU (done)
   python -m modal run --detach modal_train.py::pipeline       # the real run: train, then answer the exam
   python -m modal run --detach modal_train.py::pipeline --smoke 1   # 3 training steps and 3 exam rows, to prove the path
-  python -m modal deploy status_app.py                        # the status endpoint (a separate, small app)
+  python -m modal deploy modal_status_app.py                  # the status endpoint (a separate, small app)
 
-Money: the T4 job costs about USD 0.81 an hour (GPU 0.59, 2 CPU cores 0.095, 16 GiB 0.128). The pipeline keeps the total
+Money: the GPU job costs about USD 0.81 an hour (GPU 0.59, 2 CPU cores 0.095, 16 GiB 0.128). The pipeline keeps the total
 GPU seconds of every attempt in a shared dict and stops the child when the training cap is reached, so a restart cannot
 spend past it. The exam step has its own timeout.
 """
@@ -52,7 +52,7 @@ image = (
         "protobuf",
     )
     .env({"HF_HOME": "/hf", "TOKENIZERS_PARALLELISM": "false", "TRITON_CACHE_DIR": "/hf/triton"})
-    .add_local_file("train_t4.py", "/content/train_t4.py")
+    .add_local_file("train_lora.py", "/content/train_lora.py")
     .add_local_file("fast_generate.py", "/content/fast_generate.py")
     .add_local_file(os.environ.get("TRAIN_FILE", "train_r2.jsonl"), "/content/train.jsonl")
     .add_local_file("golden.jsonl", "/content/golden.jsonl")
@@ -138,7 +138,7 @@ def build():
 
 
 def _train_once(smoke: bool, st: dict) -> int:
-    """Run train_t4.py as a child, stream its output into the status dict, enforce the cost cap, return its exit code."""
+    """Run train_lora.py as a child, stream its output into the status dict, enforce the cost cap, return its exit code."""
     import shutil
 
     tag = "_smoke" if smoke else ""
@@ -158,7 +158,9 @@ def _train_once(smoke: bool, st: dict) -> int:
     }
     if smoke:
         env["SMOKE"] = "1"
-    child = subprocess.Popen(["python", "-u", "/content/train_t4.py"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    child = subprocess.Popen(
+        ["python", "-u", "/content/train_lora.py"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+    )
 
     def ticker():
         """Every 20 s, whatever the child prints: add the GPU seconds, publish, commit the volume, enforce the cap."""

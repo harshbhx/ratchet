@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ScrollX } from "./scroll-x";
 
 /** Monospace block with a copy button. `children` may contain highlighted spans; `copy` is the plain text. */
 export function CodeBlock({ title, copy, children, className }: { title?: string; copy: string; children: ReactNode; className?: string }) {
@@ -28,9 +29,9 @@ export function CodeBlock({ title, copy, children, className }: { title?: string
           {done ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="overflow-x-auto px-4 py-4 font-mono text-[13px] leading-6 text-ink-2">
+      <ScrollX as="pre" fade="var(--bg-sunken)" className="px-4 py-4 font-mono text-[13px] leading-6 text-ink-2">
         <code>{children}</code>
-      </pre>
+      </ScrollX>
     </div>
   );
 }

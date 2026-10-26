@@ -70,7 +70,7 @@ export function RouteNote({ route, className }: { route: "pinned" | "distillable
   if (route === "distillable")
     return (
       <span className={cn("inline-flex items-center gap-1 text-[12px] font-medium text-owned-ink", className)}>
-        <Sprout className="size-3" aria-hidden /> Distillable: moves to your model
+        <Sprout className="size-3" aria-hidden /> Distillable: moves to your adapter
       </span>
     );
   return (
@@ -134,7 +134,7 @@ export function StepMeta({ step, className }: { step: ScoutStep; className?: str
       {step.escalated && (
         <Badge
           tone="rented"
-          title={`${who.hosted ? "The hosted Nano (untuned)" : "Your model"} tried first, was below its confidence threshold, and handed the call to Ultra.`}
+          title={`${who.hosted ? "The hosted Nano (untuned)" : "The student (Nano with your adapter)"} tried first, was below its confidence threshold, and handed the call to Ultra.`}
         >
           <CornerRightUp aria-hidden /> escalated
           {step.confidence != null && <span className="font-normal opacity-80">· conf {step.confidence.toFixed(2)}</span>}

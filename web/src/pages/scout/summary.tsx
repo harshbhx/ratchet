@@ -115,8 +115,8 @@ export function RunSummary({ run, derived }: { run: RunState; derived: Derived }
                 </>
               ) : (
                 <>
-                  Your model has not learned Scout's tasks yet. Ratchet keeps Ultra's triage and reader answers as training data. Once Night School
-                  trains a student and it passes the release gates, these calls move to your model.
+                  Your adapter has not learned Scout's tasks yet. Ratchet keeps Ultra's triage and reader answers as training data. Once Night School
+                  trains an adapter on them and it passes the release gates, these calls move to the student: Nano with your adapter.
                 </>
               )}
             </p>

@@ -127,7 +127,7 @@ export function breakerViews(events: LedgerEvent[]): BreakerView[] {
   return [...views.values()].sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
 }
 
-/** Requests a fallback answered, by route (router.ROUTES): why the student you own did not serve them. */
+/** Requests a fallback answered, by route (router.ROUTES): why the student (Nano with your adapter) did not serve them. */
 export const FALLBACK_ROUTES: { route: string; label: string; who: "student" | "teacher"; hint: string }[] = [
   { route: "student_breaker", label: "Breaker open", who: "teacher", hint: "The student's breaker was open, so the teacher answered at once." },
   { route: "student_error", label: "Student call failed", who: "teacher", hint: "The student call raised (a timeout, no connection, a 5xx), so the teacher answered." },

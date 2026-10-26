@@ -46,7 +46,7 @@ const ITEMS: Item[] = [
   { icon: FileSignature, title: "Signed lineage", line: "A bill of materials per adapter", entry: "machinery", to: "/judges#certificate" },
   { icon: Scale, title: "License rule", line: "Closed models are refused as teachers", entry: "license-rule", to: "/judges#ledger" },
   { icon: Bot, title: "Scout", line: "An agent demo on the gateway", entry: "scout-tavily", to: "/scout" },
-  { icon: LayoutDashboard, title: "Dashboard", line: "Costs, routes, releases, receipts", entry: "demo-numbers", to: "/dashboard" },
+  { icon: LayoutDashboard, title: "Dashboard", line: "Costs, routes, releases, receipts", entry: "live-demo", to: "/dashboard" },
   { icon: Server, title: "Student on Nebius GPUs", line: "Endpoint and Night School jobs (scripted, ready to run)", entry: "gateway-live", to: "/judges#real" },
   { icon: BookOpen, title: "Docs", line: "Guides, API, evidence, how to verify", status: "real", href: DOCS_URL },
   { icon: Code, title: "Open source", line: "Apache-2.0, 1,900+ tests", status: "real", href: REPO_URL },

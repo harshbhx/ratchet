@@ -122,7 +122,7 @@ function endLabel(n: number, name: string, show: boolean, offset: number) {
   return EndLabel;
 }
 
-/** `hosted`: the hosted fallback serves the student now, so the legend says "the student", not "your model" (FR-7.40). */
+/** `hosted`: the hosted fallback serves the student now, so the legend says "the student", not "your adapter" (FR-7.40). */
 export function CostChart({ days, emptyAction, hosted = false }: { days: DayStats[]; emptyAction?: ReactNode; hosted?: boolean }) {
   const who = studentCopy(hosted);
   const [table, setTable] = useState(false);
@@ -290,7 +290,7 @@ function segShape(key: (typeof SHARE_KEYS)[number]) {
   return Seg;
 }
 
-/** `hosted`: the hosted fallback serves the student now, so the chart says "the student", not "your model" (FR-7.40). */
+/** `hosted`: the hosted fallback serves the student now, so the chart says "the student", not "your adapter" (FR-7.40). */
 export function ShareChart({ days, emptyAction, hosted = false }: { days: DayStats[]; emptyAction?: ReactNode; hosted?: boolean }) {
   const who = studentCopy(hosted);
   const [table, setTable] = useState(false);
@@ -436,7 +436,7 @@ export function PrecisionChart({ days, rollbacks = [], emptyAction }: { days: Da
   ticks.sort((a, b) => a - b);
   const lastA = latest(audited);
   const summary = lastA
-    ? `Line chart of audited agreement between your model and the teacher, ${audited.length} audited day${audited.length === 1 ? "" : "s"}. Day ${lastA.day}: ${fmtPct(lastA.agreement, 1)}; rollback floor ${fmtPct(POLICY.liveFloor)}.`
+    ? `Line chart of audited agreement between the student (Nano with your adapter) and the teacher, ${audited.length} audited day${audited.length === 1 ? "" : "s"}. Day ${lastA.day}: ${fmtPct(lastA.agreement, 1)}; rollback floor ${fmtPct(POLICY.liveFloor)}.`
     : "No audits yet.";
 
   return (
