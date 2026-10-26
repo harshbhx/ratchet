@@ -62,10 +62,11 @@ flowchart LR
 <figure class="rt-diagram">
 
 ```mermaid
+%%{init: {"flowchart": {"rankSpacing": 24}}}%%
 flowchart TB
   subgraph Real["Real"]
     direction LR
-    R1["Teacher calls on Token<br/>Factory, Scout search"] ~~~ R3["Adapters, trained<br/>on a borrowed GPU"] ~~~ R4["Code and tests,<br/>no GPU needed"]
+    R1["Token Factory calls,<br/>Scout search"] ~~~ R3["Adapters, trained<br/>on a borrowed GPU"] ~~~ R4["Code and tests,<br/>no GPU needed"]
   end
   subgraph Sim["Simulation"]
     direction LR

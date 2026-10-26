@@ -178,7 +178,12 @@ The exam, its fingerprint, every answer and the command that recomputes the scor
 
 ## Tool calling, round 3
 
-![Strict tool-calling scores on a hard exam and a BFCL exam: untrained model, tool-calling adapter and teacher, with the 95% range and exact counts](https://raw.githubusercontent.com/harshbhx/ratchet/main/docs/img/toolcall-results.svg)
+<figure class="rt-wide-chart">
+  <div class="rt-wide-chart__scroll" tabindex="0" role="region" aria-label="Tool-calling chart (scrolls sideways on a small screen)">
+    <img src="https://raw.githubusercontent.com/harshbhx/ratchet/main/docs/img/toolcall-results.svg" width="960" height="410" alt="Strict tool-calling scores on a hard exam and a BFCL exam: untrained model, tool-calling adapter and teacher, with the 95% range and exact counts" />
+  </div>
+  <figcaption>On a small screen the chart scrolls sideways; the table below has the same numbers.</figcaption>
+</figure>
 
 A tool-calling adapter on Nemotron 3 Nano 4B (2,940 training rows, about $2.33 of GPU time), scored strictly on two exams. These are measured results on real models, not the simulation (Oct 24, 2026).
 

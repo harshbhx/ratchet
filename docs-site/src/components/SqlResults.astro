@@ -330,10 +330,13 @@ const prices = d?.cost_usd_on_measured_rows?.prices_per_million_tokens;
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 0.2rem 1rem;
+    align-items: baseline;
     margin: 0.5rem 0;
     font-size: 0.8rem;
   }
+  /* No margin on either side: the content styles give each sibling a top margin, which put every label a row below its value. */
   .sqlr-prov dt {
+    margin: 0;
     color: var(--rt-muted);
   }
   .sqlr-prov dd {
