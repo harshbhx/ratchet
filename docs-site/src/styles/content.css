@@ -347,7 +347,7 @@
   border: 1px solid color-mix(in srgb, var(--aside-accent) 32%, var(--rt-line));
   border-inline-start: 3px solid var(--aside-accent);
   border-radius: var(--rt-radius);
-  background: linear-gradient(to right, var(--aside-tint), color-mix(in srgb, var(--aside-tint) 35%, var(--rt-surface)) 60%);
+  background: color-mix(in srgb, var(--aside-accent) 7%, var(--rt-surface));
   color: var(--rt-ink-2);
 }
 .sl-markdown-content .starlight-aside--tip {
@@ -786,6 +786,6 @@ html .sl-openapi-operation-description-urls {
   border-radius: var(--rt-radius);
   background: var(--rt-surface);
 }
-.sidebar .entry-badge {
+.rt-sb__badge {
   text-transform: uppercase;
 }

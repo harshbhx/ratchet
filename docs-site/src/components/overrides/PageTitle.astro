@@ -1,7 +1,7 @@
 ---
 /**
  * Page header for every doc page: the sidebar group as an eyebrow, the title, the one-line summary (frontmatter
- * `description`), reading time and the edit link, over a faint owned-blue wash and the landing page's grid.
+ * `description`), reading time and the edit link, on the page's plain background.
  * Replaces Lucode's PageTitle (its previous/next buttons are kept, smaller, on the right).
  */
 import { Icon } from '@astrojs/starlight/components';
@@ -31,7 +31,6 @@ const minutes = isGuide && words > 80 ? Math.max(1, Math.round(words / 220)) : 0
 
 <!-- A div, not a header: Lucode makes every header inside the layout sticky. -->
 <div class="rt-page-title">
-  <div class="rt-page-title__wash" aria-hidden="true"></div>
   <div class="rt-page-title__top">
     <p class="rt-page-title__eyebrow">{group ?? 'Ratchet docs'}</p>
     <div class="rt-page-title__actions">
@@ -78,18 +77,6 @@ const minutes = isGuide && words > 80 ? Math.max(1, Math.round(words / 220)) : 0
     padding-bottom: 1.6rem;
     margin-bottom: 0.5rem;
     border-bottom: 1px solid var(--rt-line);
-  }
-  .rt-page-title__wash {
-    position: absolute;
-    z-index: -1;
-    inset: -3rem -2rem 0 -2rem;
-    background:
-      radial-gradient(60% 90% at 0% 0%, var(--rt-glow-owned), transparent 70%),
-      linear-gradient(to right, var(--rt-grid) 1px, transparent 1px) 0 0 / 32px 32px,
-      linear-gradient(to bottom, var(--rt-grid) 1px, transparent 1px) 0 0 / 32px 32px;
-    -webkit-mask-image: radial-gradient(ellipse 75% 100% at 15% 0%, #000 25%, transparent 80%);
-    mask-image: radial-gradient(ellipse 75% 100% at 15% 0%, #000 25%, transparent 80%);
-    pointer-events: none;
   }
   .rt-page-title__top {
     display: flex;
@@ -181,9 +168,6 @@ const minutes = isGuide && words > 80 ? Math.max(1, Math.round(words / 220)) : 0
   @media (max-width: 40rem) {
     .rt-page-title__actions {
       display: none;
-    }
-    .rt-page-title__wash {
-      inset: -2rem -1rem 0 -1rem;
     }
   }
 </style>

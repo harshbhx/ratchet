@@ -1,0 +1,119 @@
+/*
+  Motion between and within pages. All of it is CSS, so a browser without a feature simply skips it.
+
+  - Page changes: cross-document view transitions. The header and the sidebar are named, so they stay still while
+    the page body fades out and rises in; the sidebar shows the new page's state at once (its old image is hidden).
+  - Reading progress: a 2px bar under the header on pages with a sidebar, driven by the scroll position
+    (after beUI's Scroll Progress, MIT; without its smooth-scroll library, which would fight nested scrollers).
+  - Theme switch: the new theme opens in a circle from the theme button (after beUI's Theme Toggle, MIT), set up by
+    THEME_REVEAL in astro.config.mjs.
+  Everything here is off under prefers-reduced-motion.
+*/
+
+html {
+  /* Anchor jumps land below the sticky header. */
+  scroll-padding-top: calc(var(--header-height, 3.5rem) + 1.25rem);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition {
+    navigation: auto;
+  }
+
+  html [data-slot='layout'] > header {
+    view-transition-name: rt-header;
+  }
+  html .aside {
+    view-transition-name: rt-sidebar;
+  }
+  html [data-slot='layout'] > main {
+    view-transition-name: rt-main;
+  }
+
+  ::view-transition-group(root),
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-group(rt-header),
+  ::view-transition-new(rt-header),
+  ::view-transition-group(rt-sidebar),
+  ::view-transition-new(rt-sidebar) {
+    animation: none;
+  }
+  ::view-transition-old(rt-header),
+  ::view-transition-old(rt-sidebar) {
+    display: none;
+  }
+
+  ::view-transition-group(rt-main) {
+    animation: none;
+  }
+  ::view-transition-old(rt-main) {
+    animation: rt-page-out 0.14s ease-out both;
+  }
+  ::view-transition-new(rt-main) {
+    animation: rt-page-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) 0.04s both;
+  }
+
+  @keyframes rt-page-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes rt-page-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+  }
+
+  /* Reading progress */
+  @supports (animation-timeline: scroll()) {
+    html body:has(.aside) [data-slot='layout'] > header::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -1px;
+      height: 2px;
+      background: var(--rt-owned);
+      transform-origin: 0 50%;
+      transform: scaleX(0);
+      animation: rt-read-progress linear both;
+      animation-timeline: scroll(root block);
+      pointer-events: none;
+    }
+    @keyframes rt-read-progress {
+      to {
+        transform: scaleX(1);
+      }
+    }
+  }
+
+  /* Theme switch: one circle from the button over the whole page, nothing named while it runs. */
+  html[data-rt-vt='theme'] [data-slot='layout'] > header,
+  html[data-rt-vt='theme'] .aside,
+  html[data-rt-vt='theme'] [data-slot='layout'] > main {
+    view-transition-name: none;
+  }
+  html[data-rt-vt='theme']::view-transition-old(root) {
+    animation: none;
+  }
+  html[data-rt-vt='theme']::view-transition-new(root) {
+    animation: rt-theme-reveal 0.6s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+  @keyframes rt-theme-reveal {
+    from {
+      clip-path: circle(0 at var(--rt-vt-x, 100%) var(--rt-vt-y, 0));
+    }
+    to {
+      clip-path: circle(var(--rt-vt-r, 150vmax) at var(--rt-vt-x, 100%) var(--rt-vt-y, 0));
+    }
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    /* Group open and close in the sidebar animate to their natural height. */
+    interpolate-size: allow-keywords;
+  }
+}

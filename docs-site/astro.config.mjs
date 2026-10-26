@@ -25,15 +25,27 @@ const httpOperations = createOpenAPISidebarGroup();
 const NOSCRIPT_CSS = '<style>.rb-stepper__ui{display:none!important}.rb-stepper__all{display:block!important}</style>';
 
 /**
- * Two accessibility fixes to Lucode's markup, run once the page is parsed: its sidebar and mobile-menu group titles
+ * Two accessibility fixes to Lucode's markup, run once the page is parsed: its mobile-menu group titles
  * are <h4> elements that come before the page's <h1> and after its <h2>s, so they are given level 2 to keep the
  * heading outline in order; and the mobile menu's two close controls get a name.
  */
 const A11Y_FIXES = `document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('h4.entry-title').forEach(function(h){h.setAttribute('aria-level','2')});document.querySelectorAll('#drawer .sheet-overlay,#drawer .drag-icon').forEach(function(b){b.setAttribute('aria-label','Close the menu')})});`;
 
+/**
+ * The theme button's reveal (after beUI's Theme Toggle, MIT; styles in src/styles/motion.css): a click is caught on
+ * the way down, and Lucode's own handler runs inside a same-document view transition, so the new theme opens in a
+ * circle from the button. Skipped without the API or under reduced motion; the theme switch itself is Lucode's.
+ */
+const THEME_REVEAL = `document.addEventListener('click',function(e){var b=e.target instanceof Element&&e.target.closest('starlight-theme-lucode-select button');if(!b||b.dataset.rtPass||!document.startViewTransition||matchMedia('(prefers-reduced-motion: reduce)').matches)return;e.stopPropagation();e.preventDefault();var r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,h=document.documentElement;h.style.setProperty('--rt-vt-x',x+'px');h.style.setProperty('--rt-vt-y',y+'px');h.style.setProperty('--rt-vt-r',Math.hypot(Math.max(x,innerWidth-x),Math.max(y,innerHeight-y))+'px');h.dataset.rtVt='theme';var t=document.startViewTransition(function(){b.dataset.rtPass='1';b.click();delete b.dataset.rtPass});t.ready.catch(function(){});t.finished.finally(function(){delete h.dataset.rtVt})},true);`;
+
+/** Chromium prerenders a same-site page once the pointer rests on its link, so the next page is ready on click. */
+const SPECULATION = JSON.stringify({ prerender: [{ where: { href_matches: '/*' }, eagerness: 'moderate' }] });
+
 export default defineConfig({
   site: SITE_URL,
   trailingSlash: 'always',
+  // Other browsers fetch a page when its link is hovered (Chromium prerenders it, see SPECULATION).
+  prefetch: { prefetchAll: true, defaultStrategy: 'hover' },
   integrations: [
     // Before Starlight, so ```mermaid blocks become diagrams instead of code.
     // autoTheme off: the base theme stays, and src/config/mermaid.mjs colours diagrams with the site's CSS variables.
@@ -59,6 +71,7 @@ export default defineConfig({
         Hero: './src/components/overrides/Hero.astro',
         PageTitle: './src/components/overrides/PageTitle.astro',
         Footer: './src/components/overrides/Footer.astro',
+        Sidebar: './src/components/overrides/Sidebar.astro',
       },
       customCss: [
         '@fontsource-variable/inter',
@@ -68,6 +81,7 @@ export default defineConfig({
         './src/styles/content.css',
         './src/styles/print.css',
         './src/styles/diagrams.css',
+        './src/styles/motion.css',
       ],
       head: [
         { tag: 'meta', attrs: { name: 'theme-color', content: '#fbfaf7', media: '(prefers-color-scheme: light)' } },
@@ -80,6 +94,8 @@ export default defineConfig({
         { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://docs.ratchet.dualmindlab.tech/social-preview.png' } },
         { tag: 'noscript', content: NOSCRIPT_CSS },
         { tag: 'script', content: A11Y_FIXES },
+        { tag: 'script', content: THEME_REVEAL },
+        { tag: 'script', attrs: { type: 'speculationrules' }, content: SPECULATION },
       ],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       expressiveCode: {

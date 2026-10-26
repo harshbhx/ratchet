@@ -6,15 +6,9 @@
 
 /* ---------- Header ---------- */
 html [data-slot='layout'] > header {
+  /* Solid, not blurred: a backdrop blur repaints the header on every scrolled frame. */
   background: var(--rt-header-bg);
-  -webkit-backdrop-filter: saturate(1.5) blur(14px);
-  backdrop-filter: saturate(1.5) blur(14px);
   border-bottom: 1px solid var(--rt-line);
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  html [data-slot='layout'] > header {
-    background: var(--rt-bg);
-  }
 }
 
 .site-title {
@@ -127,75 +121,205 @@ site-search #starlight__search mark {
   border-radius: 3px;
 }
 
-/* ---------- Sidebar ---------- */
-.sidebar .entry-title {
-  font-family: var(--rt-font-mono);
-  font-size: 0.7rem;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--rt-muted);
-  padding-bottom: 0.35rem;
+/* ---------- Sidebar (src/components/overrides/Sidebar.astro) ---------- */
+html .aside {
+  border-right: 1px solid var(--rt-line);
 }
-.sidebar .container-sidebar-entry {
-  gap: 0.1rem;
+.rt-sb {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable;
+  padding: 1.5rem 0.75rem 3rem 1.25rem;
 }
-.sidebar .entry-link {
-  color: var(--rt-ink-2);
-  font-size: 0.875rem;
-  height: 2rem;
+.rt-sb:hover,
+.rt-sb:focus-within {
+  scrollbar-color: var(--rt-line-strong) transparent;
 }
-.sidebar .entry-link-inner {
+.rt-sb__inner {
   position: relative;
-  width: 100%;
-  border-radius: 0.5rem;
+  isolation: isolate;
 }
-.sidebar .entry-link:hover:not([aria-current='page']) .entry-link-inner {
-  background-color: var(--rt-surface-2);
+.rt-sb__list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rt-sb__list > li {
+  margin: 0;
+}
+.rt-sb__list:not(.rt-sb__list--nested) {
+  gap: 0.15rem;
+}
+.rt-sb__list--nested {
+  margin: 0.15rem 0 0.6rem 0.7rem;
+  padding-left: 0.55rem;
+  border-left: 1px solid var(--rt-line);
+}
+
+.rt-sb__summary,
+.rt-sb__link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 0.5rem;
+  text-decoration: none;
+  line-height: 1.3;
+  transition: color var(--rt-dur) ease;
+}
+.rt-sb__summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--rt-ink-2);
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  user-select: none;
+}
+.rt-sb__summary::-webkit-details-marker {
+  display: none;
+}
+.rt-sb__group[data-current] > .rt-sb__summary,
+.rt-sb__summary:hover {
   color: var(--rt-ink);
 }
-.sidebar .entry-link[aria-current='page'] .entry-link-inner {
-  background-color: var(--rt-surface-2);
+.rt-sb__group--nested > .rt-sb__summary {
+  font-size: 0.84rem;
+  font-weight: 450;
+}
+.rt-sb__label {
+  flex: 1;
+  min-width: 0;
+}
+.rt-sb__count {
+  min-width: 1.4rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: var(--rt-surface-2);
+  color: var(--rt-muted);
+  font-family: var(--rt-font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-align: center;
+}
+.rt-sb__caret {
+  flex-shrink: 0;
+  color: var(--rt-muted);
+  transition: transform 0.25s var(--rt-ease);
+}
+.rt-sb__group[open] > .rt-sb__summary .rt-sb__caret {
+  transform: rotate(90deg);
+}
+
+.rt-sb__link {
+  color: var(--rt-muted);
+  font-size: 0.86rem;
+}
+.rt-sb__link:hover {
+  color: var(--rt-ink);
+}
+.rt-sb__link[aria-current='page'] {
   color: var(--rt-ink);
   font-weight: 550;
-  box-shadow: inset 0 0 0 1px var(--rt-line);
+  background: var(--rt-surface-2);
 }
-.sidebar .entry-link[aria-current='page'] .entry-link-inner::before {
+/* "You are here": a bar on the group's guide line. */
+.rt-sb__list--nested .rt-sb__link[aria-current='page']::before {
   content: '';
   position: absolute;
-  left: -0.45rem;
-  top: 0.45rem;
-  bottom: 0.45rem;
+  left: calc(-0.55rem - 1px);
+  top: 0.35rem;
+  bottom: 0.35rem;
   width: 2px;
   border-radius: 2px;
   background: var(--rt-owned);
 }
-.sidebar .entry-group-summary {
-  font-size: 0.875rem;
-  color: var(--rt-ink-2);
-  padding-left: 0.5rem;
-}
-.sidebar .entry-group-summary:hover {
-  background-color: var(--rt-surface-2);
-  color: var(--rt-ink);
-}
-.sidebar .entry-badge {
-  font-family: var(--rt-font-mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.04em;
-  margin-left: 0.4rem;
-  padding: 0.1rem 0.35rem;
+.rt-sb__badge {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--rt-line);
   border-radius: 4px;
   background: var(--rt-surface-2);
   color: var(--rt-muted);
-  border: 1px solid var(--rt-line);
+  font-family: var(--rt-font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
 }
-.sidebar .entry-link:focus-visible {
-  outline: none;
+.rt-sb__badge[data-variant='note'] {
+  border-color: color-mix(in srgb, var(--rt-owned) 35%, var(--rt-line));
+  color: var(--rt-owned-ink);
 }
-.sidebar .entry-link:focus-visible .entry-link-inner {
+.rt-sb__badge[data-variant='success'],
+.rt-sb__badge[data-variant='tip'] {
+  border-color: color-mix(in srgb, var(--rt-good) 35%, var(--rt-line));
+  color: var(--rt-good-ink);
+}
+.rt-sb__badge[data-variant='caution'] {
+  border-color: color-mix(in srgb, var(--rt-warn) 35%, var(--rt-line));
+  color: var(--rt-warn-ink);
+}
+.rt-sb__badge[data-variant='danger'] {
+  border-color: color-mix(in srgb, var(--rt-bad) 35%, var(--rt-line));
+  color: var(--rt-bad-ink);
+}
+.rt-sb__summary:focus-visible,
+.rt-sb__link:focus-visible {
   outline: 2px solid var(--rt-focus);
   outline-offset: -2px;
+}
+
+/* The hover pill (after beUI's Shared Layout Background, MIT): one element that glides to the row under the
+   pointer or the keyboard focus. Rows sit above it; the current page keeps its own background. */
+.rt-sb__pill {
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  left: 0;
+  width: var(--w, 0);
+  height: var(--h, 0);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--rt-ink) 6%, transparent);
+  transform: translate(var(--x, 0), var(--y, 0));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    height 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    width 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.18s ease;
+}
+.rt-sb__pill[data-shown] {
+  opacity: 1;
+}
+.rt-sb__pill[data-jump] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rt-sb__pill {
+    transition: opacity 0.12s ease;
+  }
+}
+
+/* Groups open and close with a height transition (Chrome 131+; elsewhere they snap). */
+@supports selector(::details-content) {
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-sb__group::details-content {
+      block-size: 0;
+      overflow-y: clip;
+      transition:
+        block-size 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+        content-visibility 0.3s allow-discrete;
+    }
+    .rt-sb__group[open]::details-content {
+      block-size: auto;
+    }
+  }
 }
 
 /* ---------- On this page ---------- */
