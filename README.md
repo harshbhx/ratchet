@@ -92,7 +92,7 @@ Change one line, your base URL. The designed flow (the loop is shown in simulati
 
 1. **Student first.** NVIDIA Nemotron 3 Nano 4B with a LoRA adapter **you own**, served by vLLM on a Nebius Serverless Endpoint, answers each request. Its confidence comes from token logprobs and self-consistency.
 2. **Teacher on doubt.** If the student is not confident enough, the request goes to **NVIDIA Nemotron 3 Ultra on Nebius Token Factory**, and its answer is served.
-3. **Provenance ledger.** Each teacher answer is stored after personal-data redaction, with the teacher that wrote it and the license that permits training on it. Random audits measure how often the student is really right.
+3. **Provenance ledger.** Each teacher answer is stored after personal-data redaction, with the teacher that wrote it and the license that permits training on it. Random audits check how often the student agrees with the teacher.
 4. **Night School.** Every night it fine-tunes a new adapter on teacher answers only, grades it on a held-out golden set and signs a bill of materials (BOM) for it.
 5. **Release gates.** A new student runs silently in shadow, then takes 10%, 50% and 100% of traffic with teacher audits at each step, and rolls back by itself if its audited precision slips.
 
