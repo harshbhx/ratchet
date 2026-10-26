@@ -9,7 +9,10 @@
 // https://demo.ratchet.dualmindlab.tech to send the dashboard and every other gateway-backed page to the simulation again.
 // SCOUT_ORIGIN is a second, separate setting for the paths under /scout/ only (the Scout page's status, examples, stream, recordings
 // and judge calls). It defaults to the live gateway, like GATEWAY_ORIGIN, so the whole site is one live surface; set either to the simulation demo to move that part. Everything else (/ratchet/*, /v1/*, /healthz, /readyz) follows GATEWAY_ORIGIN.
-// No keys here: the simulation demo is keyless, and a live gateway's key is added by its own Worker.
+// No gateway keys here: the simulation demo is keyless, and a live gateway's key is added by its own Worker.
+// EDGE_TOKEN (a secret, optional; the same value as the live Worker's) lets the live Worker know the visitor's address: when it is set, the
+// proxy sends x-ratchet-edge (the token) and x-ratchet-client-ip (cf-connecting-ip), which the live Worker uses for its per-visitor limit.
+// Set it with `npx wrangler pages secret put EDGE_TOKEN --project-name ratchet`; it is never in the repo.
 //
 // /video (and /video/) is the demo video's short link: a 302 to its counting link, tagged from=site, answered here before anything
 // else (no gateway call, nothing counted here) and never cached, so each visit reaches the counter.
@@ -104,6 +107,15 @@ async function forward(request, target, deps = {}) {
   headers.delete("accept-encoding"); // the edge compresses the reply for the browser; no double handling here
   const ip = request.headers.get("cf-connecting-ip");
   if (ip) headers.set("x-forwarded-for", ip);
+  // The live Worker sees this request arrive from Cloudflare, not from the visitor. With the shared EDGE_TOKEN secret the proxy tells it who
+  // the visitor is (the Worker believes the address only with a matching token). A visitor's own copies of these headers never pass.
+  headers.delete("x-ratchet-edge");
+  headers.delete("x-ratchet-client-ip");
+  const edgeToken = typeof deps.edgeToken === "string" ? deps.edgeToken.trim() : "";
+  if (edgeToken !== "") {
+    headers.set("x-ratchet-edge", edgeToken);
+    if (ip) headers.set("x-ratchet-client-ip", ip);
+  }
   const canRetry = retryable(request.method, url.pathname);
   let body;
   if (request.method !== "GET" && request.method !== "HEAD") body = canRetry ? await request.arrayBuffer() : request.body;
@@ -129,7 +141,7 @@ export default {
     if (url.pathname === "/video" || url.pathname === "/video/") return videoRedirect();
     if (!API.some((re) => re.test(url.pathname))) return env.ASSETS.fetch(request);
     const target = new URL(url.pathname + url.search, gatewayOf(env, url.pathname));
-    return forward(request, target);
+    return forward(request, target, { edgeToken: env.EDGE_TOKEN });
   },
   // Exposed for tests/worker.test.mjs only; Cloudflare ignores other keys.
   _test: { forward, retryable, notReady, RETRY_DELAYS_MS, VIDEO_URL },
