@@ -133,8 +133,8 @@ sequenceDiagram
 
 The [request journey](/guides/request-journey/) walks through the same cascade from the HTTP side, and [escalation and audits](/guides/escalation-and-audits/) covers what happens on each branch.
 
-<Aside type="caution" title="Live mode is unverified">
-As of Oct 24, 2026, the teacher runs on Nebius Token Factory and a 20-request live smoke run has gone through the gateway in live mode (see `evidence/live-smoke-2026-10-23/`), but with no student endpoint: every answer came from the teacher or the hosted untuned fallback. The vLLM student endpoint and the training job are scripted and tested offline, ready to run with `make nebius-plan` and `make nebius-up`, and `scripts/day1_check.py` is the check to run with a real key before relying on live mode. The live example below follows the gateway's own wiring and is tested offline with fake HTTP transports; the mock example further down is the one verified to run.
+<Aside type="caution" title="What has run live">
+As of Oct 26, 2026, the teacher runs on Nebius Token Factory and a 20-request live smoke run has gone through the gateway in live mode (see `evidence/live-smoke-2026-10-23/`), with no student endpoint: every one of its answers came from the teacher. The vLLM student endpoint and the training job are scripted and tested offline, ready to run with `make nebius-plan` and `make nebius-up`. The model ids and list prices in `ratchet/config.py` are unverified until `scripts/day1_check.py` passes with a real key. The live example below follows the gateway's own wiring and is tested offline with fake HTTP transports; the mock example further down is the one verified to run.
 </Aside>
 
 ## For engineers

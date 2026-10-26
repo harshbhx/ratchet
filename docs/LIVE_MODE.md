@@ -45,7 +45,7 @@ The [runbook](RUNBOOK.md#live-measurement-run) covers the prerequisites (the gat
 
 | What | How |
 |---|---|
-| A 20-request smoke run through the live gateway, about $0.013 | `evidence/live-smoke-2026-10-23/` (`results.json`, `requests.ndjson.gz`, `log.txt`); recompute its client-side numbers with `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` |
+| A 20-request smoke run through the live gateway, about $0.013 including control calls ($0.010 teacher only) | `evidence/live-smoke-2026-10-23/` (`results.json`, `requests.ndjson.gz`, `log.txt`); recompute its client-side numbers with `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` |
 | A full measured live run (rounds, nights, control arm) | Not run yet. When one is published, its results go to `evidence/live/results.json` and `docs/LIVE_RESULTS.md` |
 
 ## Hosting the demo

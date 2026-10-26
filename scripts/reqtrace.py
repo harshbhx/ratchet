@@ -70,7 +70,9 @@ _V = r"v\d+(?:\.\d+)*"
 _FEATURE, _METRIC = frozenset({"FR", "NFR"}), frozenset({"SM"})
 STATUS_GRAMMAR: tuple[tuple[re.Pattern[str], frozenset[str], frozenset[str]], ...] = (
     (re.compile(rf"Done \({_V}\)"), frozenset({DONE}), _FEATURE),
-    (re.compile(rf"Done \({_V}\), untested \((?:live|on GPU|on Nebius)\)"), frozenset({DONE, LIVE_UNVERIFIED}), _FEATURE),
+    (re.compile(rf"Done \({_V}\), untested \((?:live|on GPU)\)"), frozenset({DONE, LIVE_UNVERIFIED}), _FEATURE),
+    # Scripted and tested offline for Nebius, not run there yet: the same flags as 'untested (live)'.
+    (re.compile(rf"Done \({_V}\), ready to run \(on Nebius\)"), frozenset({DONE, LIVE_UNVERIFIED}), _FEATURE),
     (re.compile(rf"Done \({_V}\); .+ planned"), frozenset({DONE, PARTIAL_PLANNED}), _FEATURE),
     (re.compile(r"Partial: .+"), frozenset({PARTIAL}), _FEATURE),
     (re.compile(r"Planned"), frozenset({PLANNED}), _FEATURE),
@@ -80,8 +82,8 @@ STATUS_GRAMMAR: tuple[tuple[re.Pattern[str], frozenset[str], frozenset[str]], ..
     (re.compile(r"Not checked"), frozenset({UNCHECKED}), _METRIC),
 )
 STATUS_HELP = {
-    "FR": "Done (vX) | Done (vX), untested (live|on GPU|on Nebius) | Done (vX); <text> planned | Partial: <text> | "
-    "Planned | Replaced by FR-a.b",
+    "FR": "Done (vX) | Done (vX), untested (live|on GPU) | Done (vX), ready to run (on Nebius) | "
+    "Done (vX); <text> planned | Partial: <text> | Planned | Replaced by FR-a.b",
     "SM": "Met in simulation (<text>) | Not met (<text>) | Not checked",
 }
 STATUS_HELP["NFR"] = STATUS_HELP["FR"]

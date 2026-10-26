@@ -347,7 +347,7 @@ The ledger is the source of truth for provenance, versions and training data. Ba
 sqlite3 /var/lib/ratchet/ratchet.db ".backup '/var/backups/ratchet-$(date +%F).db'"
 ```
 
-On the demo VM, `deploy/vm/backup.sh` does the same with an integrity check, keeps 14 copies and can upload them to Object Storage. To restore: stop the gateway and cron jobs, remove any `ratchet.db-wal` and `ratchet.db-shm`, copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter. A backup taken before an erasure still holds the erased text, so run every later erasure again after a restore. See the [runbook](/reference/runbook/#backups).
+In the Nebius VM kit, `deploy/vm/backup.sh` does the same with an integrity check, keeps 14 copies and can upload them to Object Storage. To restore: stop the gateway and cron jobs, remove any `ratchet.db-wal` and `ratchet.db-shm`, copy the backup over `RATCHET_DB`, start the gateway, then reload the live adapter. A backup taken before an erasure still holds the erased text, so run every later erasure again after a restore. See the [runbook](/reference/runbook/#backups).
 
 ## For engineers
 

@@ -351,7 +351,8 @@ def test_each_mistake_gives_exactly_one_error(tmp_path, fault, expected):
 def test_status_grammar():
     table = [
         ("FR", "Done (v0.1.1)", {"DONE"}),
-        ("FR", "Done (v0.2), untested (on Nebius)", {"DONE", "LIVE_UNVERIFIED"}),
+        ("FR", "Done (v0.2), ready to run (on Nebius)", {"DONE", "LIVE_UNVERIFIED"}),
+        ("FR", "Done (v0.5), untested (on GPU)", {"DONE", "LIVE_UNVERIFIED"}),
         ("NFR", "Done (v0.4); NER-based detection planned", {"DONE", "PARTIAL_PLANNED"}),
         ("NFR", "Partial: the base-model license is missing", {"PARTIAL"}),
         ("FR", "Planned", {"PLANNED"}),
@@ -360,6 +361,7 @@ def test_status_grammar():
         ("SM", "Not met (simulation: 4 nights)", {"NOT_MET"}),
         ("SM", "Not checked", {"UNCHECKED"}),
         ("FR", "Done (v0.1), untested live", set()),  # the wording before this check
+        ("FR", "Done (v0.2), untested (on Nebius)", set()),  # now 'ready to run (on Nebius)'
         ("FR", "Done (v0.4); the demo VM also has a guard", set()),  # free text must end in 'planned'
         ("FR", "done (v0.1)", set()),
         ("FR", "Done (v0.1) ", set()),  # matched whole, so trailing text fails

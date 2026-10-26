@@ -230,7 +230,7 @@ The explanation says two things separately so the words never contradict the fig
 
 The hosted fallback is Nemotron 3 Nano 30B on Token Factory, untuned, paid per token. Answers it gives carry the <Who as="fallback" /> badge. With list prices and the simulation's token counts it costs about $0.00003 per answer, so a $1.35-an-hour endpoint beats it per answer only above roughly **45,000 student answers an hour** ($1.35 ÷ $0.00003, an estimate; the reference simulation reports 51,528 at the code's default 1.55).
 
-That gives a middle band. Take a customer sending 10M requests a month, about 14,000 an hour. That is far above break-even: a GPU running all month costs about $990 at $1.35 an hour (730 hours), against about $9,300 of avoided Ultra spend (simulation-based estimate). The GPU-hour savings are positive. The report still says `hosted_fallback`, worded "Self-hosting beats the teacher, but the hosted fallback would cost less per answer".
+That gives a middle band. Take a customer sending 10M requests a month, about 14,000 an hour. That is far above break-even: a GPU running all month costs about $990 at $1.35 an hour (730 hours), against about $9,300 of avoided Ultra spend (simulation-based estimate). The GPU-hour savings are positive. The report still says `hosted_fallback`, worded "Self-hosting costs less than the teacher, but the hosted fallback would cost less per answer".
 
 The caveat is printed with every `hosted_fallback` explanation (`CROSSOVER_CAVEAT`): the crossover assumes the hosted fallback serves as many requests as the tuned student. It is untuned, so more of its requests may go to the teacher, and each of those costs about $0.001 of Ultra. Ratchet does not measure the hosted model's coverage, because the two are never served side by side. Before switching, run a day on each and compare the student's share of requests in `/ratchet/stats`.
 
@@ -302,7 +302,7 @@ The same run's cost report (simulation, the endpoint up 24 hours a day, token li
 Recomputed at the $1.35 per GPU-hour these docs use (estimates, from the formulas above): the 240 endpoint hours would cost $324.00 instead of $372.00, the break-even would be about 1,370 student answers per endpoint hour and the hosted crossover about 44,900. The recommendation would not change: 66 answers an hour is still far below break-even.
 
 <Aside type="caution" title="Simulation and estimates so far">
-As of Oct 25, 2026, the student endpoint is scripted and tested offline, ready to run with `make nebius-up`, and the public demo has no student endpoint yet. Every cost figure on this page is either a simulation output or an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured numbers will come from a published live run and replace the `[LIVE NUMBER]` placeholders.
+As of Oct 26, 2026, the student endpoint is scripted and tested offline, ready to run with `make nebius-up`, and the public demo has no student endpoint yet. Every cost figure on this page is either a simulation output or an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured savings will come only from a published live run, and none is published yet.
 </Aside>
 
 ### Spend and rate limits
@@ -368,7 +368,7 @@ The dashboard's figures are the per-token view: the student priced at the hosted
 
 ### What does it cost to run Ratchet?
 
-The gateway does no inference, so it runs on a small CPU VM (about $72 for Oct 29 to Dec 15, 2026, estimate, [demo VM guide](/reference/deploy-nebius-vm/)). On top of that: teacher calls per token, a training job per night (about $0.70 to $1.35, estimate), and the student endpoint while it runs (about $32 per full day, estimate), both at about $1.35 per GPU-hour. All of these are estimates until a live run measures them.
+The gateway does no inference, so it runs on a small CPU VM (about $72 for Oct 29 to Dec 15, 2026, estimate, [VM kit guide](/reference/deploy-nebius-vm/)). On top of that: teacher calls per token, a training job per night (about $0.70 to $1.35, estimate), and the student endpoint while it runs (about $32 per full day, estimate), both at about $1.35 per GPU-hour. All of these are estimates until a live run measures them.
 
 ### At what traffic does self-hosting pay?
 
@@ -384,7 +384,7 @@ Then the report does not know the GPU cost. Student answers in hours with no rec
 
 ### Are these real numbers?
 
-Not yet. The prices are list prices, unverified until the day-1 checks pass, and every figure on this page comes from the simulation or from estimates. As of Oct 25, 2026 the teacher runs on Nebius Token Factory and the public demo has no student endpoint yet, so the teacher answers every request; the live-run harness will publish measured numbers, including the Nebius bill.
+Not yet. The prices are list prices, unverified until the day-1 checks pass, and every figure on this page comes from the simulation or from estimates. As of Oct 26, 2026 the teacher runs on Nebius Token Factory and the public demo has no student endpoint yet, so the teacher answers every request; the live-run harness will publish measured numbers, including the Nebius bill.
 
 ### Does the baseline overstate savings?
 

@@ -1,4 +1,4 @@
-"""Draw docs/img/results.svg, the README's results chart, from web/src/data/exams.json.
+"""Draw docs/img/results.svg, a static chart of the text-to-SQL exam scores (no page embeds it now), from web/src/data/exams.json.
 
 That file is computed from the saved answers by `scripts/text2sql/exam_numbers.py`. Run this again after it changes:
 `python scripts/readme_results_svg.py` (add `--check` to compare only).
