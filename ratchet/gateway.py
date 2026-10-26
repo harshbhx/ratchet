@@ -54,6 +54,7 @@ from . import (
     __version__,
     certificate,
     feedback,
+    hosted,
     idem,
     kpis,
     licenses,
@@ -81,7 +82,7 @@ from .auth import KeyLimits, KeyRing, Token, bearer, parse_key_limits
 from .config import MAX_GPUS, MAX_USD_PER_GPU_HOUR, ConfigError, ConfigIssue, Settings
 from .cost import cost_report, record_endpoint, record_simulated_day, stats_block
 from .demo import DemoJanitor, reset_event
-from .ledger import DAY_SECONDS, Ledger, NoTrainFull, Version
+from .ledger import DAY_SECONDS, HOSTED_STATE, Ledger, NoTrainFull, Version
 from .merkle import KeySet, LogTree
 from .nightschool.orchestrate import NightReport, run_night
 from .openai_compat import (
@@ -384,6 +385,16 @@ class Runtime:
                 )
             self.reloader = None
             self.student_http = None
+            # The hosted, untuned model on Token Factory, still with the student's timeouts: the student while the
+            # endpoint is off, and the hosted student's row (FR-12.33, ADR 0146) always, which has no adapter to load.
+            fallback = OpenAICompatProvider(
+                s.teacher_base,
+                s.teacher_api_key,
+                timeout=s.student_timeout(),
+                transport=self.transports.get("teacher"),
+                reasoning_field=reasoning_field,
+                observe=self.upstream.bind("student", upstream.host_of(s.teacher_base)),
+            )
             if s.student_base:
                 student_transport = self.transports.get("student")
                 student = OpenAICompatProvider(
@@ -399,16 +410,10 @@ class Runtime:
                 self.reloader = live.adapter_reloader(s, self.ledger, http, clock=self.clock)
 
                 def resolver(v: Version):
+                    if v.state == HOSTED_STATE:
+                        return fallback, s.fallback_student_model
                     return student, v.adapter_uri  # vLLM serves each LoRA adapter under its own name
-            else:  # endpoint offline: the hosted, untuned fallback on Token Factory, still with the student's timeouts
-                fallback = OpenAICompatProvider(
-                    s.teacher_base,
-                    s.teacher_api_key,
-                    timeout=s.student_timeout(),
-                    transport=self.transports.get("teacher"),
-                    reasoning_field=reasoning_field,
-                    observe=self.upstream.bind("student", upstream.host_of(s.teacher_base)),
-                )
+            else:  # endpoint offline: the hosted, untuned fallback answers for every version
 
                 def resolver(v: Version):
                     return fallback, s.fallback_student_model
@@ -441,6 +446,8 @@ class Runtime:
             self.guard.restore()
             if self.credits is not None:
                 self.credits.restore()
+            if s.hosted_student:
+                self._ensure_hosted()
         self.judge = JudgeAccess(scout.judge_code, scout.judge_session_s, clock=self.wall_clock) if scout.judge_enabled else None
         self.judge_attempts = AttemptLimiter(JUDGE_ATTEMPTS_PER_HOUR, clock=self.wall_clock)
         self.search_lock = threading.Lock()
@@ -616,6 +623,25 @@ class Runtime:
             sleep=self.sleep,
         )
 
+    def _ensure_hosted(self) -> None:
+        """RATCHET_HOSTED_STUDENT in live mode (FR-12.33, ADR 0146): the hosted student's version row, kept in step with
+        `ratchet/hosted.py`'s records (`Ledger.ensure_hosted`), and a `hosted` event when it was made or changed. A row
+        whose records serve no task holds every task back, so the teacher answers as on a cold start (route
+        `task_disabled`), and the event says why."""
+        s = self.settings
+        ev = hosted.eval_record()
+        v, change = self.ledger.ensure_hosted(s.fallback_student_model, ev)
+        if change is None:
+            return
+        served = hosted.served_tasks(ev)
+        if served:
+            what = ", ".join(f"{name} at confidence {thr:.4f}" for name, thr in served.items())
+            detail = f"answers {what} while no version is live; the teacher answers the rest"
+        else:
+            why = "; ".join(f"{name}: {rec.get('disabled')}" for name, rec in sorted(ev["tasks"].items())) or "no records"
+            detail = f"answers no task (none met its bar: {why}); the teacher answers every request"
+        self.ledger.event("hosted", f"v{v.id} {change}: the hosted student {s.fallback_student_model} (untuned) {detail}")
+
     def known_clients(self) -> list[str] | None:
         """The API key names a task's `clients` may use, or None when keys are off (nothing to check them against)."""
         return self.keys.names if self.keys.enabled else None
@@ -631,27 +657,38 @@ class Runtime:
         s = self.settings
         serving = self.ledger.versions(["live", "canary"])
         live_now = [v for v in serving if v.state == "live"]
-        v = live_now[-1] if live_now else (serving[-1] if serving else None)
+        v = live_now[-1] if live_now else None
+        # With no live version the hosted student's row (FR-12.33) takes most requests, when it answers some task.
+        stand_in = self.ledger.by_state(HOSTED_STATE) if v is None and s.hosted_student and s.mode == "live" else None
+        tasks_served = hosted.served_tasks(stand_in.eval) if stand_in is not None else {}
+        if tasks_served:
+            v = stand_in
+        elif v is None and serving:
+            v = serving[-1]
         if s.mode == "mock":
             kind = "mock"  # the mock fleet serves each version's own adapter, so the rest reads as for an endpoint
         elif v is None:
             kind = "none"
-        elif s.student_base:
+        elif s.student_base and v.state != HOSTED_STATE:
             kind = "endpoint"
         else:
             kind = "hosted_fallback"
         if v is None:
             return {"kind": kind, "model": None, "version": None, "threshold": None, "certified": False}
-        hosted = kind == "hosted_fallback"
-        model = s.fallback_student_model if hosted else v.adapter_uri
-        certified = not hosted and certificate.status(certificate.section(v.eval), None, None) == "certified"
-        return {
+        is_hosted = kind == "hosted_fallback"
+        model = s.fallback_student_model if is_hosted else v.adapter_uri
+        certified = not is_hosted and certificate.status(certificate.section(v.eval), None, None) == "certified"
+        out = {
             "kind": kind,
             "model": model,
             "version": v.id,
             "threshold": self.ratchet.threshold(v, model),
             "certified": certified,
         }
+        if v.state == HOSTED_STATE:  # each task's own threshold; `threshold` only when there is one
+            out["tasks"] = tasks_served
+            out["threshold"] = next(iter(tasks_served.values())) if len(tasks_served) == 1 else None
+        return out
 
     # ----- auto tasks (RATCHET_AUTO_TASK=system_prompt, ADR 0048) -----
     def auto_task(self, name: str) -> tasks.Task | None:
@@ -3165,9 +3202,12 @@ def _stats_payload() -> dict[str, Any]:
         "days": led.stats_by_day(),
         "tasks": led.stats_by_task(),
         # What the release gate reads for the canary and the live version, from their counts (ADR 0025); null otherwise.
+        # The versions Night School trained; the hosted student's row (FR-12.33) is no trained version, and
+        # `student_serving` describes it.
         "versions": [
             {**v.__dict__, "bom": boms.get(v.id), "evidence": rt.gate.evidence(v) if v.state in EVIDENCE_STATES else None}
             for v in led.versions()
+            if v.state != HOSTED_STATE
         ],
         "events": led.events(last=40),
         # Every savings figure above and in `totals` prices the student per token; `cost` has the GPU-hour view (NFR-11).
@@ -3852,9 +3892,11 @@ def _replay_label() -> str:
 
 def _replay_current(v: Version) -> float:
     """The version's threshold now, as the router holds its answers to it: in live mode without a student endpoint the
-    hosted fallback student answers (`Runtime.reset`'s resolver), whose threshold is the configured default."""
+    hosted fallback student answers (`Runtime.reset`'s resolver), whose threshold is the configured default; the hosted
+    student's row (FR-12.33) always resolves to it."""
     s = rt.settings
-    model = s.fallback_student_model if s.mode == "live" and not s.student_base else v.adapter_uri
+    hosted_model = s.mode == "live" and (not s.student_base or v.state == HOSTED_STATE)
+    model = s.fallback_student_model if hosted_model else v.adapter_uri
     return rt.ratchet.threshold(v, model)
 
 

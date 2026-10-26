@@ -1,0 +1,26 @@
+{
+  "schema": "ratchet.hosted-nano/v1",
+  "collected": "2026-10-26T11:13:56+00:00",
+  "teacher_model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "student_model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "student_call": {
+    "max_tokens": 1024,
+    "temperature": 0.7,
+    "logprobs": true,
+    "n": 3,
+    "enable_thinking": false
+  },
+  "label_call": {
+    "max_tokens": 8192,
+    "temperature": 0.0
+  },
+  "reasoning_field": "chat_template_kwargs",
+  "rows": {
+    "source-triage": 99,
+    "page-read": 33
+  },
+  "spend_usd": {
+    "nvidia/Nemotron-3-Ultra-550b-a55b": 0.150904,
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": 0.006129
+  }
+}

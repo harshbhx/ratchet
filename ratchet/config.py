@@ -302,6 +302,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_FALLBACK_STUDENT_REASONING",
             "RATCHET_FIXTURES_DIR",
             "RATCHET_GOLDEN_FRACTION",
+            "RATCHET_HOSTED_STUDENT",
             "RATCHET_IDEMPOTENCY_CACHE",
             "RATCHET_IDEMPOTENCY_TTL_S",
             "RATCHET_JUDGE_MODEL",
@@ -792,6 +793,9 @@ class Settings:
     fallback_student_model: str = field(
         default_factory=lambda: _env("RATCHET_FALLBACK_STUDENT", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B")
     )
+    # The hosted student (FR-12.33, ADR 0146): in live mode, while no version is live, the fallback model answers the
+    # tasks `ratchet/hosted.py` calibrated it for, each at its own measured threshold. Off by default.
+    hosted_student: bool = field(default_factory=lambda: _bool("RATCHET_HOSTED_STUDENT", "0"))
     # Open teachers added without a code change (ratchet/licenses.py, ADR 0090): a JSON list of {model, license, url,
     # note}, merged into a copy of the built-in registry at startup. Only allowed licenses, never a closed model family;
     # a bad file stops startup with every error listed. Empty = the built-in registry only.
@@ -1808,6 +1812,8 @@ class Settings:
         self._check_keys(error)
         if live:
             self._check_live(error, warning)
+        if self.hosted_student is True:
+            self._check_hosted(error, warning)
         self._check_prices(warning)
         _check_environ(env, live, warning)
         if not 600 <= self.watch_flag_max_age_s <= 604800:
@@ -1900,6 +1906,41 @@ class Settings:
                 "RATCHET_MIN_AUDITS audits, so no release would be promoted or rolled back on evidence",
             )
 
+    def _check_hosted(self, error: Callable[[str, str], None], warning: Callable[[str, str], None]) -> None:
+        """RATCHET_HOSTED_STUDENT (FR-12.33, ADR 0146): the hosted student's thresholds were measured for one model, one
+        sample count and one thinking mode (`hosted.MODEL`, `SAMPLES`, `REASONING`), so any other stops startup; in mock
+        mode the mock fleet plays every student, so the switch is ignored."""
+        from . import hosted
+
+        if self.mode != "live":
+            warning(
+                "RATCHET_HOSTED_STUDENT",
+                "RATCHET_HOSTED_STUDENT applies in live mode only: in mock mode the mock models play every student",
+            )
+            return
+        if self.fallback_student_model != hosted.MODEL:
+            error(
+                "RATCHET_FALLBACK_STUDENT",
+                f"RATCHET_HOSTED_STUDENT=1 needs RATCHET_FALLBACK_STUDENT={hosted.MODEL}, the model its thresholds were "
+                f"measured for, not {self.fallback_student_model!r}",
+            )
+        if self.samples != hosted.SAMPLES:
+            error(
+                "RATCHET_SAMPLES",
+                f"RATCHET_HOSTED_STUDENT=1 needs RATCHET_SAMPLES={hosted.SAMPLES}: its thresholds were measured on that "
+                f"many samples per request, not {self.samples!r}",
+            )
+        try:
+            mode = self.reasoning_policy().fallback_student
+        except ValueError:
+            return  # RATCHET_FALLBACK_STUDENT_REASONING's own error is listed already
+        if mode != hosted.REASONING:
+            error(
+                "RATCHET_FALLBACK_STUDENT_REASONING",
+                f"RATCHET_HOSTED_STUDENT=1 needs RATCHET_FALLBACK_STUDENT_REASONING={hosted.REASONING} (or unset): its "
+                f"thresholds were measured with thinking {hosted.REASONING}, not {mode!r}",
+            )
+
     def _check_prices(self, warning: Callable[[str, str], None]) -> None:
         """A model without a price is priced as another, silently: say so (INV-9: prices are checked on day 1)."""
         models = [
@@ -1907,7 +1948,7 @@ class Settings:
             ("RATCHET_JUDGE_MODEL", self.judge_model),
             ("RATCHET_TEACHER_FALLBACK_MODEL", self.teacher_fallback_model),
         ]
-        if self.mode == "live" and not self.student_base:
+        if self.mode == "live" and (not self.student_base or self.hosted_student is True):
             models.append(("RATCHET_FALLBACK_STUDENT", self.fallback_student_model))
         for var, model in models:
             if model and model not in self.prices:

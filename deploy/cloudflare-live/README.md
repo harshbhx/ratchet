@@ -31,6 +31,7 @@ Cloudflare dashboard: Workers & Pages, `ratchet-live`, Settings, Variables and S
 | To change | Set |
 |---|---|
 | The student's GPU endpoint (once one is hosted) | `RATCHET_STUDENT_BASE` = `https://<endpoint>/v1`, and the secret `RATCHET_STUDENT_KEY` |
+| Let the hosted, untuned Nano 30B answer, before Ultra, the calls it was calibrated for (none yet: [evidence/hosted-nano](../../evidence/hosted-nano/README.md)) | `RATCHET_HOSTED_STUDENT` = `1`; needs an image with FR-12.33, and leaves `RATCHET_FALLBACK_STUDENT`, `RATCHET_SAMPLES` and `RATCHET_FALLBACK_STUDENT_REASONING` at their defaults |
 | A key's limits | `RATCHET_KEY_LIMITS`, for example `demo:daily_requests=300,daily_usd=1.5,rpm=10,concurrency=2` |
 | The whole gateway's daily spend | `RATCHET_DAILY_BUDGET_USD` and `RATCHET_BUDGET_MODE` |
 | Scout's spend and rate | `RATCHET_SCOUT_DAILY_BUDGET_USD`, `RATCHET_SCOUT_RUNS_PER_HOUR` |

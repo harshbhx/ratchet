@@ -21,7 +21,7 @@ from . import calibration, licenses, metrics, obs, reasoning, schema_tasks, task
 from .confidence import SERVE_NOTHING, STUDENT_SAMPLING, Scored, majority, score
 from .config import Settings
 from .drift import boosted_rate
-from .ledger import STORED_PARAM_KEYS, TEACHER_MODEL, Ledger, RuntimeFlags, Version, example_hash, target_params
+from .ledger import HOSTED_STATE, STORED_PARAM_KEYS, TEACHER_MODEL, Ledger, RuntimeFlags, Version, example_hash, target_params
 from .openai_compat import tool_turns
 from .providers import (
     COMPLETE,
@@ -908,13 +908,17 @@ class Ratchet:
     def _pick_version(self, flags: RuntimeFlags | None = None) -> Version | None:
         """The version that answers this request: the canary for its `traffic_pct`% of requests, otherwise live; None on
         cold start, or while an operator has turned the student off (`student_disabled`, ADR 0064), so the teacher
-        answers and its answers are stored as usual."""
+        answers and its answers are stored as usual. With RATCHET_HOSTED_STUDENT on and no live version, the hosted
+        student's row (FR-12.33, ADR 0146) stands in for live; the canary draw is made first, as before, so the random
+        stream does not change."""
         if (flags or self.ledger.flags()).student_disabled:
             return None
         live = self.ledger.live()
         canary = self.ledger.by_state("canary")
         if canary and self.rng.random() * 100 < canary.traffic_pct:
             return canary
+        if live is None and self.s.hosted_student:
+            return self.ledger.by_state(HOSTED_STATE)  # None until the gateway made it (`Ledger.ensure_hosted`)
         return live  # None on cold start -> teacher
 
     def plan(self, params: GenParams | None, n: int = 1) -> GenPlan:
@@ -1511,7 +1515,7 @@ class Ratchet:
         with self._errors_lock:
             self._unattributed_counts[(role, version.id)] += 1
             n = self._unattributed_counts[(role, version.id)]
-        if n not in EVENT_ON_FAILURE:
+        if n not in EVENT_ON_FAILURE or version.state == HOSTED_STATE:  # the hosted student has no release to hold
             return
         who = f"the hosted fallback student {model}" if model == self.s.fallback_student_model else model
         if role == "shadow":
@@ -1729,7 +1733,11 @@ class Ratchet:
         night re-scores it, FR-2.15), else the version's global threshold. A version scored before per-task calibration
         has only the global one, and one that is not a number serves nothing. The hosted untuned fallback model was never
         calibrated, so it uses the global default, except on a task with critical classes, which it never answers: nothing
-        measured how often it misses them (FR-2.50). Dict lookups only."""
+        measured how often it misses them (FR-2.50). The hosted student's row (FR-12.33, ADR 0146) is that model with its
+        own records: each task at its measured threshold, any other task (or none named) at SERVE_NOTHING, which its eval's
+        global threshold is. Dict lookups only."""
+        if version.state == HOSTED_STATE:
+            return SERVE_NOTHING if task is None else calibration.threshold(version.eval, _task(task), SERVE_NOTHING)
         if model is not None and model == self.s.fallback_student_model:
             critical = task is not None and bool(_task(task).routing_rules.critical)
             return SERVE_NOTHING if critical else self.s.confidence_threshold
@@ -1748,7 +1756,11 @@ class Ratchet:
         (FR-2.50): such a task is held back whenever the resolver picks that model, whatever the record says, so the
         model is not sampled (and paid for) for answers `threshold` would never serve. The resolver is asked only when
         the answer depends on it; one that fails here leaves a held-back task held back and a critical task with a
-        serving record to the student path, which fails over to the teacher as before."""
+        serving record to the student path, which fails over to the teacher as before. The hosted student's row (FR-12.33)
+        holds back every task its records do not let it answer, so the hosted model is sampled only for those it may
+        serve."""
+        if version.state == HOSTED_STATE:
+            return self.threshold(version, None, task) >= SERVE_NOTHING
         critical = bool(task.routing_rules.critical)
         if not calibration.held_back(version.eval, task):
             if not (critical and self.s.fallback_student_model):

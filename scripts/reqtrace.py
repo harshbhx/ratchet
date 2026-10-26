@@ -1279,6 +1279,20 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.ledger:SCHEMA",
         "ratchet.ledger:MIGRATIONS",
     ),
+    "FR-12.33": (
+        "ratchet.hosted:TASKS",
+        "ratchet.hosted:gate",
+        "ratchet.hosted:eval_record",
+        "ratchet.hosted:served_tasks",
+        "ratchet.ledger:HOSTED_STATE",
+        "ratchet.ledger:Ledger.ensure_hosted",
+        "ratchet.router:Ratchet._pick_version",
+        "ratchet.router:Ratchet.threshold",
+        "ratchet.router:Ratchet._held_back",
+        "ratchet.gateway:Runtime._ensure_hosted",
+        "ratchet.gateway:Runtime.student_serving",
+        "ratchet.config:Settings._check_hosted",
+    ),
     # 6.15 Cost and economics
     "FR-15.1": (
         "ratchet.router:Ratchet.handle",

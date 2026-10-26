@@ -20,6 +20,7 @@ pip install -e ".[dev]"
 | The loop works, with a bad release rolled back | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` | nothing |
 | The tool-calling scores (round 3) recompute from the saved answers | `python scripts/toolcall_results.py --check` ([below](#tool-calling-round-3)) | nothing |
 | A signed BOM verifies offline | `python -m ratchet.bom verify …` ([below](#7-a-signed-bill-of-materials-per-adapter)) | nothing |
+| The hosted Nano's thresholds follow from real Ultra labels ([evidence/hosted-nano](../evidence/hosted-nano/README.md)) | `python scripts/hosted_nano_calibration.py check` | nothing |
 | Every requirement maps to code and tests | `python scripts/reqtrace.py --check` | nothing |
 
 ## 1. The exam scores are what the saved answers give
@@ -109,11 +110,11 @@ A signed BOM is the operator's signed statement of the data and evaluation behin
 ## 8. The test suite and the requirements matrix
 
 ```bash
-make test                      # 1934 tests, no network, no GPU
+make test                      # 1943 tests, no network, no GPU
 python scripts/reqtrace.py --check
 ```
 
-Expected for the second command: `reqtrace: OK: 226 requirements …`. Every requirement in the PRD and every invariant maps to code and to tests in [REQUIREMENTS.md](REQUIREMENTS.md).
+Expected for the second command: `reqtrace: OK: 227 requirements …`. Every requirement in the PRD and every invariant maps to code and to tests in [REQUIREMENTS.md](REQUIREMENTS.md).
 
 ## What it cost
 
@@ -127,7 +128,7 @@ About $17 on record for the two text-to-SQL adapters. All are estimates recorded
 | GPU job, round 2 training and exam 1 answers | 4.80 | `evidence/text2sql-round2/logs/final_status.json` (`spent_usd`) |
 | Round 1 training | 0 | a borrowed GPU, no charge |
 
-Not costed: the GPU runs that answered exam 2, small teacher re-runs on exam 1, and any earlier probes. The tool-calling round (about $2.33 of GPU time, plus teacher spend) is separate and is not in this sum.
+Not costed: the GPU runs that answered exam 2, small teacher re-runs on exam 1, and any earlier probes. The tool-calling round (about $2.33 of GPU time, plus teacher spend) is separate and is not in this sum. So is the hosted Nano's calibration ($0.16 of Token Factory calls, `evidence/hosted-nano/collect.json`).
 
 ## What none of this proves
 
