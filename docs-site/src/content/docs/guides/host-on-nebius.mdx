@@ -39,7 +39,7 @@ Think of the whole restaurant as a set of rented rooms.
 </Eli10>
 
 <Aside type="caution" title="The GPU side is scripted and ready to run">
-The teacher runs on Nebius Token Factory. As of Oct 25, 2026 the GPU parts (the student endpoint and the training job) are scripted and ready to run with `make nebius-plan` and `make nebius-up`; the adapters so far were trained on a borrowed GPU. The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command. Run every script with `DRY_RUN=1` first (the one-command script above does that by default).
+The teacher runs on Nebius Token Factory. As of Oct 26, 2026 the GPU parts (the student endpoint and the training job) are scripted and ready to run with `make nebius-plan` and `make nebius-up`; the adapters so far were trained on a borrowed GPU. The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command. Run every script with `DRY_RUN=1` first (the one-command script above does that by default).
 </Aside>
 
 ## How it really works
@@ -229,9 +229,9 @@ export NEBIUS_API_KEY=...        # a Token Factory key from its console
 python scripts/day1_check.py     # or: make day1
 ```
 
-The script confirms that the four model IDs exist and that the teacher answers, returns logprobs and supports JSON mode. It also prints each model's `finish_reason` and whether the teacher takes the strict `json_schema` format. If an ID differs, set `RATCHET_TEACHER_MODEL` (and update `ratchet/licenses.py` and `DEFAULT_PRICES`). Model IDs and prices in `ratchet/config.py` stay unverified until this passes. The full checklist, each check with its fallback, is in the day-1 checklist.
+The script confirms that the four model IDs exist and that the teacher answers, returns logprobs and supports JSON mode. It also prints each model's `finish_reason` and whether the teacher takes the strict `json_schema` format. If an ID differs, set `RATCHET_TEACHER_MODEL` (and update `ratchet/licenses.py` and `DEFAULT_PRICES`). Model IDs and prices in `ratchet/config.py` stay unverified until this passes. Every check, and how to run it, is described at the top of [`scripts/day1_check.py`](https://github.com/harshbhx/ratchet/blob/main/scripts/day1_check.py) (`teacher`, `choices`, `reasoning`, `student`, `tavily`, `cli` or `all`).
 
-The Nebius Builder Program's terms say $25 of Token Factory credit, expiring after 90 days ([DEPLOYMENT.md](/reference/deployment/)).
+The Nebius Builder Program's terms say $25 of Token Factory credit, expiring after 90 days (research notes, Oct 25, 2026; [DEPLOYMENT.md](/reference/deployment/)). Re-check the program terms before relying on it.
 
 ### 5. Bucket, training image, student endpoint and training job
 
@@ -544,7 +544,7 @@ A rough estimate for a short evaluation period is about **$35 to $75**: 6 to 8 t
 
 ### What runs on Nebius today?
 
-Token Factory: the teacher runs there, and the live demo calls it for real. The GPU endpoint and the training job are scripted and tested offline, ready to run with `make nebius-plan` and `make nebius-up`; as of Oct 25, 2026 the adapters were trained on a borrowed GPU. The scripts follow the Nebius docs and CLI reference (read Oct 20 and 21, 2026) and are tested offline, and the lines that could not be checked are marked "verify on day 1" in the scripts. Run each with `DRY_RUN=1` first and compare with `nebius ... --help`.
+Token Factory: the teacher runs there, and the live demo calls it for real. The GPU endpoint and the training job are scripted and tested offline, ready to run with `make nebius-plan` and `make nebius-up`; as of Oct 26, 2026 the adapters were trained on a borrowed GPU. The scripts follow the Nebius docs and CLI reference (read Oct 20 and 21, 2026) and are tested offline, and the lines that could not be checked are marked "verify on day 1" in the scripts. Run each with `DRY_RUN=1` first and compare with `nebius ... --help`.
 
 ### Do I need a GPU to host the demo?
 

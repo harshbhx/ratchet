@@ -19,7 +19,7 @@ import GradientText from '../../../components/ui/GradientText.astro';
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains <GradientText text="a new LoRA adapter you own" tone="owned" />, which the endpoint then loads from your bucket.</Summary>
 
 <Aside type="caution" title="The GPU path is scripted and ready to run">
-As of Oct 25, 2026, everything on this page is written and tested offline, and **the GPU path (the training job and the endpoint) is ready to run with `make nebius-plan` and `make nebius-up`**; the training image's pins are still candidates. The teacher runs on Nebius Token Factory; the three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a borrowed GPU. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. This path has no live results yet.
+As of Oct 26, 2026, everything on this page is written and tested offline, and **the GPU path (the training job and the endpoint) is ready to run with `make nebius-plan` and `make nebius-up`**; the training image's pins are still candidates. The teacher runs on Nebius Token Factory; the three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a borrowed GPU. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. This path has no live results yet.
 </Aside>
 
 <Eli10>
@@ -392,9 +392,9 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 
 ### What is verified and what is not
 
-<div class="rt-callout rt-callout--live">
+<div class="rt-callout rt-callout--note">
 
-**Checked, as of Oct 21, 2026, offline only.** These parts run in the test suite, against fakes:
+**Checked, as of Oct 26, 2026, offline only.** These parts run in the test suite, against fakes:
 
 - `ratchet.live` commands, `NebiusTrainer`, `LiveEvaluator`, the reloader and the export: tested in `tests/test_live.py` and `tests/test_licensing.py`, against fake endpoints.
 - `train_job.sh` and `student_endpoint.sh`: run in tests with a fake `nebius` CLI; the exact commands are asserted against the CLI reference as read.
@@ -404,13 +404,13 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 
 Ready to run, or still to check:
 
-| Part | Status (Oct 25, 2026) |
+| Part | Status (Oct 26, 2026) |
 |---|---|
 | The training image | Not built yet; pins are candidates |
 | A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Scripted and tested offline, ready to run with `make nebius-up`. The adapters so far were trained on a borrowed GPU, outside this path |
 | The endpoint's arguments as the container splits them, thinking off | Not checked yet |
 | Serverless pricing, the S3 endpoint URL | Unverified (the S3 URL format in the docs is an assumption) |
-| Live numbers from this path | None yet; `[LIVE NUMBER]` placeholders stay empty until a real run |
+| Live numbers from this path | None yet; they come only from a published live run |
 
 ## For engineers
 
@@ -528,7 +528,7 @@ That is what the day-1 checks are for. The script dry runs, the image's build-ti
 
 ### What runs on Nebius today?
 
-The teacher: it runs on Nebius Token Factory. As of Oct 25, 2026 the training job and the endpoint are written and tested offline, ready to run with `make nebius-plan` and `make nebius-up`, and the three adapters so far were trained on a borrowed GPU. Treat every GPU command here as a plan until the day-1 checks pass.
+The teacher: it runs on Nebius Token Factory. As of Oct 26, 2026 the training job and the endpoint are written and tested offline, ready to run with `make nebius-plan` and `make nebius-up`, and the three adapters so far were trained on a borrowed GPU. Treat every GPU command here as a plan until the day-1 checks pass.
 
 ## Related
 

@@ -1,6 +1,6 @@
 # Competitive analysis
 
-As of Oct 25, 2026 (rows without their own date were last read Oct 21, 2026). Based on pages opened during research. A fact re-read on a primary page says "checked" with its date; a fact taken from the research notes without a fresh check says "(research notes, <date>)" until someone re-checks it; anything nobody could confirm is marked "unverified".
+As of Oct 26, 2026 (rows without their own date were last read Oct 21, 2026). Based on pages opened during research. A fact re-read on a primary page says "checked" with its date; a fact taken from the research notes without a fresh check says "(research notes, <date>)" until someone re-checks it; anything nobody could confirm is left out.
 
 ## Summary
 
@@ -15,22 +15,19 @@ The closest rivals are Inference.net, whose platform (Apr 14, 2026) retrains on 
 | [Orchestra / Understudy](https://www.ycombinator.com/launches/SPb-understudy-the-self-optimizing-inference-cloud) | Swap one URL. Builds evals from traffic, trains specialist open models, routes once they match the frontier model | Yes, as claimed; no data shown | Yes ("your company owns") | YC S26, 2 people, launched Aug 5, 2026. Claims "100x" cost cut and "80% off an Anthropic bill" |
 | [Experiential Labs](https://github.com/experientiallabs/experiential) | Apache-2.0, OpenAI-compatible gateway (about 10k GitHub stars, checked Oct 21, 2026; about 9.9k in the research notes the same day). Custom router from traffic; fine-tunes open models on demand | Partial: training is a manual CLI command; no eval or rollout steps shown | Yes, explicitly ("a specialized model you own", checked Oct 21, 2026) | YC S26, 2 people, free |
 | [Inference.net](https://inference.net/blog/seed-round/) | Gateway logging, datasets from traffic, LLM-judge evals, training, dedicated GPU serving. Fine-tunes NVIDIA Nemotron Nano 2 models with NeMo Megatron-Bridge ([blog, Mar 11, 2026](https://inference.net/blog/nemotron-finetuning/), checked Oct 21, 2026) | Partial: the platform runs a continuous training loop on production data and benchmarks each candidate against the live model; "When new models are ready, they're staged for final review and deployment"; no canary or rollback described ([launch post, Apr 14, 2026](https://inference.net/blog/introducing-inference-platform/), checked Oct 21, 2026) | Says yes ("The model weights are fully owned by you"); download not stated | $11.8M seed (Oct 2025). Targets customers spending $50K+/month |
-| [OpenPipe](https://coreweave.com/news/coreweave-to-acquire-openpipe-leader-in-reinforcement-learning) | Logged traffic into fine-tunes; later RL (ART library) | No | Unverified | Acquired by CoreWeave (Sep 2025). Tech went into CoreWeave Serverless RL and Forge |
+| [OpenPipe](https://coreweave.com/news/coreweave-to-acquire-openpipe-leader-in-reinforcement-learning) | Logged traffic into fine-tunes; later RL (ART library) | No | Not checked | Acquired by CoreWeave (Sep 2025). Tech went into CoreWeave Serverless RL and Forge |
 | [Predibase](https://techcrunch.com/2025/06/25/rubrik-acquires-predibase-to-accelerate-adoption-of-ai-agents/) | LoRA/RFT fine-tuning; LoRAX multi-adapter serving | No | VPC option | Acquired by Rubrik (Jun 2025) |
 | [Proxis](https://www.ycombinator.com/companies/proxis) | Was a distillation and serving platform | n/a | n/a | Pivoted to email and sales agents (research notes, Oct 21, 2026) |
-| Lamini | Enterprise fine-tuning | No | n/a | Effectively shut down in 2025 (research notes, Oct 21, 2026; unverified) |
-| [Arcee AI](https://docs.arcee.ai/arcee-conductor) | Now builds its own open models; Conductor routes between models | No (routing only) | Own models are open | Series B, $1B+ valuation (Sep 2026) (research notes, Oct 21, 2026; the linked docs page does not support it; unverified) |
-| [Fireworks AI](https://docs.fireworks.ai/fine-tuning/managed-finetuning-intro) | Managed SFT and DPO (LoRA); full tuning via Training API | No | Export unverified | Active (research notes, Oct 21, 2026) |
+| [Arcee AI](https://docs.arcee.ai/arcee-conductor) | Now builds its own open models; Conductor routes between models | No (routing only) | Own models are open | Active (research notes, Oct 21, 2026) |
+| [Fireworks AI](https://docs.fireworks.ai/fine-tuning/managed-finetuning-intro) | Managed SFT and DPO (LoRA); full tuning via Training API | No | Not checked | Active (research notes, Oct 21, 2026) |
 | [Together AI](https://docs.together.ai/docs/fine-tuning/overview.md) | SFT and DPO; GRPO separately | No | Yes, download | Active |
 | Unsloth | Open-source fine-tuning library and desktop app | No (a tool, not a service) | Yes (local) | Active |
 | Distil Labs | Train a small model from a prompt plus a few examples | No (one-off) | Yes, download | Active |
 | [AWS Bedrock distillation](https://aws.amazon.com/bedrock/model-distillation) | Teacher to student, can use invocation logs | Semi: you start each job | Not stated | GA since May 2025 (research notes, Oct 21, 2026) |
-| Google Gemini distillation | Gemini teacher to Gemini student | Semi | No | Early access (research notes, Oct 21, 2026; unverified) |
 | [OpenAI distillation](https://openai.com/index/api-model-distillation/) | Stored completions to fine-tuned GPT-4o mini | No | No (closed) | Self-serve fine-tuning ending: no new jobs after Jan 6, 2027 ([deprecations](https://developers.openai.com/api/docs/deprecations)) |
-| Azure OpenAI distillation | Stored completions, "Distill" button | No | No | Stored completions retired Oct 15, 2026 (research notes, Oct 21, 2026; unverified) |
 | [Nebius Token Factory post-training](https://nebius.com/blog/posts/post-training-in-token-factory) | SFT (LoRA/full), downloadable checkpoints | No: "continuous optimization" is on the roadmap | Yes | Active; no Nemotron students (post read Oct 21, 2026) |
 | Routers: [Not Diamond](https://notdiamond.ai), [RouteLLM](https://lmsys.org/blog/2024-07-01-routellm/), OpenRouter Auto | Pick a model per request | No training | n/a | Active |
-| Gateways: LiteLLM, Helicone | Logging, routing, policy | No training | n/a | Helicone acquired by Mintlify (research notes, Oct 21, 2026; unverified) |
+| Gateways: LiteLLM, Helicone | Logging, routing, policy | No training | n/a | Not checked |
 | [Portkey](https://www.paloaltonetworks.com/company/press/2026/palo-alto-networks-completes-acquisition-of-portkey-to-secure-ai-agents) | AI gateway: logging, routing, policy | No training | n/a | Acquired by Palo Alto Networks; the deal closed May 29, 2026 (press release, checked Oct 21, 2026) |
 | [OpenRouter distillable routing](https://openrouter.ai/docs/guides/evaluate-and-optimize/distillation) | A router across providers. `enforce_distillable_text` will "Restrict routing to only models that allow text distillation"; "OpenRouter provides distillation information on a best-effort basis" | No training, no lineage kept | n/a | Active (guide undated, checked Oct 21, 2026) |
 | [NVIDIA Data Flywheel Blueprint](https://github.com/NVIDIA-AI-Blueprints/data-flywheel) | Reference blueprint that distils an agent's production traffic into smaller models with NeMo microservices and evaluates them ([blog, Jun 11, 2025](https://developer.nvidia.com/blog/build-efficient-ai-agents-through-model-distillation-with-nvidias-data-flywheel-blueprint)) | No: "Promotion to production—as well as any deeper evaluation or dataset curation—remains a human decision"; "Think of the Flywheel as a flashlight, not an autopilot" | n/a (a blueprint you run) | Repo marked deprecated in Apr 2026 (checked Oct 21, 2026) |
@@ -38,7 +35,7 @@ The closest rivals are Inference.net, whose platform (Apr 14, 2026) retrains on 
 | [TensorZero](https://github.com/tensorzero/tensorzero) | Open-source LLMOps platform: gateway, observability, evaluation, optimization and experimentation | n/a: archived | n/a | Repo archived by its owner on Jun 12, 2026 (checked Oct 21, 2026); about 11.7k stars |
 | taskdistill (open source, hobby) | Capture proxy, MLX LoRA, confidence cascade | No (scheduled retraining on roadmap) | Yes | 97.6% agreement at 23.7% escalation on Banking77 ([GitHub](https://github.com/B0yko/taskdistill)) |
 
-## Where Ratchet wins
+## Where Ratchet differs
 
 1. **License-clean by design, with lineage.** OpenAI's [Business Terms 3.3(e)](https://openai.com/policies/business-terms/) and Anthropic's [Commercial Terms D.4(a)](https://www.anthropic.com/legal/commercial-terms) ban training competing models on their outputs. A tool that distills Claude or GPT traffic exposes its users. Ratchet refuses those teachers in code, records each example's teacher and license when it is captured, and signs them into every adapter's bill of materials. OpenRouter's `enforce_distillable_text` filters teachers at request time, on license data it gives "on a best-effort basis", and keeps no training lineage. Nemotron 3 Ultra's [OpenMDW-1.1](https://openmdw.ai/license/1-1/) "does not impose any restrictions or obligations with respect to any use, modification, or sharing of any outputs" (license page last updated May 27, 2026).
 2. **A decision for every request.** The student answers each request; only that request escalates if the student is unsure.
@@ -52,7 +49,7 @@ The closest rivals are Inference.net, whose platform (Apr 14, 2026) retrains on 
 - Single developer. Orchestra and Experiential Labs have two founders each and YC backing.
 - Experiential Labs already has open-source traction (about 10k stars, checked Oct 21, 2026).
 - Inference.net has funding and a managed training loop with evals against the live model (Apr 14, 2026).
-- Per-token savings against the labs' cheapest tiers (Claude Haiku 5.5 at $0.10/$0.50 per million tokens; research notes, Oct 21, 2026; unverified) are only about 2x. The big savings come from moving traffic off top-tier models.
+- Per-token savings against the labs' cheapest tiers are much smaller than against top-tier models (PRD risk R10). The big savings come from moving traffic off top-tier models.
 
 ## Evidence numbers
 

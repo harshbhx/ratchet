@@ -1,0 +1,5 @@
+# Files whose exact bytes are hashed (docs/VERIFY.md, scripts/toolcall_results.py --check,
+# scripts/measure_adapter.py verify, tests/test_exam_numbers.py, tests/test_nightschool.py).
+# No line-ending conversion, so a Windows clone hashes the same as Linux.
+evidence/** -text
+tests/fixtures/nano4b_chat_template.jinja -text

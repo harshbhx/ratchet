@@ -343,7 +343,7 @@ def test_nvidia_lineage_is_stated_exactly():
     assert "the autopilot, with statistical brakes" in lineage
     assert "Mar 16, 2026" in lineage and "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16" in lineage
 
-    wins = _sections(_read("docs/COMPETITIVE_ANALYSIS.md"))["Where Ratchet wins"]
+    wins = _sections(_read("docs/COMPETITIVE_ANALYSIS.md"))["Where Ratchet differs"]
     assert "runs four of the six steps" in wins and "S1, S2, S5 and S6" in wins
     assert "Task clustering (S3) and model selection (S4) are manual" in wins
 

@@ -4,7 +4,7 @@ Owner: Harsh Bhanushali (DualMind Labs). As of 2026-10-22 (individual figures ca
 
 ## 1. Model
 
-**Open-source core, paid managed cloud, priced on savings.** This is the usual model for developer infrastructure. Pricing on savings answers the buyer's main objection: buyers rank proving ROI (43%) far above price (7%) as their top challenge ([State of Tokenomics 2026](https://www.nops.io/blog/state-of-tokenomics-2026/)).
+**Open-source core, paid managed cloud, priced on savings.** This is the usual model for developer infrastructure. Pricing on savings answers the buyer's main objection: buyers rank proving ROI (43%) far above price (7%) as their top challenge ([State of Tokenomics 2026](https://www.nops.io/blog/state-of-tokenomics-2026/); research notes, Oct 19, 2026).
 
 ## 2. Tiers
 
@@ -14,27 +14,27 @@ Owner: Harsh Bhanushali (DualMind Labs). As of 2026-10-22 (individual figures ca
 | Ratchet Cloud | Managed nightly loop on Nebius, hosted dashboard, canary and rollback, adapter export with its signed BOM, alerts | 20–30% of verified monthly savings. No savings, no fee |
 | Enterprise | Runs in the customer's cloud or on-prem, data residency (EU, India), audit export of the provenance ledger, SSO, support | Annual contract |
 
-"Verified savings" = the **billable lower bound** of a sealed savings receipt ([ADR 0029](adr/0029-verified-savings-receipts.md)): for each day and each client, the all-teacher baseline of the requests the student served, calibrated on audited teacher bills (a ratio estimator with a confidence bound), plus the teacher's own bills, minus actual cost, at the one-sided 95% lower bound, minus spend outside requests. The fee is the take rate (`RATCHET_TAKE_RATE`, 25% by default) of that bound, never of the token formula's estimate, which assumes 300 reasoning tokens nobody measured. A task with too few audits that day (`RATCHET_RECEIPT_MIN_AUDITS`, 30) is reported but not billed. Each receipt is signed, chained to the client's previous one and proves every request id the client saw (`X-Ratchet-Request-Id`), so the client can check it offline (`python -m ratchet.receipt verify`). It cannot prove the costs logged at request time; the client reconciles the receipts' teacher spend with its Token Factory bill for the same key. The dashboard's savings are the formula's, as the ledger records them; they are not what is billed.
+"Verified savings" = the **billable lower bound** of a sealed savings receipt ([ADR 0029](adr/0029-verified-savings-receipts.md)): for each day and each client, the all-teacher baseline of the requests the student served, calibrated on audited teacher bills (a ratio estimator with a confidence bound), plus the teacher's own bills, minus actual cost, at the one-sided 95% lower bound, minus spend outside requests. The fee is the take rate (`RATCHET_TAKE_RATE`, 25% by default) of that bound, never of the token formula's estimate, which assumes 300 reasoning tokens per teacher answer, a figure not yet measured at scale (the smoke run's control arm saw a mean of 81 reasoning tokens, n = 6). A task with too few audits that day (`RATCHET_RECEIPT_MIN_AUDITS`, 30) is reported but not billed. Each receipt is signed, chained to the client's previous one and proves every request id the client saw (`X-Ratchet-Request-Id`), so the client can check it offline (`python -m ratchet.receipt verify`). It cannot prove the costs logged at request time; the client reconciles the receipts' teacher spend with its Token Factory bill for the same key. The dashboard's savings are the formula's, as the ledger records them; they are not what is billed.
 
 ## 3. Market size (estimates)
 
 | Layer | Estimate | How |
 |---|---|---|
-| API and inference spend pool, 2026 | $40–60B | Menlo's $12.5B enterprise API spend in 2025 ([Menlo](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/)), scaled by 2026 lab run-rates (Anthropic about $65B, OpenAI nearly $70B incl. consumer; research notes, Oct 2026; unverified) |
-| Distillable spend (TAM input) | $12–24B / year | 30–40% of the pool, using NVIDIA's estimate that 40–70% of agent LLM calls could go to small models ([arXiv](https://arxiv.org/html/2506.02153v1)) |
+| API and inference spend pool, 2026 | $40–60B | Menlo's $12.5B enterprise API spend in 2025 ([Menlo](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/); research notes, Oct 19, 2026), times 3 to 5 for 2026 (our assumption, not a sourced figure) |
+| Distillable spend (TAM input) | $12–24B / year | 30–40% of the pool, guided by NVIDIA Research's estimate that about 40%, 60% and 70% of the LLM queries in the three open agent systems it studied could be handled by small models ([arXiv 2506.02153](https://arxiv.org/abs/2506.02153), v3, Sep 22, 2026) |
 | Revenue TAM | $2–6B / year | 70–90% savings on distillable spend, 20–30% share of savings |
 | SAM | $0.4–2.5B | 5,000–10,000 AI-native companies spending $20k+/month, $300k–1M distillable spend each, 25% take rate |
 | SOM (3 years) | $3–20M ARR | 50–150 customers at $50–150k ACV |
 
-Growth drivers: inference overtakes training in 2026 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2026-08-10-gartner-forecasts-worldwide-artificial-intelligence-optimized-iaas-spending-to-grow-96-percent-in-2026)); open-weight models are expected to go from 34% to 41% of enterprise tokens in 12 months ([ETR via Techstrong](https://techstrong.ai/articles/open-weight-ai-models-expected-to-capture-41-of-enterprise-token-usage/)); 57% of pilot organizations would move a workload for savings of 25% or less (same source).
+Growth drivers (research notes, Oct 19, 2026): inference overtakes training in 2026 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2026-08-10-gartner-forecasts-worldwide-artificial-intelligence-optimized-iaas-spending-to-grow-96-percent-in-2026)); open-weight models are expected to go from 34% to 41% of enterprise tokens in 12 months ([ETR via Techstrong](https://techstrong.ai/articles/open-weight-ai-models-expected-to-capture-41-of-enterprise-token-usage/)); 57% of pilot organizations would move a workload for savings of 25% or less (same source).
 
-Headwinds: open-source share of enterprise LLM *spend* fell from 19% to 11% ([Menlo](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/)); large enterprises moved from fine-tuning toward prompting and routing ([a16z](https://www.a16z.news/p/leaders-gainers-and-unexpected-winners)). So the first market is AI-native startups and scale-ups, not the Global 2000.
+Headwinds (research notes, Oct 19, 2026): open-source share of enterprise LLM *spend* fell from 19% to 11% ([Menlo](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/)); large enterprises moved from fine-tuning toward prompting and routing ([a16z](https://www.a16z.news/p/leaders-gainers-and-unexpected-winners)). So the first market is AI-native startups and scale-ups, not the Global 2000.
 
 ## 4. Customer segments, in order
 
 1. **AI-native startups and scale-ups** with high-volume narrow calls and squeezed margins.
-2. **OpenAI fine-tuning migrants.** No new OpenAI fine-tuning jobs after Jan 6, 2027 ([OpenAI deprecations](https://developers.openai.com/api/docs/deprecations)).
-3. **Sovereignty-minded buyers in India and the EU.** Sovereign cloud spend: $80.4B in 2026 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2026-02-09-gartner-says-worldwide-sovereign-cloud-iaas-spending-will-total-us-dollars-80-billion-in-2026)). India's AI Mission offers GPUs at under ₹100/hour ([PIB](https://www.pib.gov.in/PressReleasePage.aspx?PRID=2223115&reg=48&lang=2)).
+2. **OpenAI fine-tuning migrants.** No new OpenAI fine-tuning jobs after Jan 6, 2027 ([OpenAI deprecations](https://developers.openai.com/api/docs/deprecations), read Oct 21, 2026).
+3. **Sovereignty-minded buyers in India and the EU.** Sovereign cloud spend: $80.4B in 2026 ([Gartner](https://www.gartner.com/en/newsroom/press-releases/2026-02-09-gartner-says-worldwide-sovereign-cloud-iaas-spending-will-total-us-dollars-80-billion-in-2026)). India's AI Mission offers GPUs at under ₹100/hour ([PIB](https://www.pib.gov.in/PressReleasePage.aspx?PRID=2223115&reg=48&lang=2)). Both from the research notes, Oct 19, 2026.
 4. **Mid-market platform teams** that already run an internal LLM gateway.
 
 ## 5. Go-to-market
@@ -64,7 +64,7 @@ Headwinds: open-source share of enterprise LLM *spend* fell from 19% to 11% ([Me
 GPU clouds and platforms buy this capability:
 
 - CoreWeave acquired OpenPipe (Sep 2025; [announcement](https://coreweave.com/news/coreweave-to-acquire-openpipe-leader-in-reinforcement-learning)).
-- Rubrik acquired Predibase (Jun 2025; reported $100–500M, research notes, Oct 2026; unverified).
+- Rubrik acquired Predibase (Jun 2025; [TechCrunch](https://techcrunch.com/2025/06/25/rubrik-acquires-predibase-to-accelerate-adoption-of-ai-agents/)).
 - Palo Alto Networks acquired Portkey (announced Apr 2026, closed May 29, 2026: [press release](https://www.paloaltonetworks.com/company/press/2026/palo-alto-networks-completes-acquisition-of-portkey-to-secure-ai-agents), checked Oct 21, 2026).
 
 Natural acquirers for Ratchet: Nebius (fills its continuous-optimization roadmap), other GPU clouds, and security/governance companies that value the provenance ledger.
@@ -75,7 +75,7 @@ Natural acquirers for Ratchet: Nebius (fills its continuous-optimization roadmap
 |---|---|
 | Crowded field, funded rivals | License-clean wedge, release safety, Nebius/NVIDIA alignment |
 | Frontier cheap tiers shrink savings | Sell quality on the task, latency, ownership, compliance |
-| Platform terms (Token Factory ToS 5(f)) | Written clarification requested Oct 19, 2026; build for Token Factory and say plainly what has run on Nebius (the teacher calls; not the training) |
+| Platform terms (Token Factory ToS 5(f)) | Written clarification requested Oct 19, 2026; build for Token Factory and say plainly that the teacher calls run on Token Factory and the measured adapters were trained on a borrowed GPU |
 | Self-hosting does not pay at low volume | Report savings by GPU-hours actually paid, not only per token; recommend the hosted fallback or scale-to-zero below break-even (see §10) |
 | Single founder bandwidth | Open-source contributors; co-founder search after hackathon |
 
@@ -85,7 +85,7 @@ From the simulation (mock models): all-teacher cost was about $1.09 per 1,000 ti
 
 ### When self-hosting pays (utilization-aware)
 
-The figures above price the self-hosted student per token, using the hosted Nano price as a stand-in. A Nebius Serverless Endpoint bills GPU-hours while it runs, whether or not requests arrive, so the per-token view flatters the student whenever the endpoint sits idle. Nebius's own Serverless AI Builders Challenge reached the same conclusion: its second-place project found that self-hosting beats Token Factory on cost only at high utilization ([winners post](https://nebius.com/blog/posts/serverless-ai-builders-challenge-winners)).
+The figures above price the self-hosted student per token, using the hosted Nano price as a stand-in. A Nebius Serverless Endpoint bills GPU-hours while it runs, whether or not requests arrive, so the per-token view flatters the student whenever the endpoint sits idle. Nebius's own Serverless AI Builders Challenge reached the same conclusion: its second-place project found that self-hosting beats Token Factory on cost only at high utilization ([winners post](https://nebius.com/blog/posts/serverless-ai-builders-challenge-winners); research notes, Oct 20, 2026).
 
 The break-even point is simple:
 
@@ -96,7 +96,7 @@ break-even student-served requests per GPU-hour = GPU price per hour ÷ teacher 
 Worked example with **estimated prices** (confirm on the bill): an L40S at $1.35 per GPU-hour on demand ([Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026), and about $0.001 of Ultra spend avoided per ticket-triage request (the simulation's all-teacher cost of $1.09 per 1,000). Break-even is about 1,350 student-served requests per GPU-hour, roughly 32,000 a day (the code default for `RATCHET_STUDENT_GPU_USD_PER_HOUR` is $1.55; set it to 1.35 to match).
 
 - **At demo volume (1,500 requests a day) a 24/7 endpoint loses money.** Below break-even, use the hosted, untuned Nano fallback on Token Factory (pay per token), or run the endpoint only while traffic arrives (scale to zero).
-- **At customer volume the endpoint beats the teacher.** 10M requests a month is about 14,000 an hour, far above break-even: a GPU running all month (about $1,000 at the price above) is small next to about $9,300 of avoided Ultra spend.
+- **At customer volume the endpoint costs less than the teacher.** 10M requests a month is about 14,000 an hour, far above break-even: a GPU running all month (about $1,000 at the price above) is small next to about $9,300 of avoided Ultra spend.
 - **On price alone the hosted fallback is cheaper still.** The untuned Nano on Token Factory costs about $0.00003 per answer (list price, the simulation's token counts), so a 24/7 endpoint beats it only above roughly 52,000 student answers an hour, and at 14,000 an hour the report recommends `hosted_fallback`. That comparison assumes the hosted model serves as many requests as the tuned student. It should not: serving more requests than an untuned model is what the fine-tuning is for, and each request the hosted model escalates costs about $0.001 of Ultra. The report states the assumption; an operator compares the student's share over a day on each before switching.
 - **The levers:** serve many LoRA adapters (tasks or customers) from one GPU with vLLM multi-LoRA, scale to zero between bursts, and fall back to the hosted model below break-even.
 

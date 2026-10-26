@@ -88,7 +88,7 @@ flowchart TB
 ### D
 
 - **Dashboard key**: a read-only key from `RATCHET_DASHBOARD_KEYS` that reads the dashboard API in live mode and writes nothing. ([Security](/guides/security/))
-- **Day-1 checks**: the checks to run with a real Token Factory key before trusting live mode (`scripts/day1_check.py` and its checklist); model IDs and prices stay unverified until they pass. ([Host it on Nebius](/guides/host-on-nebius/))
+- **Day-1 checks**: the checks to run with a real Token Factory key before trusting live mode ([`scripts/day1_check.py`](https://github.com/harshbhx/ratchet/blob/main/scripts/day1_check.py)); model IDs and prices stay unverified until they pass. ([Host it on Nebius](/guides/host-on-nebius/))
 - **Degraded mode**: an opt-in (`RATCHET_ON_TEACHER_FAILURE=serve_student`): when the teacher cannot answer an escalation, the student's own below-threshold answer is served, marked `degraded`, and never stored. ([Escalation and audits](/guides/escalation-and-audits/))
 - **Distillation**: training a small model to copy a larger model's answers. ([What is Ratchet?](/guides/what-is-ratchet/))
 - **Drift**: new kinds of requests the student has never seen, for example after a product launch; escalations rise, then fall as Night School learns them. ([Night School](/guides/night-school/))
@@ -97,7 +97,7 @@ flowchart TB
 ### E
 
 - **E-process and e-value**: a running measure of evidence against "precision is at least the floor"; the sequential canary rolls back at an e-value of 20 and the live alert fires at 100, however often they look. ([Release gate](/guides/release-gate/))
-- **Edge guard**: Caddy's opt-in `RATCHET_API_GUARD=guarded` on the demo VM, which blocks `/v1/*`, the demo controls and the admin API without the `X-Ratchet-Admin-Token` header. ([Host it on Nebius](/guides/host-on-nebius/))
+- **Edge guard**: Caddy's opt-in `RATCHET_API_GUARD=guarded` in the Nebius VM kit, which blocks `/v1/*`, the demo controls and the admin API without the `X-Ratchet-Admin-Token` header. ([Host it on Nebius](/guides/host-on-nebius/))
 - **Erasure**: removing stored examples for good, by client, end user, hash or text; the example's hash stays behind as a tombstone so it is never stored again. ([Security](/guides/security/))
 - **Escalation**: a request the student was not confident about, sent to the teacher; the teacher's answer is served and, if valid, stored as training data. ([Escalation and audits](/guides/escalation-and-audits/))
 

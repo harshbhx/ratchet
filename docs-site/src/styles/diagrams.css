@@ -187,7 +187,7 @@ pre.mermaid > div[style*='color: red'] {
   }
 }
 
-/* Hand-drawn SVG figures (src/components/diagrams/*). */
+/* Hand-drawn SVG figures. No page uses one now (every diagram is a Mermaid block); kept for a future figure. */
 .rt-figure {
   margin: 1.75rem 0;
   border: 1px solid var(--rt-line);

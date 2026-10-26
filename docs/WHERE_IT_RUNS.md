@@ -30,7 +30,7 @@ The gateway does no model inference. It checks keys, routes a request, calls the
 
 ## One command to host it all on Nebius
 
-> **Scripted and tested offline, ready to run.** `deploy/nebius/nebius.sh` and the scripts it calls were written from the Nebius CLI reference and tested offline against a fake `nebius` command, a fake `ssh` and a stub smoke check. Nothing here is endorsed by or affiliated with Nebius. Do the [day-1 checks](DEPLOY_NEBIUS_VM.md#what-is-confirmed-and-what-is-not) on the first real run, and fix the script, not only the docs.
+> **Scripted and tested offline, ready to run.** `deploy/nebius/nebius.sh` and the scripts it calls were written from the Nebius CLI reference and tested offline against a fake `nebius` command, a fake `ssh` and a stub smoke check. Nothing here is endorsed by or affiliated with Nebius. Do the [day-1 checks](DEPLOY_NEBIUS_VM.md#what-is-confirmed-and-what-is-not) on the first real run.
 
 ```bash
 make nebius-plan                      # prints every command; changes nothing; calls no Nebius API

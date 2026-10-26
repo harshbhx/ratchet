@@ -13,22 +13,18 @@
   overflow: hidden;
 }
 
-/* Header: a row of numbered indicators with a gliding highlight. */
+/* Header: numbered indicators with a gliding highlight. They wrap onto a second row instead of running off the right
+   edge (the glider follows offsetTop as well as offsetLeft). */
 .rb-stepper__header {
   padding: 0.5rem;
   border-bottom: 1px solid var(--rt-line);
   background: var(--rt-surface-2);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.rb-stepper__header::-webkit-scrollbar {
-  display: none;
 }
 .rb-stepper__track {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
-  min-width: max-content;
 }
 .rb-stepper__glider {
   position: absolute;

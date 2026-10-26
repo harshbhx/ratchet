@@ -61,15 +61,15 @@
 | **PII redaction** | Replacing identifiers (emails, phones, cards, IBANs, national IDs, IPs, secrets) with placeholders such as `[EMAIL]` before a request becomes a training example (`ratchet/redact.py`). |
 | **API client** | The name attached to a gateway API key (`RATCHET_API_KEYS=name:key`). Requests, cost and savings are reported per client. |
 | **License-clean distillation** | Distilling only from teachers whose licenses allow training on their outputs. Closed models whose terms forbid it are refused. |
-| **OpenMDW-1.1** | The license of Nemotron 3 Ultra. It places no restrictions on outputs. |
+| **OpenMDW-1.1** | The license of Nemotron 3 Ultra. It "does not impose any restrictions or obligations with respect to any use, modification, or sharing of any outputs" ([license page](https://openmdw.ai/license/1-1/), checked Oct 21, 2026). |
 | **Baseline cost** | What a request would have cost if the teacher answered it alone. Used for savings receipts. |
-| **Mock mode** | Running with simulated models, synthetic tickets and simulated search results. No keys or GPUs needed. Numbers show loop behavior, not real model quality. |
+| **Mock mode** | Running with simulated models, synthetic tickets and simulated search results. No keys or GPUs needed. Numbers show loop behaviour, not real model quality. |
 | **Workload** | The kind of simulated traffic in mock mode and the simulator: `tickets` (support tickets), `research` (Scout's triage and reader calls) or `mixed` (half each). Set with `--workload` or `?workload=`. |
 | **Warm-up** | In mock mode, simulated days and nights run at startup (`RATCHET_MOCK_WARMUP_DAYS`), so the demo opens with a trained student instead of a cold start. |
 | **Scout** | The multi-agent research demo. Five agents (planner, searcher, triage, reader, writer) answer a question from the web, and every LLM call goes through Ratchet. Triage and reader calls are distilled; planner and writer calls are pinned. See [SCOUT.md](SCOUT.md). |
 | **Budget guard** | The limits that protect the public Scout demo in live mode: a daily spend cap, a daily run cap and a per-IP hourly run limit (`ratchet/scout/guard.py`), with a share held back for judges; kept in the ledger and restored at startup (ADR 0120). |
 | **Judges' reserve** | Scout runs, spend and Tavily credits per day that the public cannot use, unlocked by a judge code sent once to `POST /scout/judge` and then carried by a signed cookie (ADR 0120). |
 | **Tavily** | The web search API Scout's searcher uses in live mode. |
-| **Live mode** | Running against real Token Factory and Nebius AI Cloud. |
+| **Live mode** | Running against the real teacher on Token Factory (and, when configured, a Nebius Serverless Endpoint and Job). |
 | **Token Factory** | Nebius's OpenAI-compatible inference service for open models. |
 | **Serverless Jobs / Endpoints** | Nebius AI Cloud services that run a container to completion (jobs) or serve it at a URL (endpoints), billed per second. |

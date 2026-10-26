@@ -217,6 +217,28 @@
   color: var(--rt-muted);
   font-size: var(--rt-text-sm);
 }
+/* A wide chart drawn with small text (the tool-calling chart): it keeps a readable width and scrolls sideways on a
+   phone instead of shrinking; the page puts the same numbers in a table next to it. */
+.sl-markdown-content .rt-wide-chart__scroll {
+  /* Its content's width must not widen the page column: only this box scrolls. */
+  contain: inline-size;
+  width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-radius: var(--rt-radius);
+  scrollbar-width: thin;
+}
+.sl-markdown-content .rt-wide-chart__scroll:focus-visible {
+  outline: 2px solid var(--rt-focus);
+  outline-offset: 2px;
+}
+.sl-markdown-content .rt-wide-chart__scroll > img {
+  display: block;
+  width: 100%;
+  min-width: 42rem;
+  max-width: none;
+  height: auto;
+}
 
 /* ---------- Tables ----------
    A table is its own scroll box (Starlight makes it display: block), as wide as its content up to the column:
