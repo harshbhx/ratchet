@@ -1536,7 +1536,14 @@ def test_both_cloudflare_workers_pass_the_visitor_ip():
     for worker in ("cloudflare", "cloudflare-live"):
         src = (ROOT / "deploy" / worker / "src" / "index.ts").read_text(encoding="utf-8")
         assert 'RATCHET_TRUST_PROXY: "1"' in src, worker
-        assert 'request.headers.get("cf-connecting-ip")' in src and 'headers.set("x-forwarded-for", ip)' in src, worker
+        if worker == "cloudflare-live":
+            # The live Worker takes the address from visitor.ts: the proxy's only with the edge token, else cf-connecting-ip.
+            visitor = (ROOT / "deploy" / worker / "src" / "visitor.ts").read_text(encoding="utf-8")
+            assert "visitorIp(request.headers, env.EDGE_TOKEN)" in src and "forwardedHeaders(request.headers, ip)" in src
+            assert 'headers.get("cf-connecting-ip")' in visitor and 'out.set("x-forwarded-for", ip)' in visitor
+            assert "out.delete(EDGE_HEADER)" in visitor and "out.delete(CLIENT_IP_HEADER)" in visitor
+        else:
+            assert 'request.headers.get("cf-connecting-ip")' in src and 'headers.set("x-forwarded-for", ip)' in src, worker
     sim = (ROOT / "deploy" / "cloudflare" / "src" / "index.ts").read_text(encoding="utf-8")
     assert "demo.fetch(withVisitorIp(request))" in sim and 'headers.delete("x-forwarded-for")' in sim
     # The public simulation opens where `make demo` does: after a 4-day warm-up (a live student and a canary), as the

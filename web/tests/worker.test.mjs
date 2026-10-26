@@ -205,3 +205,34 @@ test("cookies and headers go through unchanged on every try", async () => {
     assert.equal(req.redirect, "manual");
   }
 });
+
+test("with EDGE_TOKEN set the proxy adds x-ratchet-edge and x-ratchet-client-ip; without it, neither", async () => {
+  const run = async (env, headers) => {
+    const seen = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = async (req) => (seen.push(req), new Response("ok"));
+    try {
+      const req = new Request("https://ratchet.dualmindlab.tech/v1/chat/completions", { method: "POST", body: "{}", headers });
+      await worker.fetch(req, { ASSETS: { fetch: async () => new Response("a") }, ...env });
+    } finally {
+      globalThis.fetch = real;
+    }
+    return seen[0].headers;
+  };
+  const visitor = { "cf-connecting-ip": "203.0.113.7" };
+  const on = await run({ EDGE_TOKEN: "secret-token-value" }, visitor);
+  assert.equal(on.get("x-ratchet-edge"), "secret-token-value");
+  assert.equal(on.get("x-ratchet-client-ip"), "203.0.113.7");
+  assert.equal(on.get("x-forwarded-for"), "203.0.113.7");
+  const trimmed = await run({ EDGE_TOKEN: " secret-token-value\n" }, visitor);
+  assert.equal(trimmed.get("x-ratchet-edge"), "secret-token-value");
+  for (const off of [{}, { EDGE_TOKEN: "" }, { EDGE_TOKEN: "  " }, { EDGE_TOKEN: undefined }, { EDGE_TOKEN: 5 }]) {
+    const headers = await run(off, { ...visitor, "x-ratchet-edge": "forged", "x-ratchet-client-ip": "6.6.6.6" });
+    assert.equal(headers.get("x-ratchet-edge"), null, JSON.stringify(off));
+    assert.equal(headers.get("x-ratchet-client-ip"), null, JSON.stringify(off));
+    assert.equal(headers.get("x-forwarded-for"), "203.0.113.7");
+  }
+  const forged = await run({ EDGE_TOKEN: "secret-token-value" }, { ...visitor, "x-ratchet-client-ip": "6.6.6.6", "x-ratchet-edge": "forged" });
+  assert.equal(forged.get("x-ratchet-client-ip"), "203.0.113.7", "a visitor's own copies are replaced");
+  assert.equal(forged.get("x-ratchet-edge"), "secret-token-value");
+});
