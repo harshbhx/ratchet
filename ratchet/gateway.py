@@ -3126,6 +3126,9 @@ def _respond(
     return JSONResponse({**body, "ratchet": s.meta}, headers=s.headers)
 
 
+RESPONSE_STATE_OP = "response_state_v1_responses__response_id_"
+
+
 @app.post("/v1/moderations", response_model=None)
 def moderations(
     authorization: str | None = Header(default=None),
@@ -3138,10 +3141,11 @@ def moderations(
     raise unsupported_endpoint("POST", "/v1/moderations", "this gateway has no moderation model; screen content before it")
 
 
-# Out of the OpenAPI schema: one function for three methods gives three operations the same id (FastAPI warns).
-@app.api_route(
-    "/v1/responses/{response_id:path}", methods=["GET", "POST", "DELETE"], response_model=None, include_in_schema=False
-)
+# One registration per method, each with its own operation id: one route for three methods gave all three the first
+# method's id (FastAPI warns of a duplicate). The ids are the ones the docs site links to.
+@app.get("/v1/responses/{response_id:path}", response_model=None, operation_id=f"{RESPONSE_STATE_OP}_get")
+@app.post("/v1/responses/{response_id:path}", response_model=None, operation_id=f"{RESPONSE_STATE_OP}_post")
+@app.delete("/v1/responses/{response_id:path}", response_model=None, operation_id=f"{RESPONSE_STATE_OP}_delete")
 def response_state(
     request: Request,
     response_id: str,

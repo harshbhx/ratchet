@@ -417,10 +417,13 @@ def test_openapi_is_off_in_live_mode(gw_env, tmp_path):
     schema = mock.get("/openapi.json").json()
     assert "/ratchet/stats" in schema["paths"]
     # Operation ids are unique: the stored-response route (one function for GET, POST and DELETE, a typed 404) once
-    # gave three operations one id; it is out of the schema now, and still served.
+    # gave all three the first method's id; each method has its own now, the one the docs site links to.
     ops = [op["operationId"] for item in schema["paths"].values() for op in item.values()]
-    assert len(ops) == len(set(ops)) and not [p for p in schema["paths"] if p.startswith("/v1/responses/")]
-    assert any(getattr(r, "path", "") == "/v1/responses/{response_id:path}" for r in mock.app.routes)
+    assert len(ops) == len(set(ops))
+    stored = schema["paths"]["/v1/responses/{response_id}"]
+    assert {m: op["operationId"] for m, op in stored.items()} == {
+        m: f"response_state_v1_responses__response_id__{m}" for m in ("get", "post", "delete")
+    }
     assert TestClient(gw_env(RATCHET_OPENAPI="0").app).get("/openapi.json").status_code == 404
 
 

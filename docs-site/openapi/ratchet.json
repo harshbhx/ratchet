@@ -1075,7 +1075,7 @@
     "/v1/completions": {
       "post": {
         "summary": "Completions",
-        "description": "The legacy completions API: each prompt runs the chat path as one user message (`_serve`), with the same checks,\ntask resolution, cascade, quota and storage as /v1/chat/completions; `n`, `stream`, `stop`, `max_tokens` and the rest\nare the chat fields of the same name. A batch of prompts needs that many requests of the daily quota, checked before\nthe first runs; a batch that stops after its first prompt is an error that names the prompts already answered and\ncarries `X-Should-Retry: false` (`_batch_stopped`). A `suffix`, `echo` or `best_of` that would change the answer,\nand token-array prompts, are a 400.",
+        "description": "The legacy completions API: each prompt runs the chat path as one user message (`_serve`), with the same checks,\ntask resolution, cascade, quota and storage as /v1/chat/completions; `n`, `stream`, `stop`, `max_tokens` and the rest\nare the chat fields of the same name, and an SDK's retry (`x-stainless-retry-count` above 0) never counts as a\nrepeat of a stored example, as on the chat routes. A batch of prompts needs that many requests of\nthe daily quota, checked before the first runs; a batch that stops after its first prompt is an error that names the\nprompts already answered and carries `X-Should-Retry: false` (`_batch_stopped`). A `suffix`, `echo` or `best_of`\nthat would change the answer, and token-array prompts, are a 400.",
         "operationId": "completions_v1_completions_post",
         "parameters": [
           {
@@ -1141,6 +1141,22 @@
               ],
               "title": "Api-Key"
             }
+          },
+          {
+            "name": "x-stainless-retry-count",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Stainless-Retry-Count"
+            }
           }
         ],
         "responses": {
@@ -1181,7 +1197,7 @@
     "/v1/responses": {
       "post": {
         "summary": "Responses",
-        "description": "The stateless subset of the Responses API: the body becomes a chat request (`validate_responses_request`) and\nruns the chat path (`_serve`) with the same checks, task resolution, cascade, quota and storage; the answer comes\nback as a `response` object. Ratchet keeps no response state, so what needs it (`previous_response_id`,\n`conversation`, `background`) and `stream` are a 400 `unsupported_parameter`.",
+        "description": "The stateless subset of the Responses API: the body becomes a chat request (`validate_responses_request`) and\nruns the chat path (`_serve`) with the same checks, task resolution, cascade, quota and storage (an SDK's retry never\ncounts as a repeat); the answer comes back as a `response` object. Ratchet keeps no response state, so what\nneeds it (`previous_response_id`, `conversation`, `background`) and `stream` are a 400 `unsupported_parameter`.",
         "operationId": "responses_v1_responses_post",
         "parameters": [
           {
@@ -1246,6 +1262,22 @@
                 }
               ],
               "title": "Api-Key"
+            }
+          },
+          {
+            "name": "x-stainless-retry-count",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Stainless-Retry-Count"
             }
           }
         ],
@@ -1365,10 +1397,10 @@
       }
     },
     "/v1/responses/{response_id}": {
-      "get": {
+      "delete": {
         "summary": "Response State",
         "description": "Retrieving, deleting or cancelling a response, or listing its input items: a 404 `unsupported_endpoint`, because\nRatchet keeps no response state (each response is built for its request and forgotten).",
-        "operationId": "response_state_v1_responses__response_id__get",
+        "operationId": "response_state_v1_responses__response_id__delete",
         "parameters": [
           {
             "name": "response_id",
@@ -1539,10 +1571,10 @@
           "OpenAI-compatible"
         ]
       },
-      "delete": {
+      "get": {
         "summary": "Response State",
         "description": "Retrieving, deleting or cancelling a response, or listing its input items: a 404 `unsupported_endpoint`, because\nRatchet keeps no response state (each response is built for its request and forgotten).",
-        "operationId": "response_state_v1_responses__response_id__delete",
+        "operationId": "response_state_v1_responses__response_id__get",
         "parameters": [
           {
             "name": "response_id",
