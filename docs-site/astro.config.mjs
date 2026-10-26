@@ -96,6 +96,9 @@ export default defineConfig({
         { tag: 'script', content: A11Y_FIXES },
         { tag: 'script', content: THEME_REVEAL },
         { tag: 'script', attrs: { type: 'speculationrules' }, content: SPECULATION },
+        // Hold the first frame until the whole page is parsed (#drawer is the last element Lucode renders), so a page
+        // appears complete instead of top first. Browsers without render blocking ignore it.
+        { tag: 'link', attrs: { rel: 'expect', href: '#drawer', blocking: 'render' } },
       ],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       expressiveCode: {

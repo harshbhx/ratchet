@@ -86,7 +86,10 @@
   color: var(--rt-muted);
 }
 .sl-markdown-content :not(h1, h2, h3, h4, h5, h6, .sl-heading-wrapper) + :is(.sl-heading-wrapper.level-h2, h2) {
-  margin-top: 3.25rem;
+  /* Each h2 opens a chapter: a hairline across the column and room above it. */
+  margin-top: 3.5rem;
+  padding-top: 2.25rem;
+  border-top: 1px solid var(--rt-line);
 }
 .sl-markdown-content :not(h1, h2, h3, h4, h5, h6, .sl-heading-wrapper) + :is(.sl-heading-wrapper.level-h3, h3) {
   margin-top: 2.25rem;
@@ -105,7 +108,16 @@
 }
 .sl-markdown-content .sl-anchor-link {
   color: var(--rt-muted);
+  opacity: 0;
+  transition: opacity var(--rt-dur) ease;
+}
+.sl-markdown-content .sl-heading-wrapper:hover .sl-anchor-link {
   opacity: 0.7;
+}
+@media (hover: none) {
+  .sl-markdown-content .sl-anchor-link {
+    opacity: 0.6;
+  }
 }
 .sl-markdown-content .sl-anchor-link:hover,
 .sl-markdown-content .sl-anchor-link:focus-visible {
@@ -145,7 +157,7 @@
   margin-top: 0.4rem;
 }
 .sl-markdown-content ul:not([class]) > li::marker {
-  color: var(--rt-muted);
+  color: color-mix(in srgb, var(--rt-owned) 70%, var(--rt-muted));
 }
 .sl-markdown-content ol:not([class]) > li::marker {
   color: var(--rt-muted);
@@ -155,10 +167,9 @@
 
 /* Inline code, kbd, mark */
 .sl-markdown-content :not(pre) > code {
-  padding: 0.12em 0.4em;
-  border: 1px solid var(--rt-line);
+  padding: 0.1em 0.38em;
   border-radius: var(--rt-radius-sm);
-  background: var(--rt-surface-2);
+  background: color-mix(in srgb, var(--rt-ink) 8%, transparent);
   color: var(--rt-ink);
   font-family: var(--rt-font-mono);
   font-size: 0.86em;
@@ -196,10 +207,18 @@
 /* Quotes and rules */
 .sl-markdown-content blockquote {
   margin-inline: 0;
-  padding: 0.25rem 0 0.25rem 1.1rem;
-  border-inline-start: 3px solid var(--rt-line-strong);
+  padding: 0.85rem 1.1rem;
+  border-inline-start: 3px solid var(--rt-owned);
+  border-radius: 0 var(--rt-radius) var(--rt-radius) 0;
+  background: color-mix(in srgb, var(--rt-owned) 5%, var(--rt-surface));
   color: var(--rt-ink-2);
   font-style: normal;
+}
+.sl-markdown-content blockquote > :first-child {
+  margin-top: 0;
+}
+.sl-markdown-content blockquote > :last-child {
+  margin-bottom: 0;
 }
 .sl-markdown-content hr {
   border: 0;
@@ -313,6 +332,27 @@
 .sl-markdown-content td code:not(:where(.not-content *)) {
   overflow-wrap: normal;
   word-break: normal;
+}
+.sl-markdown-content table[data-more='end'] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+}
+.sl-markdown-content table[data-more='start'] {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 3rem), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 3rem), transparent);
+}
+.sl-markdown-content table[data-more='both'] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 3rem, #000 calc(100% - 3rem), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 3rem, #000 calc(100% - 3rem), transparent);
+}
+
+/* Content images that open full screen (ReadingAids.astro). */
+.sl-markdown-content img.rt-zoomable {
+  cursor: zoom-in;
+}
+.sl-markdown-content img.rt-zoomable:focus-visible {
+  outline: 2px solid var(--rt-focus);
+  outline-offset: 3px;
 }
 @media (max-width: 40rem) {
   .sl-markdown-content :is(th, td):not(:where(.not-content *)) {

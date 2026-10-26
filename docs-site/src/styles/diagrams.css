@@ -54,6 +54,38 @@ pre.mermaid:not([data-processed]) {
   animation: none !important;
 }
 
+/* "Expand" (ReadingAids.astro), added once the diagram is drawn: quiet until the card is hovered or focused. */
+pre.mermaid {
+  position: relative;
+}
+pre.mermaid:has(> .rt-expand) {
+  padding-top: 2.9rem !important;
+}
+pre.mermaid > .rt-expand {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 2;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--rt-line-strong);
+  border-radius: 999px;
+  background: var(--rt-surface);
+  color: var(--rt-ink-2);
+  font: 500 0.75rem/1.2 var(--rt-font-sans, ui-sans-serif, system-ui, sans-serif);
+  cursor: zoom-in;
+  opacity: 0;
+  transition: opacity var(--rt-dur) ease;
+}
+pre.mermaid:hover > .rt-expand,
+pre.mermaid > .rt-expand:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  pre.mermaid > .rt-expand {
+    opacity: 1;
+  }
+}
+
 pre.mermaid svg {
   display: block;
   flex: none;

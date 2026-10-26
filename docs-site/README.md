@@ -414,15 +414,19 @@ summary, reading time on guides, "Edit on GitHub"), `Footer` ("Was this page rig
 previous and next pages, a credits line) and `Sidebar` (with `SidebarTree`: groups that fold, only the current page's
 group open at first, open groups and the scroll position kept from page to page, one gliding hover pill). Styles:
 `src/styles/theme.css` (tokens, light and dark), `chrome.css` (header, sidebar, "On this page", search), `content.css`
-(the page body), `motion.css` (page changes as view transitions, the reading-progress bar, the theme switch's reveal)
-and `print.css`. Pages are prefetched on hover (Chromium prerenders them through speculation rules).
+(the page body), `motion.css` (page changes in one cut, held until the new page is fully parsed; the reading-progress
+bar; the theme switch's reveal) and `print.css`. Pages are prefetched on hover (Chromium prerenders them through
+speculation rules). `ReadingAids.astro`, rendered by `Footer`, adds "Expand" to every diagram (and opens content images)
+in a full-screen view, a back-to-top button below 1280px, a fade on tables that scroll sideways and copying a
+section's address from its heading link.
 
 ### Credits
 
 Built with [Starlight](https://starlight.astro.build), the [Lucode](https://github.com/lucas-labs/lucode-starlight-theme) theme
 (MIT) and components adapted from [React Bits](https://reactbits.dev) by David Haz. The sidebar's hover pill, the
-reading-progress bar and the theme switch's reveal follow [beUI](https://beui.dev)'s Shared Layout Background, Scroll
-Progress and Theme Toggle (MIT, by Saurabh Chauhan), rewritten as CSS and a few lines of script with no React. The React Bits files in
+reading-progress bar, the theme switch's reveal and the full-screen view follow [beUI](https://beui.dev)'s Shared Layout
+Background, Scroll Progress, Theme Toggle and Image Viewer (MIT, by Saurabh Chauhan), rewritten as CSS and a few lines
+of script with no React. The React Bits files in
 `src/components/rb/` keep their own license, MIT + Commons Clause (`src/components/rb/LICENSE.md`): they may be used and
 changed as part of this website, but not sold or redistributed as components. They are not covered by the repository's
 Apache-2.0 license.

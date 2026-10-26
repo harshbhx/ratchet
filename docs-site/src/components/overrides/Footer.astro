@@ -1,11 +1,12 @@
 ---
 /**
  * The end of every doc page: "Was this page right?" with the edit and issue links, previous and next pages as
- * cards, and a short site line (license and credits). Replaces Lucode's Footer; on splash pages Lucode's site
- * footer shows instead.
+ * cards, and a short site line (license and credits), plus the page's reading aids (ReadingAids.astro). Replaces
+ * Lucode's Footer; on splash pages Lucode's site footer shows instead.
  */
 import { Icon } from '@astrojs/starlight/components';
 import { REPO_URL } from '../../../scripts/doc-map.mjs';
+import ReadingAids from './ReadingAids.astro';
 
 const route = Astro.locals.starlightRoute;
 const { entry, editUrl, pagination } = route;
@@ -17,6 +18,8 @@ const issueUrl = `${REPO_URL}/issues/new?title=${encodeURIComponent(`Docs: ${ent
 
 {
   entry.data.template === 'doc' && (
+    <>
+    <ReadingAids />
     <footer class="rt-page-footer">
       <div class="rt-page-footer__edit">
         <p class="rt-page-footer__ask">Was this page right?</p>
@@ -65,6 +68,7 @@ const issueUrl = `${REPO_URL}/issues/new?title=${encodeURIComponent(`Docs: ${ent
         <a href="https://reactbits.dev">React Bits</a> components (MIT + Commons Clause).
       </p>
     </footer>
+    </>
   )
 }
 
