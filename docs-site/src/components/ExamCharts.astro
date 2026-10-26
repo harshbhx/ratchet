@@ -26,59 +26,49 @@ const STYLE: Record<string, { color: string; opacity: number }> = {
 const short: Record<string, string> = Object.fromEntries(data.models.map((m) => [m.id, m.short]));
 const info = data.exams.find((e) => e.id === exam)!;
 const pct = (r: number) => `${(r * 100).toFixed(1)}%`;
-const LABEL_W = 124;
-const X0 = LABEL_W + 6;
-const BW = 168;
-const W = X0 + BW + 62;
-const xOf = (v: number, max: number) => Math.max(0, Math.min(1, v / max)) * BW;
+// Charts are HTML, not a scaled SVG: the text stays at reading size at any width and a value is never cut off.
+const share = (v: number, max: number) => `${(Math.max(0, Math.min(1, v / max)) * 100).toFixed(2)}%`;
 const ticks = (max: number, step: number) => {
   const t: number[] = [];
   for (let v = 0; v <= max + 1e-9; v += step) t.push(Math.round(v * 100) / 100);
   return t;
 };
+const NAME: Record<string, string> = { base: 'base', r1: 'round 1', r2: 'round 2' };
 
-// scores
 const scoreMax = 0.6;
-const rowH = 40;
-const scoreH = 6 + MODELS.length * rowH + 22;
-// difficulty
 const diffMax = 0.8;
-const group = 74;
 const diffIds = ['base', 'r1', 'r2'] as const;
 const diffs = ['simple', 'join', 'aggregate', 'hard'] as const;
-const diffH = 6 + diffs.length * group + 20;
-// flips
 const flipMax = 26;
-const half = 84;
-const mid = LABEL_W + 6 + half;
 ---
 
 {
   kind === 'scores' && (
     <figure class="rt-xc">
-      <svg viewBox={`0 0 ${W} ${scoreH}`} role="img" aria-label={`${info.name}: share of ${info.rows} questions answered exactly right, by model`}>
-        {ticks(scoreMax, 0.2).map((t) => (
-          <g aria-hidden="true">
-            <line x1={X0 + xOf(t, scoreMax)} x2={X0 + xOf(t, scoreMax)} y1={6} y2={6 + MODELS.length * rowH} stroke="var(--rt-grid)" />
-            <text x={X0 + xOf(t, scoreMax)} y={6 + MODELS.length * rowH + 13} text-anchor="middle" font-size="10" fill="var(--rt-muted)">{Math.round(t * 100)}%</text>
-          </g>
-        ))}
+      <div class="rt-xc__plot" role="img" aria-label={`${info.name}: share of ${info.rows} questions answered exactly right, by model`}>
+        <div class="rt-xc__grid" style={`grid-row: 1 / span ${MODELS.length}`} aria-hidden="true">
+          {ticks(scoreMax, 0.2).map((t) => <span style={`--x: ${share(t, scoreMax)}`} />)}
+        </div>
         {MODELS.map((id, i) => {
           const s = (data.scores as any)[exam][id];
-          const y = 6 + i * rowH;
           const st = STYLE[id];
           return (
-            <g>
-              <text x={LABEL_W} y={y + 21} text-anchor="end" font-size="12.5" font-weight={id === 'r2' ? 700 : 500} fill="var(--rt-ink)">{short[id]}</text>
-              <rect x={X0} y={y + 8} width={Math.max(2, xOf(s.rate, scoreMax))} height="20" rx="4" fill={st.color} opacity={st.opacity} />
-              <line x1={X0 + xOf(s.lo, scoreMax)} x2={X0 + xOf(s.hi, scoreMax)} y1={y + 18} y2={y + 18} stroke="var(--rt-ink)" stroke-width="1.4" opacity="0.75" />
-              <line x1={X0 + xOf(s.lo, scoreMax)} x2={X0 + xOf(s.lo, scoreMax)} y1={y + 13} y2={y + 23} stroke="var(--rt-ink)" stroke-width="1.4" opacity="0.75" />
-              <line x1={X0 + xOf(s.hi, scoreMax)} x2={X0 + xOf(s.hi, scoreMax)} y1={y + 13} y2={y + 23} stroke="var(--rt-ink)" stroke-width="1.4" opacity="0.75" />
-              <text x={X0 + xOf(s.hi, scoreMax) + 6} y={y + 22} font-size="12.5" font-weight="700" fill="var(--rt-ink)">{pct(s.rate)}</text>
-            </g>
+            <div class:list={['rt-xc__row', { 'rt-xc__row--key': id === 'r2' }]}>
+              <span class="rt-xc__label" style={`grid-row: ${i + 1}`}>{short[id]}</span>
+              <span class="rt-xc__track" style={`grid-row: ${i + 1}`}>
+                <span class="rt-xc__bar" style={`--w: ${share(s.rate, scoreMax)}; --c: ${st.color}; --o: ${st.opacity}`} />
+                <span class="rt-xc__range" style={`--lo: ${share(s.lo, scoreMax)}; --hi: ${share(s.hi, scoreMax)}`} />
+              </span>
+              <span class="rt-xc__value" style={`grid-row: ${i + 1}`}>
+                {pct(s.rate)} <small>{s.agree}/{s.n}</small>
+              </span>
+            </div>
           );
         })}
-      </svg>
+        <div class="rt-xc__row rt-xc__row--axis" aria-hidden="true">
+          <span class="rt-xc__ticks">{ticks(scoreMax, 0.2).map((t) => <span style={`--x: ${share(t, scoreMax)}`}>{Math.round(t * 100)}%</span>)}</span>
+        </div>
+      </div>
       <figcaption>
         {info.name}: {info.rows} questions, written by {info.writer.split(',')[0]}. The line on each bar is the 95% range.
       </figcaption>
@@ -89,35 +79,37 @@ const mid = LABEL_W + 6 + half;
 {
   kind === 'difficulty' && (
     <figure class="rt-xc">
-      <svg viewBox={`0 0 ${W} ${diffH}`} role="img" aria-label={`${info.name}: share right by question difficulty, base model and the two adapters`}>
-        {ticks(diffMax, 0.2).map((t) => (
-          <g aria-hidden="true">
-            <line x1={X0 + xOf(t, diffMax)} x2={X0 + xOf(t, diffMax)} y1={6} y2={6 + diffs.length * group - 8} stroke="var(--rt-grid)" />
-            <text x={X0 + xOf(t, diffMax)} y={6 + diffs.length * group + 5} text-anchor="middle" font-size="10" fill="var(--rt-muted)">{Math.round(t * 100)}%</text>
-          </g>
+      <p class="rt-xc__key" aria-hidden="true">
+        {diffIds.map((id) => (
+          <span>
+            <i style={`--c: ${STYLE[id].color}; --o: ${STYLE[id].opacity}`} />
+            {id === 'base' ? 'Base model' : id === 'r1' ? 'Adapter, round 1' : 'Adapter, round 2'}
+          </span>
         ))}
-        {diffs.map((d, gi) => {
+      </p>
+      <div class="rt-xc__plot" role="img" aria-label={`${info.name}: share right by question difficulty, base model and the two adapters`}>
+        {diffs.map((d) => {
           const row = (data.difficulty as any)[exam][d];
-          const y0 = 6 + gi * group;
           return (
-            <g>
-              <text x={LABEL_W} y={y0 + 28} text-anchor="end" font-size="12.5" font-weight="600" fill="var(--rt-ink)">{d}</text>
-              <text x={LABEL_W} y={y0 + 44} text-anchor="end" font-size="10.5" fill="var(--rt-muted)">{row.n} questions</text>
-              {diffIds.map((id, bi) => {
-                const rate = row[id] / row.n;
-                const y = y0 + 8 + bi * 20;
-                const st = STYLE[id];
-                return (
-                  <g>
-                    <rect x={X0} y={y} width={Math.max(2, xOf(rate, diffMax))} height="16" rx="3" fill={st.color} opacity={st.opacity} />
-                    <text x={X0 + xOf(rate, diffMax) + 5} y={y + 12} font-size="10.5" fill="var(--rt-ink)">{id === 'base' ? 'base' : id === 'r1' ? 'round 1' : 'round 2'} {row[id]}/{row.n}</text>
-                  </g>
-                );
-              })}
-            </g>
+            <div class="rt-xc__group">
+              <span class="rt-xc__label">
+                {d}
+                <small>{row.n} questions</small>
+              </span>
+              <span class="rt-xc__bars">
+                {diffIds.map((id) => (
+                  <span class="rt-xc__track rt-xc__track--thin" title={`${NAME[id]}: ${row[id]} of ${row.n}`}>
+                    <span class="rt-xc__bar" style={`--w: ${share(row[id] / row.n, diffMax)}; --c: ${STYLE[id].color}; --o: ${STYLE[id].opacity}`} />
+                    <span class="rt-xc__end" style={`--w: ${share(row[id] / row.n, diffMax)}`}>
+                      {row[id]}/{row.n}
+                    </span>
+                  </span>
+                ))}
+              </span>
+            </div>
           );
         })}
-      </svg>
+      </div>
       <figcaption>{info.name}, by difficulty. Join questions improved most from round 1 to round 2; simple questions did not.</figcaption>
     </figure>
   )
@@ -126,24 +118,33 @@ const mid = LABEL_W + 6 + half;
 {
   kind === 'flips' && (
     <figure class="rt-xc">
-      <svg viewBox={`0 0 ${mid + half + 70} ${2 * 44 + 28}`} role="img" aria-label="Questions that changed between the round 1 and the round 2 adapter, on both exams">
-        <line x1={mid} x2={mid} y1={2} y2={2 * 44 + 2} stroke="var(--rt-line-strong)" />
-        {(['exam1', 'exam2'] as const).map((ex, i) => {
+      <div class="rt-xc__plot" role="img" aria-label="Questions that changed between the round 1 and the round 2 adapter, on both exams">
+        {(['exam1', 'exam2'] as const).map((ex) => {
           const f = (data.r1_to_r2 as any)[ex];
-          const y = 6 + i * 44;
           return (
-            <g>
-              <text x={LABEL_W} y={y + 24} text-anchor="end" font-size="12.5" font-weight="600" fill="var(--rt-ink)">{ex === 'exam1' ? 'Exam 1' : 'Exam 2'}</text>
-              <rect x={mid - xOf(f.right_to_wrong, flipMax) * (half / BW)} y={y + 8} width={xOf(f.right_to_wrong, flipMax) * (half / BW)} height="20" rx="3" fill="var(--rt-bad)" opacity="0.85" />
-              <text x={mid - xOf(f.right_to_wrong, flipMax) * (half / BW) - 5} y={y + 23} text-anchor="end" font-size="12" font-weight="700" fill="var(--rt-ink)">−{f.right_to_wrong}</text>
-              <rect x={mid} y={y + 8} width={xOf(f.wrong_to_right, flipMax) * (half / BW)} height="20" rx="3" fill="var(--rt-good)" opacity="0.9" />
-              <text x={mid + xOf(f.wrong_to_right, flipMax) * (half / BW) + 5} y={y + 23} font-size="12" font-weight="700" fill="var(--rt-ink)">+{f.wrong_to_right}</text>
-            </g>
+            <div class="rt-xc__row">
+              <span class="rt-xc__label">{ex === 'exam1' ? 'Exam 1' : 'Exam 2'}</span>
+              <span class="rt-xc__track rt-xc__track--split">
+                <span class="rt-xc__lose" style={`--w: ${share(f.right_to_wrong, flipMax * 2)}`}>
+                  <b>−{f.right_to_wrong}</b>
+                </span>
+                <span class="rt-xc__win" style={`--w: ${share(f.wrong_to_right, flipMax * 2)}`}>
+                  <b>+{f.wrong_to_right}</b>
+                </span>
+              </span>
+              <span class="rt-xc__value">
+                <small>p = {f.p}</small>
+              </span>
+            </div>
           );
         })}
-        <text x={mid - 6} y={2 * 44 + 20} text-anchor="end" font-size="10.5" fill="var(--rt-muted)">right in round 1 only</text>
-        <text x={mid + 6} y={2 * 44 + 20} font-size="10.5" fill="var(--rt-muted)">right in round 2 only</text>
-      </svg>
+        <div class="rt-xc__row rt-xc__row--axis" aria-hidden="true">
+          <span class="rt-xc__sides">
+            <span>right in round 1 only</span>
+            <span>right in round 2 only</span>
+          </span>
+        </div>
+      </div>
       <figcaption>
         Questions whose answer changed between the two adapters. Round 2 wins more of them on both exams (p = {data.r1_to_r2.exam1.p} and {data.r1_to_r2.exam2.p}), so the direction repeats, but neither exam alone settles it.
       </figcaption>
@@ -182,23 +183,238 @@ const mid = LABEL_W + 6 + half;
 
 <style>
   .rt-xc {
-    margin: 1.25rem 0;
-    padding: 1rem;
+    margin: 1.5rem 0;
+    padding: 1.15rem 1.25rem 1rem;
     border: 1px solid var(--rt-line);
     border-radius: var(--rt-radius-lg, 16px);
     background: var(--rt-surface);
-    max-width: 34rem;
   }
-  .rt-xc svg {
+  .rt-xc__plot {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 9.5rem) minmax(0, 1fr) minmax(4.5rem, 6.5rem);
+    column-gap: 1rem;
+    row-gap: 0.55rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .rt-xc__row,
+  .rt-xc__group {
+    display: contents;
+  }
+  .rt-xc__label {
+    grid-column: 1;
+    align-self: center;
+    color: var(--rt-ink-2);
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.25;
+    text-align: end;
+  }
+  .rt-xc__label small {
     display: block;
-    width: 100%;
-    height: auto;
+    color: var(--rt-muted);
+    font-size: 0.75rem;
+    font-weight: 400;
+  }
+  .rt-xc__row--key .rt-xc__label,
+  .rt-xc__row--key .rt-xc__value {
+    color: var(--rt-ink);
+    font-weight: 650;
+  }
+  .rt-xc__track {
+    grid-column: 2;
+    position: relative;
+    z-index: 1;
+    height: 1.4rem;
+    align-self: center;
+  }
+  .rt-xc__track--thin {
+    display: block;
+    height: 0.95rem;
+  }
+  .rt-xc__bars > .rt-xc__track {
+    grid-column: auto;
+  }
+  /* A difficulty group: three thin bars, their counts at the bar ends, across the bar and value columns. */
+  .rt-xc__bars {
+    grid-column: 2 / span 2;
+    display: grid;
+    gap: 0.3rem;
+    padding: 0.4rem 3.5rem 0.4rem 0;
+  }
+  .rt-xc__group .rt-xc__label {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-block: 0.4rem;
+  }
+  .rt-xc__group + .rt-xc__group > * {
+    border-top: 1px solid var(--rt-line);
+  }
+  .rt-xc__bar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: max(2px, var(--w));
+    border-radius: 0.3rem;
+    background: var(--c);
+    opacity: var(--o);
+  }
+  .rt-xc__range {
+    position: absolute;
+    top: 50%;
+    left: var(--lo);
+    width: calc(var(--hi) - var(--lo));
+    height: 0.6rem;
+    translate: 0 -50%;
+    border-inline: 1.5px solid var(--rt-ink);
+    opacity: 0.75;
+  }
+  .rt-xc__range::before {
+    content: '';
+    position: absolute;
+    inset: 50% 0 auto;
+    height: 1.5px;
+    translate: 0 -50%;
+    background: var(--rt-ink);
+  }
+  .rt-xc__end {
+    position: absolute;
+    top: 50%;
+    left: calc(var(--w) + 0.45rem);
+    translate: 0 -50%;
+    color: var(--rt-ink-2);
+    font-size: 0.75rem;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .rt-xc__value {
+    grid-column: 3;
+    align-self: center;
+    color: var(--rt-ink-2);
+    font-size: 0.875rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .rt-xc__value small {
+    margin-left: 0.2rem;
+    color: var(--rt-muted);
+    font-size: 0.75rem;
+    font-weight: 400;
+  }
+  /* Gridlines: one layer behind the bars, the height of the rows. */
+  .rt-xc__grid {
+    grid-column: 2;
+    position: relative;
+    pointer-events: none;
+  }
+  .rt-xc__grid > span {
+    position: absolute;
+    inset-block: -0.2rem;
+    left: var(--x);
+    border-left: 1px dashed var(--rt-line-strong);
+    opacity: 0.6;
+  }
+  .rt-xc__ticks,
+  .rt-xc__sides {
+    grid-column: 2;
+    position: relative;
+    height: 1rem;
+    color: var(--rt-muted);
+    font-size: 0.72rem;
+  }
+  .rt-xc__ticks > span {
+    position: absolute;
+    left: var(--x);
+    translate: -50% 0;
+  }
+  .rt-xc__ticks > span:first-child {
+    translate: 0 0;
+  }
+  .rt-xc__sides {
+    display: flex;
+    justify-content: space-between;
+  }
+  .rt-xc__track--split::before {
+    content: '';
+    position: absolute;
+    inset-block: -0.3rem;
+    left: 50%;
+    border-left: 1px solid var(--rt-line-strong);
+  }
+  .rt-xc__lose,
+  .rt-xc__win {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: var(--w);
+    border-radius: 0.3rem;
+  }
+  .rt-xc__lose {
+    right: 50%;
+    background: color-mix(in srgb, var(--rt-bad) 85%, transparent);
+  }
+  .rt-xc__win {
+    left: 50%;
+    background: color-mix(in srgb, var(--rt-good) 90%, transparent);
+  }
+  .rt-xc__lose b,
+  .rt-xc__win b {
+    position: absolute;
+    top: 50%;
+    translate: 0 -50%;
+    color: var(--rt-ink);
+    font-size: 0.875rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .rt-xc__lose b {
+    right: calc(100% + 0.4rem);
+  }
+  .rt-xc__win b {
+    left: calc(100% + 0.4rem);
+  }
+  .rt-xc__key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.1rem;
+    margin: 0 0 0.85rem !important;
+    color: var(--rt-muted);
+    font-size: 0.78rem;
+  }
+  .rt-xc__key span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .rt-xc__key i {
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 0.2rem;
+    background: var(--c);
+    opacity: var(--o);
   }
   .rt-xc figcaption {
-    margin-top: 0.5rem;
+    margin-top: 0.85rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--rt-line);
     font-size: 0.8125rem;
-    line-height: 1.4;
+    line-height: 1.5;
     color: var(--rt-muted);
+  }
+  @media (max-width: 40rem) {
+    .rt-xc {
+      padding-inline: 0.9rem;
+    }
+    .rt-xc__plot {
+      grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+      column-gap: 0.6rem;
+    }
+    .rt-xc__label {
+      font-size: 0.8rem;
+    }
+    .rt-xc__value small {
+      display: none;
+    }
   }
   .rt-xa {
     display: grid;
