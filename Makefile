@@ -1,7 +1,7 @@
 .PHONY: nebius-plan nebius-up nebius-down nebius-status demo-check install test lint fmt trace reference sim demo day1 docker clean web web-dev live-plan live-smoke live-run
 
 install:
-	pip install -e ".[dev]" ruff
+	python -m pip install -e ".[dev]"
 
 test:
 	pytest -q

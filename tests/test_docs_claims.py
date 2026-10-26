@@ -340,7 +340,7 @@ def test_nvidia_lineage_is_stated_exactly():
     )
     for quote in (*FLYWHEEL_QUOTES, NANO_LINEAGE):
         assert quote in lineage, quote
-    assert "the autopilot, with statistical brakes" in lineage
+    assert "Ratchet makes the promotion decision itself, with statistics" in lineage
     assert "Mar 16, 2026" in lineage and "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16" in lineage
 
     wins = _sections(_read("docs/COMPETITIVE_ANALYSIS.md"))["Where Ratchet wins"]

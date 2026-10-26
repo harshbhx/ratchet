@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>License-clean distillation on open models.</b> An OpenAI-compatible gateway: a small student model answers first, a teacher whose license allows distillation answers when the student is unsure, and the loop is built so that every night the student learns from the teacher's answers and ships only if it passes a statistical gate.
+  <b>License-clean distillation on open models.</b> An OpenAI-compatible gateway: a small NVIDIA Nemotron student model answers first, a teacher whose license allows distillation (NVIDIA Nemotron 3 Ultra on Nebius Token Factory) answers when the student is unsure, and the loop is built so that every night the student learns from the teacher's answers and ships only if it passes a statistical gate.
 </p>
 
 <p align="center">
@@ -58,7 +58,7 @@
 
 ## Try it
 
-Judges get the access code for Scout runs on the Devpost page. It is not in this repository.
+Judges get the access code for Scout runs on the Devpost page (it is not in this repository).
 
 | | What it is | Real or simulation |
 |---|---|---|
@@ -82,7 +82,7 @@ Judges get the access code for Scout runs on the Devpost page. It is not in this
   <img src="docs/img/anim/judge-box-howto.gif" alt="Animation of the judge code box on the Scout page: type the code from the Devpost page into the box and a reserve of live Scout runs unlocks. The code itself is never shown." width="80%">
 </p>
 
-The code is on the Devpost page and is not in this repository.
+Type the code from the Devpost page into the box on the Scout page.
 
 </details>
 
@@ -96,21 +96,21 @@ Change one line, your base URL. The designed flow (the loop is shown in simulati
 4. **Night School.** Every night it fine-tunes a new adapter on teacher answers only, grades it on a held-out golden set and signs a bill of materials (BOM) for it.
 5. **Release gates.** A new student runs silently in shadow, then takes 10%, 50% and 100% of traffic with teacher audits at each step, and rolls back by itself if its audited precision slips.
 
-Your bill falls as your own model takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.
+Your bill falls as your adapter takes over, and Ratchet tells you when a GPU would cost more than it saves. You own the LoRA adapter and its signed training lineage; the Nano base stays under NVIDIA's Nemotron Open Model License.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/architecture-dark.png">
     <img src="docs/img/architecture-light.png" alt="Architecture: your app calls the gateway, a small student model answers first, a teacher answers when the student is unsure, answers are logged in a provenance ledger, Night School trains a new adapter from the ledger, and release gates decide whether it becomes the student." width="100%">
   </picture>
-  <br><sub>The design, in one picture. <a href="docs/ARCHITECTURE.md">Architecture</a> has the details; an <a href="docs/img/anim/ratchet-how-it-works-light.gif">animated version</a> walks through it in 23 seconds (the confidence numbers in it are an example).</sub>
+  <br><sub>The design, in one picture. <a href="docs/ARCHITECTURE.md">Architecture</a> has the details.</sub>
 </p>
 
 ## Results
 
 All of this is **measured** on real models, 22 to 24 Oct 2026, not the simulation. Scoring is strict, and both exams were kept out of training. The headline is text-to-SQL; tool calling is a second result.
 
-**Text-to-SQL (the headline).** A Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra for about $17 on record ($12.16 of teacher answers plus $4.80 of GPU time for the training job, run on a borrowed GPU; estimates, not invoices; see [what it cost](docs/VERIFY.md#what-it-cost)), scores 2.6 to 3.0 times the untrained model on two exams, one written by the teacher and one by a different model (Claude Sonnet 5.5, for evaluation only; no Claude output was used for training). The round 2 adapter scores 39.0% on exam 1 (172 questions) and 33.0% on exam 2 (200 questions), against 12.8% and 12.5% untrained and 25.6% and 15.0% for the teacher, which loses points mostly on extra columns the strict scorer rejects. At a 95% precision bar the gate lets the adapter answer 1 of 86 measurement questions on exam 1 and none of the 100 on exam 2, so in practice all traffic still goes to the teacher.
+**Text-to-SQL (the headline).** A Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra, scores 2.6 to 3.0 times the untrained model on two exams. The teacher wrote one exam; a different model wrote the other (Claude Sonnet 5.5, for evaluation only; no Claude output was used for training). Teaching it cost about $17 on record: $12.16 of teacher answers plus $4.80 of GPU time for the training job, run on a borrowed GPU (estimates, not invoices; see [what it cost](docs/VERIFY.md#what-it-cost)). The round 2 adapter scores 39.0% on exam 1 (172 questions) and 33.0% on exam 2 (200 questions), against 12.8% and 12.5% untrained and 25.6% and 15.0% for the teacher, which loses points mostly on extra columns the strict scorer rejects. At a 95% precision bar the gate lets the adapter answer 1 of 86 measurement questions on exam 1 and none of the 100 on exam 2, so in practice all traffic still goes to the teacher.
 
 [Adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) · [Exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams)
 
@@ -130,7 +130,7 @@ All of this is **measured** on real models, 22 to 24 Oct 2026, not the simulatio
 | Tool-calling adapter | 136 of 150 (90.7%) | 241 of 300 (80.3%) |
 | Teacher (Nemotron 3 Ultra) | 137 of 150 (91.3%) | 265 of 300 (88.3%) |
 
-On the hard exam the adapter is above the untrained model (the 95% ranges do not overlap) and about the same as the teacher (the ranges overlap). On BFCL the gain over the untrained model is small and the exam cannot separate them (higher by point estimate, ranges overlap), and the adapter is lower than the teacher. We never claim the adapter beats the teacher. Strict scoring means an answer counts only if it is one JSON object with the right tool and arguments; free-text arguments are a known weak spot in the training data. The hard exam was written by Claude Sonnet 5.5 for evaluation only and is never training data.
+On the hard exam the adapter is above the untrained model (the 95% ranges do not overlap) and about the same as the teacher (the ranges overlap). On BFCL the gain over the untrained model is small and the exam cannot separate them (higher by point estimate, ranges overlap), and the adapter is lower than the teacher. We never claim the adapter is better than the teacher. Strict scoring means an answer counts only if it is one JSON object with the right tool and arguments; free-text arguments are a known weak spot in the training data. The hard exam was written by Claude Sonnet 5.5 for evaluation only and is never training data.
 
 [Tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-train) · [Hard exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard) · [BFCL exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl)
 
@@ -228,7 +228,7 @@ On the Nebius side, Token Factory's [post-training model list](https://docs.toke
 ### What would help
 
 - Hosted LoRA serving for Nemotron Nano on Token Factory, paid per token: upload an adapter, call it by name. Today a small fine-tuned model pays for itself only at high volume, because its GPU endpoint keeps running.
-- Clear terms on training with outputs. The "competing service" clause, §5(f) of Token Factory's terms, is broad; one sentence allowing customers to fine-tune their own models on an openly licensed model's outputs would settle it. I asked support on Oct 19, 2026 and have no final answer yet.
+- Clear terms on training with outputs. The "competing service" clause, §5(f) of Token Factory's terms, is broad; one sentence allowing customers to fine-tune small models on an openly licensed model's outputs would settle it. I asked support on Oct 19, 2026 and have no final answer yet.
 - A small GPU credit in the Builder Program, or managed fine-tuning for Nano, so the training side has a Nebius path too.
 - Per-model docs on token logprobs, `n` choices and the thinking switch. Confidence routing depends on all three.
 - From NVIDIA: prebuilt `mamba-ssm` and `causal-conv1d` wheels for common CUDA versions, and an official LoRA recipe for Nano that names the target modules that work.
@@ -241,6 +241,14 @@ You need Python 3.10 or newer (text-to-SQL fixture tasks need 3.11; the Docker i
 git clone https://github.com/harshbhx/ratchet.git && cd ratchet
 make install                            # pip install -e ".[dev]"
 make demo                               # mock gateway with a trained student: http://localhost:8000
+```
+
+**Windows, or no `make`.** The same steps in PowerShell:
+
+```powershell
+python -m pip install -e ".[dev]"
+$env:RATCHET_MOCK_WARMUP_DAYS="4"; python -m uvicorn ratchet.gateway:app --port 8000
+python -m pytest -q   # the tests; tests/test_watch.py needs a Unix host and skips itself
 ```
 
 Open <http://localhost:8000> (the story), `/scout` and `/dashboard`; everything there is simulation. Point any OpenAI SDK at the gateway by changing the base URL, and name the task in a header:
@@ -257,6 +265,8 @@ r = client.chat.completions.create(
 print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage_breakdown ...
 ```
 
+This message gets a mock teacher's answer (`served_by: teacher`), because the mock student only knows the simulation's synthetic tickets. To see the student answer, open `/dashboard` and run a day.
+
 <details>
 <summary>More commands</summary>
 
@@ -271,7 +281,7 @@ print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage
 
 </details>
 
-**Live mode** (real Token Factory calls): set `NEBIUS_API_KEY` and `RATCHET_API_KEYS`, then `RATCHET_MODE=live uvicorn ratchet.gateway:app --port 8000`. The full setup is in [docs/LIVE_MODE.md](docs/LIVE_MODE.md); every setting is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+**Live mode** (real Token Factory calls): set `NEBIUS_API_KEY` and `RATCHET_API_KEYS`, then `RATCHET_MODE=live uvicorn ratchet.gateway:app --port 8000` (PowerShell: `$env:RATCHET_MODE="live"; python -m uvicorn ratchet.gateway:app --port 8000`). The full setup is in [docs/LIVE_MODE.md](docs/LIVE_MODE.md); every setting is in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Under the hood
 
@@ -292,7 +302,7 @@ flowchart LR
     class live good
 ```
 
-- **Statistics, not vibes.** Exact Clopper-Pearson certificates on held-out rows, an opt-in anytime-valid canary rule, a label-free drift alarm and a teacher watch. See [Features in depth](docs/FEATURES.md).
+- **Release statistics.** Exact Clopper-Pearson certificates on held-out rows, an opt-in anytime-valid canary rule, a label-free drift alarm and a teacher watch. See [Features in depth](docs/FEATURES.md).
 - **Privacy.** PII is redacted before anything is stored (pattern-based: names and street addresses are not caught yet), storage opt-outs and erasure exist, and API keys and end-user identifiers are never stored. See [Features in depth](docs/FEATURES.md) and the [threat model](docs/THREAT_MODEL.md).
 - **License provenance.** Every example records its teacher and license when it is captured. Each trained adapter gets a bill of materials signed with Ed25519, which anyone with the public key can check offline (`python -m ratchet.bom verify`), and a `NOTICE.md` that travels with the weights.
 - **Economics.** The cost report counts savings by GPU-hours actually paid and says so when a GPU endpoint would cost more than it saves.
@@ -301,23 +311,18 @@ flowchart LR
 
 ### How it uses NVIDIA and Nebius
 
-<details>
-<summary>Which model and service does what</summary>
-
 | Role | Model / service | Why |
 |---|---|---|
 | Teacher | `nvidia/Nemotron-3-Ultra-550b-a55b` on **Token Factory** | Largest Nemotron 3 model; OpenMDW-1.1 allows distillation |
 | Judge (free-text eval) | `nvidia/nemotron-3-super-120b-a12b` on **Token Factory** | JSON mode; priced below the teacher in `config.py` |
 | Fallback student | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on **Token Factory** | Used when your endpoint is stopped |
 | Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA on a **Nebius Serverless Endpoint** (vLLM) | Small enough for one GPU; the adapter is the part you own |
-| Night School | **Nebius Serverless Jobs** (L40S) with TRL + PEFT | Billed by the hour while a job runs (Nebius docs) |
+| Night School | **Nebius Serverless Jobs** (L40S) with TRL + PEFT | Billed per second while a job runs ([Serverless overview](https://docs.nebius.com/serverless/overview), read Oct 26, 2026) |
 | Dataset / adapters | **Nebius Object Storage** bucket mounted in jobs and endpoints | |
-| Public demo host | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | The gateway does no inference |
+| Designed demo host (today: Cloudflare Workers with Containers) | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | The gateway does no inference |
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) | Search tool for the Scout demo only |
 
-</details>
-
-Rows 4 to 6 (the student endpoint, Night School and the object storage) are the design: the scripts are written and tested offline, ready to run with `make nebius-plan`, and the adapters in [Real results](#results) were trained on a borrowed GPU. Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the designed home of the student is Nebius AI Cloud.
+Rows 4 to 7 (the student endpoint, Night School, the object storage and the CPU VM) are the design: the scripts are written and tested offline, ready to run with `make nebius-plan`. Today the public demos run on Cloudflare Workers with Containers, and the adapters in [Real results](#results) were trained on a borrowed GPU. Token Factory's [post-training model list](https://docs.tokenfactory.nebius.com/post-training/models.md) names no Nemotron model (read Oct 26, 2026), and serving custom weights on a dedicated endpoint is "currently in beta and available on request" ([docs](https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights.md), read Oct 21, 2026), so the designed home of the student is Nebius AI Cloud.
 
 ## Why "license-clean"
 
@@ -368,10 +373,10 @@ NVIDIA Research's paper "Small Language Models are the Future of Agentic AI" ([a
 | S2 "Data curation and filtering" | PII redaction before storage; only complete teacher answers that are valid under the task's spec are kept | Yes |
 | S3 "Task clustering" | Not clustered: the caller names each request's task (`X-Ratchet-Task` or `metadata.ratchet_task`) and the operator may give a task a typed field spec in the task registry; statistics are kept per task | No: manual, tasks are named, not clustered |
 | S4 "SLM selection" | One base, Nemotron 3 Nano 4B, chosen by hand for size, license and serving cost; Ratchet does not compare bases | No: manual, one base model |
-| S5 "Specialized SLM fine-tuning" | A LoRA fine-tune each night on a Nebius Serverless Job, from teacher answers only | Yes |
+| S5 "Specialized SLM fine-tuning" | A LoRA fine-tune each night, from teacher answers only: it runs nightly in the simulation; on a Nebius Serverless Job it is scripted and tested offline, ready to run | Yes |
 | S6 "Iteration and refinement" | Night School every night, gated by a held-out golden set (with an exact precision certificate in each signed BOM), shadow, canary and automatic rollback | Yes |
 
-NVIDIA's [Data Flywheel Blueprint](https://developer.nvidia.com/blog/build-efficient-ai-agents-through-model-distillation-with-nvidias-data-flywheel-blueprint) (blog Jun 11, 2025) also distils production traffic into smaller models, but its README says "Promotion to production—as well as any deeper evaluation or dataset curation—remains a human decision" and "Think of the Flywheel as a flashlight, not an autopilot" ([repo](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), marked deprecated in Apr 2026; read Oct 21, 2026). Ratchet is the autopilot, with statistical brakes: it makes the promotion decision with statistics on held-out rows and audited traffic, and writes each decision and its numbers to the release log.
+NVIDIA's [Data Flywheel Blueprint](https://developer.nvidia.com/blog/build-efficient-ai-agents-through-model-distillation-with-nvidias-data-flywheel-blueprint) (blog Jun 11, 2025) also distils production traffic into smaller models, but its README says "Promotion to production—as well as any deeper evaluation or dataset curation—remains a human decision" and "Think of the Flywheel as a flashlight, not an autopilot" ([repo](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), marked deprecated in Apr 2026; read Oct 21, 2026). Ratchet makes the promotion decision itself, with statistics on held-out rows and audited traffic, and writes each decision and its numbers to the release log.
 
 The student's base has its own NVIDIA lineage: Nemotron 3 Nano 4B "has been compressed from NVIDIA-Nemotron-Nano-9B-v2 using the Nemotron Elastic framework", released Mar 16, 2026 ([model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16), read Oct 21, 2026).
 
@@ -396,7 +401,7 @@ We did not invent the pieces. Ratchet puts them in one loop that runs by itself.
 <details>
 <summary>What is generated, and how to regenerate it</summary>
 
-The git history starts on Oct 19, 2026; every change since then is a dated commit. No third-party source files are copied into the repository: outside code comes in only as the dependencies declared in `pyproject.toml` and `web/package.json`, and the model weights are downloaded, never committed. These files are generated rather than written by hand, and the command that regenerates each is in the repo:
+The git history starts on Oct 19, 2026; every change since then is a dated commit. No third-party source files are copied into the repository except the files listed in [NOTICE](NOTICE): outside code comes in otherwise only as the dependencies declared in `pyproject.toml` and `web/package.json`, and the model weights are downloaded, never committed. These files are generated rather than written by hand, and the command that regenerates each is in the repo:
 
 - `ratchet/web/dist/`: the build of `web/` (`make web`).
 - `docs/REQUIREMENTS.md`: the requirements matrix (`python scripts/reqtrace.py`).
@@ -416,7 +421,7 @@ The git history starts on Oct 19, 2026; every change since then is a dated commi
 | `ratchet/gateway.py`, `ratchet/router.py` | The OpenAI-compatible API and the cascade: pinned tasks, audits, shadow arbitration, cost accounting |
 | `ratchet/release.py`, `ratchet/stats.py`, `ratchet/certificate.py` | Golden gate, shadow, canary, rollback; the exact statistics and certificates behind them |
 | `ratchet/ledger.py`, `ratchet/licenses.py`, `ratchet/redact.py`, `ratchet/bom.py` | The provenance ledger, the teacher license registry (closed teachers refused), redaction, the signed BOM |
-| `ratchet/nightschool/`, `ratchet/live.py` | Dataset build, LoRA training (TRL + PEFT), golden eval, nightly orchestration on Nebius |
+| `ratchet/nightschool/`, `ratchet/live.py` | Dataset build, LoRA training (TRL + PEFT), golden eval, nightly orchestration (runs in the simulation; on Nebius scripted and tested offline, ready to run) |
 | `ratchet/scout/` | Scout: agents, prompts, search, budget guard, CLI |
 | `web/`, `ratchet/web/dist/` | The React app (story, Scout, dashboard) and its committed build |
 | `sim/` | Synthetic tickets and mock models for demos, tests and the simulation |
