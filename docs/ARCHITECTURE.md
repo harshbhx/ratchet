@@ -12,29 +12,60 @@ Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.m
 
 The picture shows the design. The diagram below names the files and services.
 
-```
-                         ┌──────────────────────────────── Nebius Token Factory ─────────┐
-                         │  Teacher: nvidia/Nemotron-3-Ultra-550b-a55b                   │
-                         │  Judge:   nvidia/nemotron-3-super-120b-a12b (free-text eval)  │
-                         │  Fallback student: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B      │
-                         └──────────────▲────────────────────────────────────────────────┘
-                                        │ OpenAI-compatible HTTPS
-┌──────────┐   /v1/chat/completions   ┌─┴──────────────────────────────┐
-│ Your app │ ───────────────────────▶ │ Gateway  (ratchet/gateway.py)  │──── SQLite ledger (ratchet/ledger.py)
-└──────────┘ ◀─────────────────────── │  Ratchet router (router.py)    │      requests · examples · versions · events
-                                      │  ReleaseGate.tick (release.py) │
-                                      │  Pages: /, /scout, /dashboard  │
-                                      │  Scout agents (scout/)  ───────┼──── Tavily Search API (live Scout only)
-                                      └─┬──────────────────────────────┘
-                                        │ OpenAI-compatible HTTPS (model = adapter name)
-                         ┌──────────────▼──── Nebius AI Cloud ─────────────────────────────┐
-                         │ Serverless Endpoint: vLLM + nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 │
-                         │   LoRA adapters loaded at runtime (/v1/load_lora_adapter)         │
-                         │ Serverless Job (nightly): ratchet.nightschool.train (TRL + PEFT)  │
-                         │ Object Storage bucket mounted at /data: night/train.jsonl,        │
-                         │   adapters/<version>/                                             │
-                         └───────────────────────────────────────────────────────────────────┘
-          Night School driver: python -m ratchet.live night | tick   (ratchet/live.py, cron)
+```mermaid
+flowchart TB
+  app(["Your app"])
+
+  subgraph tf["Nebius Token Factory"]
+    direction LR
+    teacher["Teacher<br/>nvidia/Nemotron-3-Ultra-550b-a55b"]
+    judge["Judge, free-text eval<br/>nvidia/nemotron-3-super-120b-a12b"]
+    fallback["Fallback student<br/>nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"]
+  end
+
+  subgraph gw["Gateway · ratchet/gateway.py"]
+    direction LR
+    router["Ratchet router<br/>router.py"]
+    gate{{"ReleaseGate.tick<br/>release.py"}}
+    pages["Pages<br/>/ · /scout · /dashboard"]
+    scout["Scout agents<br/>scout/"]
+  end
+
+  ledger[("SQLite ledger · ratchet/ledger.py<br/>requests · examples · versions · events")]
+  tavily["Tavily Search API<br/>live Scout only"]
+
+  subgraph cloud["Nebius AI Cloud · scripted and tested offline, ready to run"]
+    direction LR
+    endpoint["Serverless Endpoint<br/>vLLM + nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16<br/>LoRA adapters loaded at runtime"]
+    job["Serverless Job, nightly<br/>ratchet.nightschool.train · TRL + PEFT"]
+    bucket[("Object Storage at /data<br/>night/train.jsonl · adapters/VERSION/")]
+  end
+
+  driver["Night School driver, cron<br/>python -m ratchet.live night | tick"]
+
+  app ==>|"/v1/chat/completions"| router
+  router ==>|"OpenAI-compatible HTTPS"| teacher
+  router -->|"OpenAI-compatible HTTPS<br/>model = adapter name"| endpoint
+  router --> ledger
+  scout -.-> tavily
+  driver --> job
+  job --> bucket
+  bucket -.->|"runtime LoRA load"| endpoint
+
+  class teacher,judge,fallback teacher
+  class endpoint student
+  class job pending
+  class ledger,bucket store
+  class gate gate
+  class tavily outline
+  class tf teacherZone
+  class cloud pendingZone
+  classDef student stroke-width:1.5px
+  classDef teacher stroke-width:1.5px
+  classDef store stroke-width:1.25px
+  classDef gate stroke-width:1.5px
+  classDef pending stroke-width:1.5px,stroke-dasharray:5 4
+  classDef outline stroke-width:1.25px,stroke-dasharray:4 3
 ```
 
 Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested, ready to run with `make nebius-plan`. The adapters behind the measured numbers in [evidence/](../evidence/) were trained on a borrowed GPU. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
@@ -284,32 +315,62 @@ Each span becomes a placeholder in the task's style (its spec's `privacy.redact_
 
 `run_night(ledger, trainer, evaluator, gate, base_model, min_new_examples=50, task=None, retention=None, relabel=None)` in `nightschool/orchestrate.py`:
 
+```mermaid
+flowchart TB
+  start(["run_night"]) --> retention["Retention windows set (live mode)?<br/>apply them first: event purge"]
+  retention --> paused{{"Training paused by an operator?"}}
+  paused -->|"yes"| stop1(["skip, stop"])
+  paused -->|"no"| storage{{"Storage disabled?<br/>RATCHET_STORE_EXAMPLES=0, zero retention"}}
+  storage -->|"yes"| stop2(["skip, stop: storage disabled"])
+  storage -->|"no"| watch["Teacher watch, unless frozen:<br/>probes, then adjudication · event teacher_watch"]
+  watch --> frozen{{"Teacher watch frozen?<br/>teacher_drift"}}
+  frozen -->|"yes"| stop3(["skip, stop"])
+  frozen -->|"no"| inflight{{"Release in flight?<br/>a version in shadow or canary"}}
+  inflight -->|"yes"| stop4(["skip, stop"])
+  inflight -->|"no"| build["dataset.build()<br/>train rows + golden rows"]
+  build --> enough{{"At least 50 new train rows<br/>and some golden rows?"}}
+  enough -->|"no"| stop5(["skip, stop<br/>re-score live first if a golden spec changed"])
+  enough ==>|"yes"| recheck["Champion re-check<br/>score the live version on today's golden set"]
+  recheck ==> train["Commit both sets, then train<br/>trainer.train() → student-vN+1"]
+  train ==> evaluate["Candidate version, its leaves, its eval<br/>and the paired comparison with live"]
+  evaluate ==> bom["Signed bill of materials<br/>event trained"]
+  bom ==> admit{{"gate.admit(version)"}}
+  admit -->|"fails a check"| rejected(["rejected"])
+  admit ==>|"passes"| shadow(["shadow, or canary 10% on a cold start"])
+
+  class paused,storage,frozen,inflight,enough,admit gate
+  class build,bom store
+  class train student
+  class rejected,stop1,stop2,stop3,stop4,stop5 danger
+  class shadow ok
+  classDef danger stroke-width:1.5px
+  classDef ok stroke-width:1.5px
+  classDef student stroke-width:1.5px
+  classDef teacher stroke-width:1.5px
+  classDef store stroke-width:1.25px
+  classDef gate stroke-width:1.5px
+  classDef pending stroke-width:1.5px,stroke-dasharray:5 4
+  classDef outline stroke-width:1.25px,stroke-dasharray:4 3
 ```
- ┌─ retention windows set? (live mode) ── yes ──▶ apply them first (privacy.apply_retention): event "purge"
- ├─ storage disabled? (RATCHET_STORE_EXAMPLES=0, zero retention) ── yes ──▶ event "skip", stop ("storage disabled")
- ├─ teacher watch, not frozen: probes, then adjudication (relabel; also during a release) ─▶ event "teacher_watch"
- ├─ teacher watch frozen? (teacher_drift) ───────────────────────── yes ──▶ event "skip", stop
- ├─ release in flight? (any version in shadow or canary) ── yes ──▶ event "skip", stop
- │ no
- ├─ dataset.build(): train rows + golden rows (license-checked, contested rows left out)
- ├─ new = train_examples − max(train_examples of all previous versions) + its training rows purged since
- │     new < min_new_examples (50) ───────────────────────────────▶ event "skip" (re-score the live
- │                                       version first when a golden task's spec changed: "rescored"), stop
- │     no golden rows ────────────────────────────────────────────▶ event "skip", stop
- ├─ champion re-check: evaluate the LIVE version on today's golden set, overwrite its eval (+ spec_hashes;
- ├─ dataset.commitment(train_rows), dataset.commitment(golden_rows): root, size and sorted leaves of each
- │     split's set commitment (a duplicate key stops the night here, before any GPU time)
- │     tasks the gate disabled on it stay disabled)
- ├─ trainer.train(train_rows, base_model, name="student-v{N+1}") → adapter_uri
- ├─ ledger.create_version(state="candidate")
- ├─ ledger.set_version_leaves(): the train and golden leaves, written once (append-only, INV-17)
- ├─ evaluator.evaluate(adapter_uri, golden_rows) → {precision, coverage, threshold, tasks: {...}, certificate, ...} + spec_hashes
- ├─ live version? paired_evidence(): the candidate's test vector vs the re-check's → eval["paired"]
- ├─ ledger.update_eval(), then ledger.set_bom(): bill of materials from the exact train and golden rows,
- │     with the eval (certificate, frontier, paired counts), both set commitments and the teacher's self-agreement, signed if a key is set
- ├─ event "trained"
- └─ gate.admit(version) → rejected | canary 10% (cold start) | shadow (tasks that fail their own check disabled)
-```
+
+In detail, in the order the code runs:
+
+1. **Retention.** With windows set (live mode), apply them first (`privacy.apply_retention`): event `purge`.
+2. **Operator pause.** `training_paused` (the admin API or CLI) skips the night before anything else.
+3. **Storage disabled** (`RATCHET_STORE_EXAMPLES=0`, zero retention): event `skip`, stop (`storage disabled`).
+4. **Teacher watch**, unless frozen: probes, then adjudication (`relabel`; this also runs during a release): event `teacher_watch`. Frozen (`teacher_drift`): event `skip`, stop.
+5. **Release in flight** (any version in shadow or canary): event `skip`, stop.
+6. **`dataset.build()`**: train rows and golden rows, license-checked, with contested rows left out.
+7. **New data**: new = train_examples − max(train_examples of every earlier version) + that version's training rows purged since. Below `min_new_examples` (50): event `skip`, stop, after re-scoring the live version when a golden task's spec changed (`rescored`). No golden rows: event `skip`, stop.
+8. **Champion re-check**: evaluate the LIVE version on today's golden set and overwrite its eval (with `spec_hashes`; tasks the gate disabled on it stay disabled). Examples erased while it ran are dropped from the training rows (`erasure_honoured`).
+9. **Set commitments**: `dataset.commitment(train_rows)` and `dataset.commitment(golden_rows)` (root, size and sorted leaves of each split). A duplicate key stops the night here, before any GPU time.
+10. **`trainer.train(train_rows, base_model, name="student-v{N+1}")`** → `adapter_uri`.
+11. **`ledger.create_version(state="candidate")`**, then `ledger.set_version_leaves()`: the train and golden leaves, written once (append-only, INV-17).
+12. **`evaluator.evaluate(adapter_uri, golden_rows)`** → `{precision, coverage, threshold, tasks: {...}, certificate, ...}` + `spec_hashes`.
+13. **With a live version, `paired_evidence()`**: the candidate's test vector against the re-check's → `eval["paired"]`.
+14. **`ledger.update_eval()`, then `ledger.set_bom()`**: the bill of materials from the exact train and golden rows, with the eval (certificate, frontier, paired counts), both set commitments and the teacher's self-agreement, signed if a key is set.
+15. **Event `trained`.**
+16. **`gate.admit(version)`** → rejected, or canary 10% (cold start), or shadow (tasks that fail their own check are disabled).
 
 - **Mock mode**: `MockFleet` (in `sim/mock_models.py`) is both trainer and evaluator. It finds each row's template from its messages and stored conditions, so a generic row (a schema, free text) trains like a ticket.
 - **Teacher watch** (`teacher_watch.night`, FR-5.40, FR-5.41, [ADR 0033](adr/0033-teacher-watch.md)): first, unless the watch is frozen. Probes ask the teacher again about up to `RATCHET_TEACHER_PROBES` (20) stored labels not yet re-tested in the current check epoch (the configured teacher's, no redaction placeholders, a checkable task, not contested; in hash order), as an audit asks (temperature 0, the example's stored conditions); each answer that could be stored is compared with the stored label as that request's first re-test of the epoch. Adjudication gives up to `RATCHET_ADJUDICATE_MAX` (50) contested labels two more teacher answers each: a strict majority of the three becomes the label (the same teacher, so provenance and license stay), and without one the label stays quarantined as unresolved, behind the ones never adjudicated. Both are evidence, not training, so they run while a release is in flight too; the first teacher error stops them, not the night. Then the release gate's freeze rule runs once more (tonight's probes may tip it), and a frozen watch skips the night before anything else: only an operator lifts it (`POST /ratchet/teacher/ack`). With `RATCHET_TEACHER_WATCH=0` none of this happens and contested rows stay in the sets.
@@ -876,12 +937,24 @@ This table lists some of the decisions, not all of them. The full numbered index
 
 Scout shows Ratchet on agent traffic. The full description and event contract are in [SCOUT.md](SCOUT.md).
 
-```
-question ─▶ Planner (research-plan, pinned) ─▶ 3 queries
-          ─▶ Searcher (Tavily or MockSearch, a tool) ─▶ up to 12 results
-          ─▶ Triage × results (source-triage, distillable, thread pool of 6)
-          ─▶ Reader × relevant results, up to 6 (page-read, distillable, thread pool of 6)
-          ─▶ Writer (research-write, pinned) ─▶ answer with citations
+```mermaid
+flowchart LR
+  q(["question"]) ==> planner["Planner<br/>research-plan, pinned"]
+  planner ==>|"3 queries"| searcher["Searcher<br/>Tavily or MockSearch, a tool"]
+  searcher ==>|"up to 12 results"| triage["Triage × results<br/>source-triage, distillable<br/>thread pool of 6"]
+  triage ==>|"relevant, up to 6"| reader["Reader × results<br/>page-read, distillable<br/>thread pool of 6"]
+  reader ==> writer["Writer<br/>research-write, pinned"]
+  writer ==> answer(["answer with citations"])
+
+  class planner,writer teacher
+  class triage,reader student
+  class searcher outline
+  classDef student stroke-width:1.5px
+  classDef teacher stroke-width:1.5px
+  classDef store stroke-width:1.25px
+  classDef gate stroke-width:1.5px
+  classDef pending stroke-width:1.5px,stroke-dasharray:5 4
+  classDef outline stroke-width:1.25px,stroke-dasharray:4 3
 ```
 
 - Every agent call is `call(messages, task)`. In the gateway it is `Ratchet.handle` in-process (`Runtime.scout()`). From outside it is `http_caller`, a plain HTTP client for `/v1/chat/completions` with an `X-Ratchet-Task` header.
@@ -1007,9 +1080,19 @@ Which answers a version's release statistics count ([ADR 0073](adr/0073-fallback
 
 The public demo runs a live gateway and a simulation as two Cloudflare Workers with Containers (`deploy/cloudflare-live`, `deploy/cloudflare`). The Nebius VM kit, the alternative host (scripted and tested offline), serves the same two gateways from one image behind one Caddy: the live one at the root domain, and `ratchet-sim` (mock mode, in-memory ledger, no keys, 1 vCPU and 1 GiB) at `sim.<domain>`. INV-8 stays in the app, so the live host answers every demo route 403 whatever Caddy does ([ADR 0133](adr/0133-live-and-simulation-hosts.md)).
 
-```
-Caddy ─┬─ <domain>      ─▶ ratchet      (live; Token Factory, student endpoint, Tavily)
-       └─ sim.<domain>  ─▶ ratchet-sim  (mock; demo controls open, per-IP limit, self-reset)
+```mermaid
+flowchart LR
+  caddy["Caddy"] ==>|"#lt;domain#gt;"| live["ratchet<br/>live: Token Factory, student endpoint, Tavily"]
+  caddy -->|"sim.#lt;domain#gt;"| sim["ratchet-sim<br/>mock: demo controls open, per-IP limit, self-reset"]
+
+  class live teacher
+  class sim outline
+  classDef student stroke-width:1.5px
+  classDef teacher stroke-width:1.5px
+  classDef store stroke-width:1.25px
+  classDef gate stroke-width:1.5px
+  classDef pending stroke-width:1.5px,stroke-dasharray:5 4
+  classDef outline stroke-width:1.25px,stroke-dasharray:4 3
 ```
 
 - `ratchet/demo.py` (mock mode only): `DemoPolicy`, and the `DemoJanitor` that resets the shared simulation after N simulated days or requests (on a click) or idle time (a daemon thread). `gateway._demo_limit` is an app-level dependency after `_access`: a per-IP bucket (`ratelimit.RateLimiter`) on non-GET `/ratchet/demo/*` calls.
