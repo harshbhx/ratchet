@@ -198,9 +198,10 @@ jobs:
         if: matrix.python == '3.12'
       - run: ruff format --check .
         if: matrix.python == '3.12'
-      - run: pytest -q --runslow --cov=ratchet --cov=sim --cov-report=term-missing:skip-covered
+      # The full-size Monte Carlo checks (`slow`, `--runslow`) run on main and by hand; a pull request runs their quick versions.
+      - run: pytest -q ${{ github.event_name == 'pull_request' && '' || '--runslow' }} --cov=ratchet --cov=sim --cov-report=term-missing:skip-covered
         if: matrix.python == '3.12'
-      - run: pytest -q --runslow
+      - run: pytest -q ${{ github.event_name == 'pull_request' && '' || '--runslow' }}
         if: matrix.python != '3.12'
       - name: Requirements traceability
         run: python scripts/reqtrace.py --check
