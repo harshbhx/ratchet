@@ -4,7 +4,7 @@
 # torch read this file as constraints, so the two files disagreeing fails the build, and
 # tests/test_nightschool.py::test_dockerfile_is_pinned checks them offline.
 torch==2.11.0
-transformers==4.57.6
+transformers==5.20.2
 trl==1.16.0
 peft==0.21.2
 accelerate==1.15.0
