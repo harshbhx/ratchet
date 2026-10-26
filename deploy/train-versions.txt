@@ -12,6 +12,6 @@ datasets==4.8.5
 causal-conv1d==1.6.2.post1
 mamba-ssm==2.3.2.post1
 ninja==1.13.0
-packaging==26.2
+packaging==26.3
 setuptools==82.0.1
 wheel==0.47.0
