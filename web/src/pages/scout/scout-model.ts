@@ -78,3 +78,19 @@ export function runsLeftText(r: RunsLeft): string {
   if (r.left === 0) return "No demo runs left today. The count resets at 00:00 UTC.";
   return `${r.left} ${r.left === 1 ? "run" : "runs"} left today`;
 }
+
+// ---------- the edge's daily limit per visitor, and the recorded runs offered instead
+
+/** The edge refuses a fourth Scout run of a day with `{"detail": "Daily limit reached: 3 Scout runs per visitor per day. ..."}`. */
+export function isScoutDailyLimit(message: string | null | undefined): boolean {
+  return typeof message === "string" && message.trimStart().startsWith("Daily limit reached");
+}
+
+export const SCOUT_LIMIT_TITLE = "You've used your 3 free Scout runs today.";
+export const SCOUT_LIMIT_TEXT = "They reset at 00:00 UTC. Meanwhile, watch a recorded run:";
+
+/** The recordings to offer: live ones first, each group in the gateway's order (newest first). */
+export function recordingChoices<T extends { mode: string }>(list: readonly T[] | null | undefined): T[] {
+  const all = list ?? [];
+  return [...all.filter((r) => r.mode === "live"), ...all.filter((r) => r.mode !== "live")];
+}

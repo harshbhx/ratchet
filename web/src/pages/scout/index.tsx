@@ -14,9 +14,9 @@ import { AGENTS, RouteNote } from "./bits";
 import { Explainer } from "./explainer";
 import { PlannerLane, ReaderLane, SearcherLane, TriageLane } from "./lanes";
 import { JudgeCode } from "./judge-code";
-import { ErrorAlert, RunSummary, WriterCard } from "./summary";
+import { DailyLimitNotice, ErrorAlert, RunSummary, WriterCard } from "./summary";
 import { announceText, phaseText } from "./state";
-import { budgetLeft, runsLeftText, runsLeftToday } from "./scout-model";
+import { budgetLeft, isScoutDailyLimit, runsLeftText, runsLeftToday } from "./scout-model";
 import { TotalsBar } from "./totals-bar";
 import { useScout } from "./use-scout";
 
@@ -93,7 +93,7 @@ export default function ScoutPage() {
 }
 
 function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
-  const { run, derived, examples, examplesError, status, statusLoading, mode, start, stop, reloadExamples, refreshStatus, recording, playing, liveRecording, play, skip } = scout;
+  const { run, derived, examples, examplesError, status, statusLoading, mode, start, stop, reloadExamples, refreshStatus, recording, playing, recordings, liveRecording, play, skip } = scout;
   const [hint, setHint] = useState<string | null>(null);
   const graphRef = useRef<HTMLDivElement | null>(null);
   const running = run.status === "running";
@@ -215,7 +215,10 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
       <Container className={cn("space-y-6", started ? "pt-2" : "pt-8")}>
         {/* ---------------- agent graph (errors show right above it, where the eye is during a run) */}
         <div ref={graphRef} className="scroll-mt-[200px] space-y-6 sm:scroll-mt-[192px]">
-          {run.status === "error" && run.error && <ErrorAlert message={run.error} onRetry={() => go(run.question)} onWatch={liveRecording ? () => void play(liveRecording) : undefined} />}
+          {run.status === "error" && run.error && isScoutDailyLimit(run.error) && <DailyLimitNotice recordings={recordings} onWatch={(r) => void play(r)} />}
+          {run.status === "error" && run.error && !isScoutDailyLimit(run.error) && (
+            <ErrorAlert message={run.error} onRetry={() => go(run.question)} onWatch={liveRecording ? () => void play(liveRecording) : undefined} />
+          )}
           <Card className="overflow-hidden">
             <section aria-labelledby="h-graph">
               <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-line px-4 py-3.5 sm:px-6">
