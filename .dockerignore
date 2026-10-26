@@ -8,3 +8,6 @@ data/
 docs/img/
 tests/
 **/.env
+**/node_modules/
+.claude/
+audit/

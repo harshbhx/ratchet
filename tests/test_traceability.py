@@ -137,7 +137,10 @@ def test_ast_count_matches_pytest_collection(repo):
     out = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=300, env=env)
     assert out.returncode == 0, out.stdout[-2000:] + out.stderr[-2000:]
     collected = Counter(line.split("::")[0] for line in out.stdout.splitlines() if line.startswith("tests/") and "::" in line)
-    assert dict(collected) == repo.tests.counts()
+    expected = dict(repo.tests.counts())
+    if importlib.util.find_spec("fcntl") is None:  # Windows: tests/test_watch.py skips itself (pytest.importorskip)
+        expected.pop("tests/test_watch.py", None)
+    assert dict(collected) == expected
 
 
 def test_check_cli_passes_and_writes_the_committed_matrix(tmp_path, capsys):

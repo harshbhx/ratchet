@@ -8,7 +8,6 @@ nothing here asserts either.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import hmac
 import io
@@ -25,6 +24,10 @@ import pytest
 
 from ratchet import watch
 from ratchet.watch import Env, Reply, WatchConfig
+
+# The watchdog's lock and these tests' shell scripts need a Unix host; on Windows the module skips itself, so
+# `pytest -q` still collects.
+fcntl = pytest.importorskip("fcntl")
 
 ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")

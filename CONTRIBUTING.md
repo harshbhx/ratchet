@@ -12,7 +12,7 @@ make sim            # see the whole loop run with mock models
 make demo           # http://localhost:8000: / landing, /scout, /dashboard
 ```
 
-No API keys or GPUs are needed for development. Live mode needs a Nebius Token Factory key; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+No API keys or GPUs are needed for development. Live mode needs a Nebius Token Factory key; see [docs/LIVE_MODE.md](docs/LIVE_MODE.md).
 
 ## Ground rules
 
@@ -28,7 +28,7 @@ Read [AGENTS.md](AGENTS.md) first. The invariants there are non-negotiable, espe
 1. Branch from `main`.
 2. Keep the PR to one change. Describe what and why.
 3. Fill in the PR template checklist.
-4. CI runs ruff, pytest on Python 3.10–3.13, the requirements traceability check, the startup config check, the reference workloads, a simulation smoke test, a web job (type check, `npm test`, build, and a check that the committed build matches), a docs job, a Docker build, the evidence, link and secret checks. A pull request runs only the checks for the areas it changed; `main` runs all of them ([docs/TESTING.md](docs/TESTING.md#what-ci-runs)). The `ci-ok` check sums them up.
+4. CI runs ruff, pytest on Python 3.10–3.13, the requirements traceability check, the startup config check, the reference workloads, a simulation smoke test, a web job (type check, `npm test`, build, and a check that the committed build matches), a docs job, a Docker build, a `workers` job (the video link Worker's tests, type check and dry-run bundle), a `workflows` job (every workflow file parses), and the evidence, link and secret checks. A pull request runs only the checks for the areas it changed; `main` runs all of them ([docs/TESTING.md](docs/TESTING.md#what-ci-runs)). The `ci-ok` check sums them up.
 
 ## Commit messages
 

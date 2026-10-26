@@ -1,5 +1,5 @@
 """A tiny, read-only status endpoint for the training run: it returns the progress the pipeline wrote, nothing else.
-Deploy once with `python -m modal deploy status_app.py`; it holds no secrets and the page polls it."""
+Deploy once with `python -m modal deploy modal_status_app.py`; it holds no secrets and the page polls it."""
 
 import time
 

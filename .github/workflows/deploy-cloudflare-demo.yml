@@ -1,6 +1,7 @@
 # Deploys the demo to Cloudflare Containers. MANUAL ONLY: it never runs on a push, a merge or a schedule.
-# Run it from the Actions tab (Run workflow) and type "deploy" in the box. It needs two repository secrets, added in
-# Settings > Secrets and variables > Actions (never in chat, never in a file): CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+# Run it from the Actions tab (Run workflow, on main: any other branch deploys nothing) and type "deploy" in the box.
+# It needs two repository secrets, added in Settings > Secrets and variables > Actions (never in chat, never in a file):
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
 name: deploy-cloudflare-demo
 
 on:
@@ -16,7 +17,7 @@ permissions:
 
 jobs:
   deploy:
-    if: ${{ inputs.confirm == 'deploy' }}
+    if: ${{ inputs.confirm == 'deploy' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -26,7 +27,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - name: Build the image and deploy
         run: npx wrangler deploy
         env:
@@ -37,7 +38,7 @@ jobs:
     # Final check from outside once the deploy is done: pages, /healthz mode, /readyz and /scout/status (never runs Scout,
     # never sends a key or a completion). A waking-up demo gets about two minutes of retries to answer.
     needs: deploy
-    if: ${{ inputs.confirm == 'deploy' }}
+    if: ${{ inputs.confirm == 'deploy' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

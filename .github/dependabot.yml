@@ -4,7 +4,27 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # The training stack in deploy/train-versions.txt (and pyproject.toml's `train` extra) is pinned on purpose and changed
+    # only together with deploy/Dockerfile.train (tests/test_nightschool.py::test_dockerfile_is_pinned) and a real training
+    # run. Keep these ignores until after judging (15 Dec 2026), then remove them.
+    ignore:
+      - dependency-name: torch
+      - dependency-name: transformers
+      - dependency-name: trl
+      - dependency-name: peft
+      - dependency-name: accelerate
+      - dependency-name: datasets
+      - dependency-name: causal-conv1d
+      - dependency-name: mamba-ssm
+      - dependency-name: ninja
+      - dependency-name: packaging
+      - dependency-name: setuptools
+      - dependency-name: wheel
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      # A new major of actions/cache waits until after judging, like the training stack.
+      - dependency-name: actions/cache
+        update-types: ["version-update:semver-major"]
