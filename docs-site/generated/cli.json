@@ -364,7 +364,7 @@
     {
       "name": "install",
       "comment": "",
-      "recipe": "pip install -e \".[dev]\" ruff"
+      "recipe": "python -m pip install -e \".[dev]\""
     },
     {
       "name": "test",
