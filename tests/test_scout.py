@@ -7,6 +7,8 @@ import dataclasses
 import json
 import logging
 import random
+import threading
+import time
 from argparse import Namespace
 from datetime import date, datetime, timezone
 from typing import Any
@@ -935,6 +937,43 @@ def test_partial_search_keeps_found_results():
     assert agents == ["planner", "searcher", "searcher", "triage", "reader", "writer"]
     assert done["search"] == {"available": False, "partial": True, "reason": "ConnectError"}
     assert [c["url"] for c in done["citations"]] == ["https://a.example.org/lora"]
+
+
+@pytest.mark.req("FR-10.1", "FR-10.5")
+def test_a_failed_agent_call_cancels_the_queued_ones():
+    """Triage (and reader) calls run in parallel. The first one to fail ends the run at once, whichever it is: the calls
+    still queued are cancelled, so a failed run pays for the calls already running, not for the rest of the batch whose
+    answers nobody would read. Here the second of 12 triage calls fails while the first is still running: before, the
+    free thread went on through the 10 queued calls until the first one finished. The error propagates, as before, for
+    the caller's `error` event, and the writer is never called."""
+    order: list[str] = []
+    first_free = threading.Event()
+
+    class Many:
+        name = "mock"
+
+        def search(self, query: str, max_results: int = 4) -> list[Hit]:
+            return [Hit(query, f"https://example.org/{query.replace(' ', '-')}/{i}", "s", "e") for i in range(4)]
+
+    def call(messages: Any, task: str) -> Call:
+        if task == "source-triage":
+            url = json.loads(messages[-1]["content"])["url"]
+            order.append(url)
+            if url.endswith("/lora-basics/0"):  # still running when the next call fails
+                first_free.wait(0.5)
+            elif url.endswith("/lora-basics/1"):
+                raise httpx.ConnectError("teacher down")
+            else:
+                first_free.set()
+                time.sleep(0.05)  # a model call: the thread waits on the network
+        elif task == "research-write":
+            order.append(task)
+        return Call(SCOUT_JSON, "teacher", "m", None, False, 0.001, 0.001, 5.0)
+
+    with pytest.raises(httpx.ConnectError):
+        Scout(call, Many(), workers=2).run("What is LoRA?", lambda ev: None)
+    assert len(order) >= 2 and len(order) <= 3, order  # at most one queued call had started on the free thread
+    assert "research-write" not in order
 
 
 @pytest.mark.req("FR-10.22", "INV-11")

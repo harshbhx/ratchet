@@ -243,6 +243,22 @@ def test_embeddings_stay_out_of_the_headline_figures(gw_env):
     assert gw.rt.ledger.client_requests_since("acme", 0) == 4
 
 
+@pytest.mark.req("FR-1.51", "FR-12.2")
+def test_a_spent_student_only_budget_refuses_embeddings_in_their_own_words(gw_env):
+    """In RATCHET_BUDGET_MODE=student_only a spent gateway budget refuses an embeddings request, which no student
+    answers, with the same 429 as a request that needs the teacher, and a message that says why: embeddings come from
+    an upstream model (it once said the request needed the teacher)."""
+    gw = _gateway(gw_env, RATCHET_DAILY_BUDGET_USD="0.0000001", RATCHET_BUDGET_MODE="student_only")
+    c = TestClient(gw.app)
+    assert c.post(CHAT, json={"messages": [{"role": "user", "content": "hi"}]}).status_code == 200  # spends the budget
+    r = c.post(EMBED, json={"input": "refund my order"})
+    assert _error(r) == (429, "gateway_budget_exceeded", None) and r.headers["x-should-retry"] == "false"
+    message = r.json()["error"]["message"]
+    assert message.endswith("embeddings come from an upstream model") and "teacher" not in message
+    chat = c.post(CHAT, json={"messages": [{"role": "user", "content": "hi again"}]})  # cold start: needs the teacher
+    assert _error(chat)[:2] == (429, "gateway_budget_exceeded") and chat.json()["error"]["message"].endswith("teacher")
+
+
 @pytest.mark.req("FR-1.51")
 def test_embeddings_validation_names_the_field(gw_env):
     gw = _gateway(gw_env, RATCHET_MAX_INPUT_CHARS="40")
@@ -545,6 +561,26 @@ def test_completions_answer_and_store_as_the_chat_request(gw_env):
     (ex,) = _examples(gw)
     assert ex["seen"] == 2  # the chat request is the same example
     assert [(row["task"], row["route"]) for row in _rows(gw)] == [(TRIAGE, "cold_start")] * 2
+
+
+@pytest.mark.req("FR-1.51", "FR-1.70", "INV-3")
+def test_sdk_retries_on_completions_and_responses_are_not_repeats(gw_env):
+    """/v1/completions and /v1/responses read `x-stainless-retry-count` as the chat routes do (ADR 0071): an SDK's retry
+    is logged with its attempt number and never bumps the stored example's `seen`, so retries cannot push a golden row
+    to FREQUENT. A first attempt is still a repeat (mock mode's seen window is 0)."""
+    gw = _gateway(gw_env)
+    c = TestClient(gw.app)
+    retry = {"x-stainless-retry-count": "1"}
+    model = f"ratchet/{TRIAGE}"
+    assert c.post(COMPLETE, json={"model": model, "prompt": TICKET}).status_code == 200
+    for _ in range(3):
+        assert c.post(COMPLETE, json={"model": model, "prompt": TICKET}, headers=retry).status_code == 200
+        assert c.post(RESPOND, json={"model": model, "input": TICKET}, headers=retry).status_code == 200
+    (ex,) = _examples(gw)
+    assert ex["seen"] == 1
+    assert [row["retry_count"] for row in _rows(gw)] == [0] + [1] * 6
+    assert c.post(RESPOND, json={"model": model, "input": TICKET}).status_code == 200
+    assert _examples(gw)[0]["seen"] == 2
 
 
 @pytest.mark.req("FR-1.51")

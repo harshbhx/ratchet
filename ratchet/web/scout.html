@@ -176,7 +176,7 @@
 
   <section class="totals" aria-label="Run totals">
     <div><div class="v" id="tCalls">0</div><div class="l">LLM calls</div></div>
-    <div><div class="v yours" id="tYours">0</div><div class="l" id="tYoursL">answered by your model</div></div>
+    <div><div class="v yours" id="tYours">0</div><div class="l" id="tYoursL">answered by your adapter</div></div>
     <div><div class="v" id="tCost">$0</div><div class="l" id="tBase">vs $0 all-Ultra</div></div>
     <div><div class="v" id="tSave">0%</div><div class="l">saved</div></div>
     <div class="share" aria-hidden="true"><i class="s" id="barS" style="width:0"></i><i class="t" id="barT" style="width:0"></i></div>
@@ -213,7 +213,7 @@
   </div>
 
   <section class="explain" aria-labelledby="h-explain">
-    <h2 id="h-explain">What moves to your model, and why</h2>
+    <h2 id="h-explain">What moves to your adapter, and why</h2>
     <p>Scout's agents are plain OpenAI clients pointed at Ratchet. Each call carries a task name, and Ratchet routes by task.</p>
     <ul>
       <li><b>Triage</b> and <b>Reader</b> make many short calls with a fixed answer shape (a few labels and one fact). Ratchet logs Ultra's answers to them, trains a small Nemotron Nano model on those answers each night, and lets it answer when it is confident. When it is not, the call is <span style="color:var(--warn-ink)">escalated</span> to Ultra.</li>
@@ -252,9 +252,9 @@
   const TEACHER_SHORT = "Ultra";
   // The gateway's hosted fallback id and serving student (/scout/status, FR-7.40): a student step with this model came
   // from the untuned hosted Nano, not our adapter. Same words as the React page (web/src/lib/who-model.ts).
-  let fallback = "", serving = null;
-  const hosted = (st) => st.served_by === "student" && !!fallback &&
-    String(st.model || "").trim().toLowerCase() === fallback.trim().toLowerCase();
+  let hostedId = "", serving = null;
+  const hosted = (st) => st.served_by === "student" && !!hostedId &&
+    String(st.model || "").trim().toLowerCase() === hostedId.trim().toLowerCase();
   const servingHosted = () => !!serving && serving.kind === "hosted_fallback";
   function hostedTitle() {
     const t = servingHosted() && typeof serving.threshold === "number" ? serving.threshold.toFixed(3).replace(/0$/, "") : "";
@@ -262,13 +262,13 @@
       "Not covered by our adapter's precision certificate." +
       (serving && serving.window ? " Our adapter answers during the daily endpoint windows." : "");
   }
-  // "your model" unless a student answer of this run came from the hosted fallback, or none came from the student while
+  // "your adapter" unless a student answer of this run came from the hosted fallback, or none came from the student while
   // the hosted fallback serves (the same rule as the React page's `derive`).
   const runHosted = () => {
     const steps = S ? S.steps : [];
     return steps.some(hosted) || (servingHosted() && !steps.some((st) => st.served_by === "student"));
   };
-  const byStudent = () => (runHosted() ? "by the student" : "by your model");
+  const byStudent = () => (runHosted() ? "by the student" : "by your adapter");
 
   // ---------- state ----------
   let mode = null, freeText = true, running = false, runToken = 0;
@@ -284,7 +284,7 @@
     if (st.served_by === "student") {
       const conf = st.confidence == null ? "" : ` · conf ${num(st.confidence).toFixed(2)}`;
       if (hosted(st)) return `<span class="who h" title="${esc(hostedTitle())}">Nano 30B · hosted</span><span>${esc(st.model)}${conf}</span>`;
-      return `<span class="who s">Nano · yours</span><span>${esc(st.model || "student")}${conf}</span>`;
+      return `<span class="who s">Nano + your adapter</span><span>${esc(st.model || "student")}${conf}</span>`;
     }
     let h = `<span class="who t" title="${esc(st.model || "")}">${TEACHER_SHORT}</span>`;
     if (st.escalated) {
@@ -537,7 +537,7 @@
       renderTotals();
       const t = S.totals || {};
       const n = num(t.llm_calls), s = num(t.student_calls);
-      const by = runHosted() ? "the hosted Nano (untuned)" : "your model";
+      const by = runHosted() ? "the hosted Nano (untuned)" : "your adapter";
       setStatus(`Done${t.wall_ms ? " in " + ms(t.wall_ms) : ""}. ${s} of ${n} LLM calls answered by ${by}; ${pct(t.savings_pct)} cheaper than all-Ultra.`);
       return;
     }
@@ -596,8 +596,11 @@
       es.close();
       if (ended) return;
       ended = true;
-      if (!started) { fallback(q, token); return; }
-      if (!S.done) { showError("The connection dropped before Scout finished. Try again in a moment."); setStatus("Stopped."); }
+      // Before the first event the server may already have started (and paid for) the run, so in live mode this shows
+      // the error instead of starting a second run with POST /scout/run. A mock run costs nothing: it is run again there.
+      if (!started && mode === "mock") { fallback(q, token); return; }
+      if (!started) { showError("The live stream could not start. Check your connection and try again in a moment."); setStatus("Stopped."); }
+      else if (!S.done) { showError("The connection dropped before Scout finished. Try again in a moment."); setStatus("Stopped."); }
       finish(token);
     };
   }
@@ -669,12 +672,14 @@
       const r = await fetch("/scout/status");
       if (!r.ok) return;
       const d = await r.json();
-      fallback = typeof d.fallback_student === "string" ? d.fallback_student : "";
+      hostedId = typeof d.fallback_student === "string" ? d.fallback_student : "";
       serving = d.student_serving && typeof d.student_serving === "object" ? d.student_serving : null;
       $("tYoursL").textContent = "answered " + byStudent();
       if (d.mode === "live") {
-        const left = Math.max(0, num(d.budget_usd) - num(d.spent_today_usd));
-        $("budget").textContent = `Demo budget left today: $${left.toFixed(2)} of $${num(d.budget_usd).toFixed(2)}` +
+        // The public pool's budget left today: the total less the judges' reserve and what was spent (ADR 0120).
+        const left = typeof d.public_budget_left_usd === "number" ? d.public_budget_left_usd
+          : Math.max(0, num(d.budget_usd) - num(d.spent_today_usd));
+        $("budget").textContent = `Demo budget left today: $${Math.max(0, num(left)).toFixed(2)}` +
           (d.runs_per_hour_per_ip ? ` · up to ${num(d.runs_per_hour_per_ip)} runs per hour per visitor` : "");
       } else {
         $("budget").textContent = "";

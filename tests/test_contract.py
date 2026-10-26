@@ -544,6 +544,43 @@ def _node_strips_types() -> bool:
     return bool(m) and (int(m[1]), int(m[2])) >= (22, 6)
 
 
+# The single-file pages served without a build (/lite, /lite/scout, /lite/dashboard; also /, /scout and /dashboard when
+# ratchet/web/dist is missing).
+LITE_PAGES = ("ratchet/web/landing.html", "ratchet/web/scout.html", "ratchet/dashboard.html")
+
+
+@pytest.mark.req("FR-1.9")
+@pytest.mark.skipif(NODE is None, reason="needs node to parse the lite pages' scripts")
+def test_lite_pages_scripts_parse(tmp_path):
+    """The lite pages have no build step to catch a syntax error in their inline scripts, so each one is parsed with
+    `node --check`: a variable that shared its name with a function once killed the lite Scout page's whole script."""
+    root = Path(__file__).resolve().parents[1]
+    for rel in LITE_PAGES:
+        scripts = re.findall(r"<script>(.*?)</script>", (root / rel).read_text(encoding="utf-8"), re.S)
+        assert scripts, rel
+        for i, js in enumerate(scripts):
+            path = tmp_path / f"{Path(rel).stem}-{i}.js"
+            path.write_text(js, encoding="utf-8")
+            proc = subprocess.run([NODE, "--check", str(path)], capture_output=True, text=True, timeout=60, check=False)
+            assert proc.returncode == 0, f"{rel}, script {i}: {proc.stderr[-800:]}"
+
+
+@pytest.mark.req("FR-1.9", "FR-7.5")
+def test_lite_pages_call_the_api_by_absolute_paths(gw):
+    """The lite dashboard is served at /lite/dashboard, where a relative `ratchet/stats` resolves to
+    /lite/ratchet/stats: every path the lite pages fetch or post to starts with `/`, and the dashboard's are routes the
+    gateway serves."""
+    root = Path(__file__).resolve().parents[1]
+    for rel in LITE_PAGES:
+        paths = re.findall(r"""\b(?:fetch|act)\(\s*["'`]([^"'`]+)""", (root / rel).read_text(encoding="utf-8"))
+        assert paths and all(p.startswith("/") for p in paths), (rel, paths)
+    dashboard = (root / "ratchet" / "dashboard.html").read_text(encoding="utf-8")
+    for path in ("/ratchet/stats", "/ratchet/demo/day?workload=", "/ratchet/demo/break-next", "/ratchet/demo/reset"):
+        assert f'"{path}' in dashboard, path
+    c = TestClient(gw.app)
+    assert c.get("/ratchet/stats").status_code == 200 and c.post("/ratchet/demo/break-next").status_code == 200
+
+
 @pytest.mark.req("FR-7.20")
 @pytest.mark.skipif(not _node_strips_types(), reason="needs Node 22.6 or later (the CI web job runs npm test)")
 @pytest.mark.skipif(not (WEB / "node_modules").is_dir(), reason="needs web/node_modules (cd web && npm ci)")

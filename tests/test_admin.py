@@ -727,6 +727,37 @@ def test_frozen_releases_hold_every_promotion_but_never_a_rollback_or_an_alert()
     assert _state(led, shadow) == ("shadow", 0)
 
 
+@pytest.mark.req("FR-12.1", "FR-12.9", "FR-16.1")
+def test_frozen_releases_hold_the_sequential_canary_but_never_its_rollback():
+    """Under the anytime-valid canary rule (`sequential=1`, ADR 0025) a freeze holds an advance and a promotion, as under
+    the Wilson rule (the sequential rule once read no flag), and never a rollback."""
+    led = Ledger(":memory:")
+    gate = ReleaseGate(led, ReleasePolicy(sequential=1, min_audits=20))
+    live = _version(led, "live", GOOD)
+    good = _version(led, "canary", GOOD)
+    admin.set_flag(led, "releases_frozen", True, reason="demo day: nothing moves", actor="cli:ops")
+    _audit(led, good, 20)
+    gate.tick()
+    assert _state(led, good) == ("canary", 10) and not _kinds(led, "canary", "live")  # earned, but held
+    admin.set_flag(led, "releases_frozen", False, reason="go on", actor="cli:ops")
+    gate.tick()
+    assert _state(led, good) == ("canary", 50)  # advanced on the evidence it gathered while held
+    admin.set_flag(led, "releases_frozen", True, reason="hold again", actor="cli:ops")
+    _audit(led, good, 20)
+    gate.tick()
+    assert _state(led, good) == ("canary", 50) and _state(led, live) == ("live", 100)  # no promotion either
+    admin.set_flag(led, "releases_frozen", False, reason="promote it", actor="cli:ops")
+    gate.tick()
+    assert _state(led, good) == ("live", 100) and _state(led, live) == ("retired", 0)
+    assert len(_kinds(led, "live_retired")) == 1
+
+    admin.set_flag(led, "releases_frozen", True, reason="freeze for the bad one", actor="cli:ops")
+    bad = _version(led, "canary", GOOD)
+    _audit(led, bad, 2, agree_every=1)  # 0 of 2: e-value 29.8, enough to roll back
+    gate.tick()
+    assert _state(led, bad) == ("rolled_back", 0) and len(_kinds(led, "rollback")) == 1
+
+
 @pytest.mark.req("FR-12.1", "FR-9.3", "FR-6.6")
 def test_a_frozen_gate_in_a_corrupt_deploy_simulation(tmp_path, monkeypatch):
     """The simulator on a ledger file, with an operator freezing releases from another connection (as the CLI does)

@@ -3,7 +3,8 @@
 A judge who arrives after the day's runs are used up, or while Token Factory or Tavily fails, can still watch a real run
 at its real pace, labelled as a recording. The file holds the question the operator chose, the run's events with their
 offsets, the host name and the totals; never a header, a key or a judge code (INV-12, INV-13). The gateway only reads
-these files; it never writes one and never stores a visitor's question.
+these files and never writes one. A visitor's own run is not recorded here; its triage and reader calls quote the
+question and, like any distillable call, a teacher answer to one of them is stored as a redacted training example.
 """
 
 from __future__ import annotations

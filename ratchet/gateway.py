@@ -12,7 +12,8 @@ alias, a task's match rules, a response_format schema's auto task or, opt-in, th
 level (`ratchet/access.py`, ADR 0061): in live mode the dashboard API needs an admin or dashboard key unless
 RATCHET_PUBLIC_DASHBOARD=1. Errors on `/v1/*` use OpenAI's envelope (`ratchet/openai_compat.py`); every other route
 keeps FastAPI's `{"detail": ...}`.
-Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard.
+Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard, `/judges` the judges' console; the
+single-file pages without a build stay at `/lite`, `/lite/scout` and `/lite/dashboard`.
 """
 
 from __future__ import annotations
@@ -482,6 +483,8 @@ class Runtime:
         self._auto_cap_logged = False
         self.modalities = parse_modalities(s.teacher_modalities)
         self.gateway_errors = 0  # unhandled exceptions since the last reset (see _unhandled_error)
+        self.tick_errors = 0  # release-gate ticks that raised after a request or a Scout run (see safe_tick)
+        self.tick_errors_lock = threading.Lock()
         # Committed sets the proof endpoints read (`_keyset`), by (version, split), least recently used last. A reset
         # makes a new ledger whose version ids start again, so the cache starts again too.
         self.keysets: OrderedDict[tuple[int, str], tuple[Ledger, KeySet]] = OrderedDict()
@@ -784,6 +787,25 @@ class Runtime:
             self.gate_lock.release()
         self.maybe_purge()
         return True
+
+    def safe_tick(self) -> bool:
+        """`tick` after an answered request or a finished Scout run: the request is answered and paid for, so a failing
+        release gate never turns it into a 500 (or leaves a Scout stream open). A tick that raises is counted and written
+        as a `tick_error` event on its 1st, 10th, 100th and 1000th failure since the last reset, naming the exception's
+        class only (`describe_failure`), as `_purge` reports its failures; the next tick tries again. Returns whether a
+        tick ran and finished."""
+        try:
+            return self.tick()
+        except Exception as e:  # noqa: BLE001 - the request is answered: report the gate's failure, never fail the request
+            with self.tick_errors_lock:
+                self.tick_errors += 1
+                n = self.tick_errors
+            if n in EVENT_ON_FAILURE:
+                try:
+                    self.ledger.event("tick_error", f"release gate tick: {describe_failure(e)}")
+                except Exception:  # noqa: BLE001 - the ledger may be what failed
+                    pass
+            return False
 
     def maybe_purge(self) -> threading.Thread | None:
         """In live mode with a retention window set, apply the windows (`privacy.apply_retention`, FR-13.4) at most once
@@ -1574,17 +1596,17 @@ def _budget(client: str | None, limits: KeyLimits | None, use: Usage) -> bool:
 
 def _gateway_budget_error(now: float, need: str | None = None) -> APIError:
     """429 `insufficient_quota` / `gateway_budget_exceeded` until 00:00 UTC: in block mode for every chat request, in
-    student_only mode for one that needs the teacher (`need`). The gateway's budget itself is the operator's and is not
-    named."""
+    student_only mode for one that needs the teacher (`need`: why, `BudgetExceeded.need`), or for an embeddings request
+    (`need` EMBEDDINGS_TASK), which an upstream model answers. The gateway's budget itself is the operator's and is not named."""
     _set_stage("budget")
     reset_in = _utc_midnight(now) + 86400 - now
     headers = {"Retry-After": str(max(1, math.ceil(reset_in))), "X-Should-Retry": "false"}
     if need is None:
         message = "this gateway's daily budget is spent; it resets at 00:00 UTC"
     else:
+        why = "embeddings come from an upstream model" if need == EMBEDDINGS_TASK else "this request needs the teacher"
         message = (
-            "this gateway's daily budget is spent: until 00:00 UTC it serves only answers the student gives alone, and "
-            "this request needs the teacher"
+            f"this gateway's daily budget is spent: until 00:00 UTC it serves only answers the student gives alone, and {why}"
         )
     return APIError(429, message, "insufficient_quota", "gateway_budget_exceeded", headers=headers)
 
@@ -2329,14 +2351,16 @@ def _serve_held(
     except BudgetExceeded as e:  # student_only, and the request needs the teacher
         raise _gateway_budget_error(time.time(), e.need) from e
     except KeyError as e:
-        if rt.settings.mode != "mock":  # in live mode a KeyError is a bug, not a client mistake
+        # Only the strict mock world (RATCHET_MOCK_STRICT=1: sim.world.lookup and the mock models) refuses a request it does
+        # not know with a KeyError, which is the client's 400. Anywhere else a KeyError is a bug: the 500 and its
+        # `gateway_error` event (`_unhandled_error`), never a 400 that blames the client.
+        if rt.settings.mode != "mock" or not rt.settings.mock_strict:
             raise
-        # sim.world.lookup under RATCHET_MOCK_STRICT=1; without it the generic mock world answers every request.
         raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e
     except httpx.HTTPError as e:  # the teacher itself failed, after its retries: nothing left to fall back to
         raise _map_upstream(e) from e
     headers.update(_spend_headers(limits, rt.meter.add(client, r.cost_usd, hold=holds[0] if holds else None)))
-    rt.tick()
+    rt.safe_tick()  # the request is answered and paid for: a failing gate is reported, never the client's 500
     meta = {
         "served_by": r.served_by,
         "student_version": r.version,
@@ -2764,14 +2788,15 @@ def _every_end_user_scope() -> list[str | None]:
 
 
 # ----- the other OpenAI endpoints (FR-1.51, ADR 0050) -----
-async def _read_then(request: Request, client: str | None, fn: Callable[..., Any], *args: Any) -> Any:
+async def _read_then(request: Request, client: str | None, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """The front door of /v1/chat/completions for the other endpoints, after the key: the request rate (`_rate`, 429),
     the body read and counted (a client that leaves first is a 400), the in-flight caps (`_hold`), then
-    `fn(raw, *args, rate=...)` in a worker thread, so neither the body nor the ledger lock blocks the event loop."""
+    `fn(raw, *args, **kwargs, rate=...)` in a worker thread, so neither the body nor the ledger lock blocks the event
+    loop."""
     rate = _rate(request, client)
     raw = await _body(request)
     with _hold(client):  # its in-flight slots are given back when the response is built
-        return await anyio.to_thread.run_sync(functools.partial(fn, raw, *args, rate=rate))
+        return await anyio.to_thread.run_sync(functools.partial(fn, raw, *args, **kwargs, rate=rate))
 
 
 @app.post("/v1/embeddings", response_model=None, openapi_extra=CHAT_BODY)
@@ -2936,19 +2961,22 @@ async def completions(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
     api_key: str | None = Header(default=None),
+    x_stainless_retry_count: str | None = Header(default=None),
 ) -> JSONResponse | StreamingResponse:
     """The legacy completions API: each prompt runs the chat path as one user message (`_serve`), with the same checks,
     task resolution, cascade, quota and storage as /v1/chat/completions; `n`, `stream`, `stop`, `max_tokens` and the rest
-    are the chat fields of the same name. A batch of prompts needs that many requests of the daily quota, checked before
-    the first runs; a batch that stops after its first prompt is an error that names the prompts already answered and
-    carries `X-Should-Retry: false` (`_batch_stopped`). A `suffix`, `echo` or `best_of` that would change the answer,
-    and token-array prompts, are a 400."""
+    are the chat fields of the same name, and an SDK's retry (`x-stainless-retry-count` above 0) never counts as a
+    repeat of a stored example, as on the chat routes (INV-3, ADR 0071). A batch of prompts needs that many requests of
+    the daily quota, checked before the first runs; a batch that stops after its first prompt is an error that names the
+    prompts already answered and carries `X-Should-Retry: false` (`_batch_stopped`). A `suffix`, `echo` or `best_of`
+    that would change the answer, and token-array prompts, are a 400."""
     client = _client(authorization, x_api_key, api_key)
-    return await _read_then(request, client, _legacy_complete, x_ratchet_task, client)
+    retries = idem.retry_count(x_stainless_retry_count)  # the SDK's attempt number: a retry is never a repeat (INV-3)
+    return await _read_then(request, client, _legacy_complete, x_ratchet_task, client, retry_count=retries)
 
 
 def _legacy_complete(
-    raw: bytes, header_task: str | None, client: str | None, rate: Decision | None = None
+    raw: bytes, header_task: str | None, client: str | None, rate: Decision | None = None, retry_count: int = 0
 ) -> JSONResponse | StreamingResponse:
     """Run the prompts one after another. A prompt starts only while the batch has used less than the teacher's deadline
     (RATCHET_TEACHER_DEADLINE_S, on `rt.clock`), so one batch holds its worker thread for about two deadlines at most,
@@ -2963,7 +2991,8 @@ def _legacy_complete(
             raise _batch_stopped(i, len(reqs), None)
         try:
             # Each prompt is a request of its own in the ledger, with its own id (the first keeps the HTTP request's).
-            served.append(_serve(req, header_task, client, need=len(reqs) if i == 0 else 1, rate=rate, own_id=i > 0))
+            need = len(reqs) if i == 0 else 1
+            served.append(_serve(req, header_task, client, need=need, retry_count=retry_count, rate=rate, own_id=i > 0))
         except (APIError, StarletteHTTPException) as e:
             if not i:
                 raise
@@ -3071,26 +3100,33 @@ async def responses(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
     api_key: str | None = Header(default=None),
+    x_stainless_retry_count: str | None = Header(default=None),
 ) -> JSONResponse:
     """The stateless subset of the Responses API: the body becomes a chat request (`validate_responses_request`) and
-    runs the chat path (`_serve`) with the same checks, task resolution, cascade, quota and storage; the answer comes
-    back as a `response` object. Ratchet keeps no response state, so what needs it (`previous_response_id`,
-    `conversation`, `background`) and `stream` are a 400 `unsupported_parameter`."""
+    runs the chat path (`_serve`) with the same checks, task resolution, cascade, quota and storage (an SDK's retry never
+    counts as a repeat, INV-3); the answer comes back as a `response` object. Ratchet keeps no response state, so what
+    needs it (`previous_response_id`, `conversation`, `background`) and `stream` are a 400 `unsupported_parameter`."""
     client = _client(authorization, x_api_key, api_key)
-    return await _read_then(request, client, _respond, x_ratchet_task, client)
+    retries = idem.retry_count(x_stainless_retry_count)  # the SDK's attempt number: a retry is never a repeat (INV-3)
+    return await _read_then(request, client, _respond, x_ratchet_task, client, retry_count=retries)
 
 
-def _respond(raw: bytes, header_task: str | None, client: str | None, rate: Decision | None = None) -> JSONResponse:
+def _respond(
+    raw: bytes, header_task: str | None, client: str | None, rate: Decision | None = None, retry_count: int = 0
+) -> JSONResponse:
     rreq = validate_responses_request(parse_body(raw), rt.limits)
-    s = _serve(rreq.chat, header_task, client, rate=rate)
+    s = _serve(rreq.chat, header_task, client, retry_count=retry_count, rate=rate)
     r = s.result
     ch = r.choices[0]
-    # A choice's tool calls ({id, type, function}) become function_call items once the gateway returns them.
-    output = response_output(ch.text, ch.finish_reason, getattr(ch, "tool_calls", None))
+    # A choice's tool calls ({id, type, function}, the teacher's for a tool request, FR-1.41) become function_call items.
+    output = response_output(ch.text, ch.finish_reason, ch.tool_calls)
     usage = responses_usage(r.prompt_tokens, r.completion_tokens, r.reasoning_tokens, r.cached_tokens)
     created = int(time.time())
     body = response_object(rreq, created=created, model=r.model, output=output, finish_reason=ch.finish_reason, usage=usage)
     return JSONResponse({**body, "ratchet": s.meta}, headers=s.headers)
+
+
+RESPONSE_STATE_OP = "response_state_v1_responses__response_id_"
 
 
 @app.post("/v1/moderations", response_model=None)
@@ -3105,7 +3141,11 @@ def moderations(
     raise unsupported_endpoint("POST", "/v1/moderations", "this gateway has no moderation model; screen content before it")
 
 
-@app.api_route("/v1/responses/{response_id:path}", methods=["GET", "POST", "DELETE"], response_model=None)
+# One registration per method, each with its own operation id: one route for three methods gave all three the first
+# method's id (FastAPI warns of a duplicate). The ids are the ones the docs site links to.
+@app.get("/v1/responses/{response_id:path}", response_model=None, operation_id=f"{RESPONSE_STATE_OP}_get")
+@app.post("/v1/responses/{response_id:path}", response_model=None, operation_id=f"{RESPONSE_STATE_OP}_post")
+@app.delete("/v1/responses/{response_id:path}", response_model=None, operation_id=f"{RESPONSE_STATE_OP}_delete")
 def response_state(
     request: Request,
     response_id: str,
@@ -4591,8 +4631,20 @@ def _run_scout(question: str, emit, pace: float = 0.0, judge: bool = False, run_
         return None
     finally:
         rt.guard.add_spend(spent[0], judge=judge, run_id=run_id, outcome=outcome[0])
-        rt.tick()
+        rt.safe_tick()
     return done
+
+
+def _scout_worker(question: str, box: queue.Queue[dict[str, Any] | None], pace: float, judge: bool, run_id: str) -> None:
+    """A /scout/stream run on its own thread. The stream always ends (`None`), so a visitor's page never waits on a run
+    that is over; an exception `_run_scout` did not turn into an event (the guard's spend write failing) becomes an
+    `error` event naming its class only."""
+    try:
+        _run_scout(question, box.put, pace, judge, run_id)
+    except Exception as e:  # noqa: BLE001 - report it on the stream, never leave the stream open
+        box.put({"type": "error", "message": f"run failed: {type(e).__name__}"})
+    finally:
+        box.put(None)
 
 
 def _judge_session(request: Request) -> bool:
@@ -4708,7 +4760,7 @@ def scout_stream(request: Request, q: str = "") -> StreamingResponse:
             return
         box: queue.Queue[dict[str, Any] | None] = queue.Queue()
         pace = rt.settings.mock_pace if rt.settings.mode == "mock" else 0.0
-        worker = threading.Thread(target=lambda: (_run_scout(q, box.put, pace, judge, run_id), box.put(None)), daemon=True)
+        worker = threading.Thread(target=_scout_worker, args=(q, box, pace, judge, run_id), daemon=True)
         worker.start()
         while True:
             try:

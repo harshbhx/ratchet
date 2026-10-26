@@ -4,9 +4,11 @@ Every failed call to an OpenAI-compatible endpoint (Token Factory, vLLM) ends as
 status, so the gateway can answer with a status a client can act on instead of a blanket 502 (ADR 0014). `retry_call`
 decides what is worth another attempt:
 
-- Retried: failures before the request reached the model (`ConnectError`, `ConnectTimeout`, `PoolTimeout`,
-  `RemoteProtocolError`) and the statuses an endpoint uses for "try again" (408, 409, 429, 500, 502, 503, 504).
-- A `ReadTimeout` is retried once at most: the model may already be generating, and those tokens are billed.
+- Retried: failures before the request reached the model (`ConnectError`, `ConnectTimeout`, `PoolTimeout`) and the
+  statuses an endpoint uses for "try again" (408, 409, 429, 500, 502, 503, 504).
+- A failure that can come after the model started generating is retried once at most, and only once in all: a
+  `ReadTimeout`, a `RemoteProtocolError` (the connection dropped, possibly mid-response) and a 504 (a gateway gave up
+  while the model may have kept going). Those tokens may be billed, so a second such failure is not paid for again.
 - Any other 4xx is never retried. The same request cannot succeed.
 
 Waits use full jitter, `uniform(0, min(cap_s, base_s * 2**i))`, or the server's `retry-after-ms` / `Retry-After` when it
@@ -43,7 +45,11 @@ T = TypeVar("T")
 # Statuses an endpoint uses for "not now": rate limits, overload, a gateway or lock timeout.
 RETRY_STATUSES = frozenset({408, 409, 429, 500, 502, 503, 504})
 # Failures before the model saw the request: nothing was generated or billed, so another attempt is safe.
-SAFE_TO_RETRY = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError)
+SAFE_TO_RETRY = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+# Failures that can come after the model started generating (a read timeout, a connection dropped mid-response, a
+# gateway's 504 while the model kept going): what it generated may be billed, so one retry at most, in all.
+MAYBE_GENERATED = (httpx.ReadTimeout, httpx.RemoteProtocolError)
+MAYBE_GENERATED_STATUSES = frozenset({504})
 
 # UpstreamError.code values set by Ratchet itself (anything else came from the endpoint's error body).
 UPSTREAM_TIMEOUT = "upstream_timeout"
@@ -234,10 +240,18 @@ def as_upstream(e: BaseException) -> UpstreamError:
 
 
 def retryable(e: BaseException) -> bool:
-    """Whether another attempt can help (a ReadTimeout is handled separately: once at most)."""
+    """Whether another attempt can help (`retry_call` allows one at most after a failure `maybe_generated` names)."""
     if isinstance(e, UpstreamError):
         return e.status in RETRY_STATUSES
-    return isinstance(e, SAFE_TO_RETRY)
+    return isinstance(e, SAFE_TO_RETRY + MAYBE_GENERATED)
+
+
+def maybe_generated(e: BaseException) -> bool:
+    """Whether the model may have been generating when the call failed, so what it generated may be billed: a read
+    timeout, a connection dropped mid-response, or a 504."""
+    if isinstance(e, UpstreamError):
+        return e.status in MAYBE_GENERATED_STATUSES
+    return isinstance(e, MAYBE_GENERATED)
 
 
 def retry_call(
@@ -253,19 +267,17 @@ def retry_call(
     deadline (math.inf without one), so `fn` can cap its own timeouts with it. Only httpx errors (UpstreamError
     included) are retried; anything else propagates at once."""
     deadline = clock() + policy.deadline_s
-    read_timeouts = 0
+    generated = 0  # failures after which the model may have been generating (`maybe_generated`)
     for attempt in range(1, policy.max_attempts + 1):
         try:
             return fn(max(deadline - clock(), 1e-3))
         except httpx.HTTPError as e:
-            if attempt >= policy.max_attempts:
+            if attempt >= policy.max_attempts or not retryable(e):
                 raise
-            if isinstance(e, httpx.ReadTimeout):
-                read_timeouts += 1
-                if read_timeouts > 1:  # the model may have been generating, twice: don't pay a third time
+            if maybe_generated(e):
+                generated += 1
+                if generated > 1:  # the model may have been generating, twice: don't pay a third time
                     raise
-            elif not retryable(e):
-                raise
             asked = e.retry_after if isinstance(e, UpstreamError) else None
             if asked is not None and asked > policy.cap_s:  # the server will refuse a retry sooner than that
                 raise

@@ -16,8 +16,9 @@
 - student (RATCHET_STUDENT_BASE, RATCHET_STUDENT_KEY): loads `--adapter-path` at runtime twice (the second is vLLM's 400
   "already"), samples it as production does, compares the base model's and the adapter's answers, sends the thinking
   switch, asks for `student-v0` and runs the 404 through the router's own predicate (`resilience.adapter_missing`), then
-  unloads. The adapter must be trained by train.py with its default --targets (the Mamba in_proj and out_proj included)
-  and --rank at most the endpoint's --max-lora-rank (16): DAY1 row 4's `bash deploy/train_job.sh test` is that adapter.
+  unloads. The adapter must be trained by train.py with the --targets it will be served with (the default is attention
+  and MLP; TARGETS_WITH_MAMBA adds the Mamba in_proj and out_proj) and --rank at most the endpoint's --max-lora-rank
+  (16): DAY1 row 4's `bash deploy/train_job.sh test` is that adapter.
 - tavily (TAVILY_API_KEY): one basic search (1 credit). Never Extract.
 - cli: the `nebius` flags the deploy scripts use, against the installed CLI's `--help` (warnings only, read-only).
 
@@ -932,9 +933,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         prog="day1_check.py",
         description="Day-1 probes for Token Factory, the student endpoint, Tavily and the nebius CLI.",
-        epilog="The student check's adapter must be trained by train.py with its default --targets (the Mamba in_proj "
-        "and out_proj included) and --rank at most the endpoint's --max-lora-rank (16), so the probe catches vLLM "
-        "rejecting or skipping those weights.",
+        epilog="The student check's adapter must be trained by train.py with the --targets it will be served with (to "
+        "check the Mamba in_proj and out_proj, TARGETS_WITH_MAMBA) and --rank at most the endpoint's --max-lora-rank "
+        "(16), so the probe catches vLLM rejecting or skipping those weights.",
     )
     ap.add_argument("checks", nargs="*", metavar="CHECK", help=f"{', '.join(CHECKS)} or all (default: teacher)")
     ap.add_argument("--json", dest="json_path", metavar="PATH", help="write every measured fact here (no keys)")
