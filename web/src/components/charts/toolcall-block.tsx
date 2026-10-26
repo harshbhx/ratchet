@@ -1,3 +1,5 @@
+import { ScrollX } from "@/components/ui/scroll-x";
+import { fmtDate } from "@/lib/real-model";
 import { TOOL_EXAMS, TOOL_MODELS, TOOL_MODEL_LABEL, blockPlace, parseToolcall, rangeText, scoreText } from "@/lib/toolcall-model";
 
 // toolcall.json is written by scripts/toolcall_results.py once the exam scores exist. A glob import, unlike a plain one, builds when it is absent.
@@ -15,11 +17,11 @@ export function ToolCallBlock({ where }: { where: "top" | "bottom" }) {
   if (!d || blockPlace(d) !== where) return null;
   return (
     <section id="toolcall" aria-labelledby="toolcall-title" className="mt-9 rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5">
-      <p className="text-[12.5px] font-medium text-muted">Measured on real models{d.date ? `, ${d.date}` : ""}. Not the simulation.</p>
+      <p className="text-[12.5px] font-medium text-muted">Measured on real models{d.date ? `, ${fmtDate(d.date)}` : ""}. Not the simulation.</p>
       <h3 id="toolcall-title" className="mt-1 text-[17px] font-semibold tracking-[-0.01em] text-ink">
         Tool calling: a second adapter, scored strictly on two exams
       </h3>
-      <div className="mt-3 overflow-x-auto">
+      <ScrollX wrapClassName="mt-3">
         <table className="w-full min-w-[30rem] text-left text-[13.5px]">
           <caption className="sr-only">Strict tool-calling scores and 95% ranges on two exams</caption>
           <thead className="border-b border-line text-[12px] text-muted">
@@ -49,7 +51,7 @@ export function ToolCallBlock({ where }: { where: "top" | "bottom" }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </ScrollX>
       <ul className="mt-3 grid gap-2 text-[14px] leading-relaxed text-ink-2">
         {TOOL_EXAMS.map((e) => (
           <li key={e}>{d.exams[e].sentence}</li>

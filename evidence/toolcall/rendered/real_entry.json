@@ -14,11 +14,11 @@
  "date": "2026-10-24",
  "facts": [
   {
-   "label": "Hard exam, untrained nano 4b",
+   "label": "Hard exam, untrained Nano 4B",
    "value": "94 of 150"
   },
   {
-   "label": "Hard exam, teacher (nemotron 3 ultra)",
+   "label": "Hard exam, teacher (Nemotron 3 Ultra)",
    "value": "137 of 150"
   },
   {
@@ -26,11 +26,11 @@
    "value": "136 of 150"
   },
   {
-   "label": "BFCL exam, untrained nano 4b",
+   "label": "BFCL exam, untrained Nano 4B",
    "value": "232 of 300"
   },
   {
-   "label": "BFCL exam, teacher (nemotron 3 ultra)",
+   "label": "BFCL exam, teacher (Nemotron 3 Ultra)",
    "value": "265 of 300"
   },
   {

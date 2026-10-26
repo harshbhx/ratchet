@@ -30,7 +30,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "start",
     label: "The 90-second path",
     tourTitle: "Start here",
-    tour: "Three clicks show the whole idea: send a request, run a day with a bad deploy, then read what is real.",
+    tour: "Three clicks show the whole idea: send a request, watch a bad deploy roll back on the simulation demo, then read what is real.",
   },
   {
     id: "exams",
@@ -73,7 +73,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "inside",
     label: "The loop in one picture",
     tourTitle: "The loop",
-    tour: "Blue is the small student you own; orange is the teacher you rent per token. The ledger and the gates connect them.",
+    tour: "Blue is the student, Nano with your adapter; orange is the teacher you rent per token. The ledger and the gates connect them.",
   },
   {
     id: "cascade",

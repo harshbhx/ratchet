@@ -35,7 +35,7 @@ export const DASHBOARD_STEPS: TourStep[] = [
   {
     targets: ["#economics", "#cost"],
     title: "The cost",
-    body: "Savings per token and by GPU-hours paid, with the break-even. On the live gateway these are its own traffic; with none yet, the page shows a reference simulation, labelled.",
+    body: "Savings per token and by GPU-hours paid, with the break-even. On the live gateway these are its own traffic.",
   },
   {
     targets: ["#trust"],

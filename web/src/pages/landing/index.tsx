@@ -54,7 +54,7 @@ export default function LandingPage() {
         <Stack />
         <Integrate />
         <RunOnNebius />
-        <OpenSource />
+        <OpenSource mode={stats?.mode ?? null} />
       </div>
     </WhoProvider>
   );

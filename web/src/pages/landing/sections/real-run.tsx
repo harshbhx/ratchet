@@ -38,7 +38,7 @@ export function RealRun() {
             <span className="text-[12.5px] text-muted">Real models, two exams, 22 to 24 Oct 2026. Not the simulation.</span>
           </div>
           <h2 id="real-run-title" className="mt-4 max-w-3xl text-balance text-2xl font-semibold tracking-[-0.02em] text-ink sm:text-[2.1rem] sm:leading-[1.12]">
-            A small model taught by a big one: {x2} to {x1} times better than untrained, for about $17 on record.
+            A small model taught by a big one: {x2} to {x1} times the untrained score, for about $17 on record.
           </h2>
           <p className="mt-3 max-w-[60ch] text-[15px] leading-relaxed text-ink-2">
             About $12 of teacher answers and about $5 of GPU time (estimates from the logged token counts and GPU seconds, not an invoice). Scored the strict way: a query counts only if it returns exactly the reference rows.

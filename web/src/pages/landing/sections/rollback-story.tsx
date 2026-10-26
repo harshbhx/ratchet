@@ -140,7 +140,14 @@ function Chart({ progress }: { progress: number }) {
         <>
           <span
             className="pointer-events-none absolute whitespace-nowrap text-[11px] font-medium text-owned-ink"
-            style={{ ...side(x(head.n)), top: y(head.hi) - (head.hi > 0.9 ? -6 : 24) }}
+            style={{
+              ...side(x(head.n)),
+              // Above the floor: beside its point, but never on the floor line or on the precision label.
+              top:
+                head.hi >= FLOOR
+                  ? Math.max(0, Math.min(y(head.hi) - 8, y(FLOOR) - 17, y(head.p) - 14))
+                  : y(head.hi) - (head.hi > 0.9 ? -6 : 24),
+            }}
           >
             upper bound {fmtPct(head.hi, 0)}
           </span>

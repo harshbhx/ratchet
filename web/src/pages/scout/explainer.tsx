@@ -1,10 +1,11 @@
-import { ArrowLeft, ArrowRight, Pin, Sprout } from "lucide-react";
-import { ButtonLink } from "@/components/ui/button";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Pin, Sprout } from "lucide-react";
+import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Eyebrow } from "@/components/ui/section";
 import { WhoBadge, useWho } from "@/components/ui/who";
+import { DEMO_URL } from "@/lib/utils";
 
-/** Why some calls move to the owned model and others never do. */
+/** Why some calls move to the student (Nano with your adapter) and others never do. */
 export function Explainer() {
   // The student that answers these calls now: our adapter, or the hosted fallback while the GPU endpoint is off.
   const who = useWho();
@@ -15,7 +16,7 @@ export function Explainer() {
         id="h-explain"
         className="mt-4 max-w-[24ch] text-balance text-3xl font-semibold tracking-[-0.025em] text-ink sm:text-[2.25rem] sm:leading-[1.1]"
       >
-        What moves to your model, and why
+        What moves to your adapter, and why
       </h2>
       <p className="mt-4 max-w-[68ch] text-pretty text-[17px] leading-relaxed text-ink-2">
         Scout's agents are plain OpenAI clients pointed at Ratchet. Each call carries a task name, and Ratchet routes by task. NVIDIA Research
@@ -81,9 +82,23 @@ export function Explainer() {
       </p>
 
       <div className="mt-8 flex flex-wrap gap-3">
-        <ButtonLink to="/dashboard" size="lg" className="h-auto min-h-12 whitespace-normal py-3 text-left">
-          Watch Night School train and release new versions <ArrowRight aria-hidden />
-        </ButtonLink>
+        {/* Night School runs on the simulation, not on the live gateway: the live site links to the simulation's dashboard. */}
+        {who.simulated ? (
+          <ButtonLink to="/dashboard" size="lg" className="h-auto min-h-12 whitespace-normal py-3 text-left">
+            Watch Night School train and release new versions <ArrowRight aria-hidden />
+          </ButtonLink>
+        ) : (
+          <ButtonA
+            href={`${DEMO_URL}/dashboard`}
+            target="_blank"
+            rel="noopener noreferrer"
+            size="lg"
+            className="h-auto min-h-12 whitespace-normal py-3 text-left"
+          >
+            Watch Night School train and release versions in the simulation <ArrowUpRight aria-hidden />
+            <span className="sr-only"> (opens in a new tab)</span>
+          </ButtonA>
+        )}
         <ButtonLink to="/" variant="ghost" size="lg">
           <ArrowLeft aria-hidden /> Back to the story
         </ButtonLink>

@@ -74,20 +74,23 @@ export function ScoreBars({ exam, className }: { exam: ExamId; className?: strin
       <figcaption className="mt-1 text-[12.5px] leading-snug text-muted">
         {info.name}: {info.rows} questions, written by {info.writer.split(",")[0]}. The line on each bar is the 95% range.
       </figcaption>
-      <table className="sr-only">
-        <caption>
-          {info.name}, strict scores
-        </caption>
-        <tbody>
-          {MODEL_IDS.map((id) => (
-            <tr key={id}>
-              <th scope="row">{labels[id]}</th>
-              <td>{scoreText(EXAMS.scores[exam][id])}</td>
-              <td>{rangeText(EXAMS.scores[exam][id])}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* A table grows to its content whatever its width, so the 1px sr-only box wraps it instead. */}
+      <div className="sr-only">
+        <table>
+          <caption>
+            {info.name}, strict scores
+          </caption>
+          <tbody>
+            {MODEL_IDS.map((id) => (
+              <tr key={id}>
+                <th scope="row">{labels[id]}</th>
+                <td>{scoreText(EXAMS.scores[exam][id])}</td>
+                <td>{rangeText(EXAMS.scores[exam][id])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </figure>
   );
 }

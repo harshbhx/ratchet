@@ -24,7 +24,7 @@ const NOTE_STYLE: Record<number, { icon: LucideIcon; tone: string }> = {
 
 function noteFor(d: SimDay) {
   if (d.note) return d.note;
-  return `${fmtPct(d.student)} answered by your model, ${fmtPct(d.escalated)} sent to the teacher${d.audit != null ? `, ${fmtPct(d.audit)} of audits agreed` : ""}.`;
+  return `${fmtPct(d.student)} answered by your adapter, ${fmtPct(d.escalated)} sent to the teacher${d.audit != null ? `, ${fmtPct(d.audit)} of audits agreed` : ""}.`;
 }
 
 export function Learn() {
@@ -176,7 +176,7 @@ export function Learn() {
                     <thead>
                       <tr>
                         <th>Day</th>
-                        <th>Answered by your model</th>
+                        <th>Answered by your adapter</th>
                         <th>With Ratchet</th>
                         <th>All-Ultra</th>
                         <th>Saved</th>
@@ -200,7 +200,7 @@ export function Learn() {
               <div className="flex flex-col p-4 sm:p-6">
                 <dl className="grid grid-cols-3 gap-3 lg:grid-cols-1 lg:gap-0 lg:divide-y lg:divide-line lg:pb-6">
                   <div className="lg:pb-4">
-                    <dt className="min-h-[2.6em] text-[12px] leading-tight text-muted lg:min-h-0">Answered by your model</dt>
+                    <dt className="min-h-[2.6em] text-[12px] leading-tight text-muted lg:min-h-0">Answered by your adapter</dt>
                     <dd className="mt-1.5 text-[23px] font-semibold leading-none tracking-[-0.03em] text-ink min-[400px]:text-[26px] sm:text-[34px] lg:text-[40px]">
                       <CountUp value={d.student} format={(v) => fmtPct(v)} />
                     </dd>

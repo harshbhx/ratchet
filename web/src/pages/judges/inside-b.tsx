@@ -6,7 +6,7 @@ import { RealBadge } from "@/components/ui/real-badge";
 import { cn, fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { getJson, useGateway, useJudges } from "./data";
 import { alarmProgress, focusVersion, latestGlobalPeriod, nusdToUsd, shortHash, type Fetched } from "./judges-model";
-import { Chapter, Command, Facts, Loading, Meter, Panel, TryIt, Unavailable } from "./ui";
+import { Chapter, Command, Facts, Loading, Meter, Panel, SimLink, TryIt, Unavailable } from "./ui";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
@@ -73,7 +73,16 @@ export function CertificateChapter() {
       {!stats ? (
         statsRead.state === "error" ? <Unavailable path="/ratchet/stats" read={statsRead} /> : <Loading what="the versions" />
       ) : versions.length === 0 ? (
-        <p className="text-[13.5px] text-muted">{stats?.mode === "mock" ? "No version yet. Run a simulated day to train the first one." : "No version yet on this live demo: the teacher answers every request until Night School trains one."}</p>
+        <p className="text-[13.5px] text-muted">
+          {stats?.mode === "mock" ? (
+            "No version yet. Run a simulated day to train the first one."
+          ) : (
+            <>
+              No version on this live demo: Night School does not run here, so the teacher answers every request. Every version, gate and rollback
+              runs on the <SimLink hash="certificate">simulation demo</SimLink>.
+            </>
+          )}
+        </p>
       ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Which version">

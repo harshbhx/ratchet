@@ -216,8 +216,8 @@ export function SiteHeader() {
     return () => mq.removeEventListener("change", on);
   }, [open]);
 
-  // The quieter button: the dashboard, or Scout when the dashboard is already open.
-  const onDashboard = pathname.startsWith("/dashboard");
+  // The quieter button, on the story page only: elsewhere the pill already lists the dashboard and Scout.
+  const onStory = pathname === "/";
 
   return (
     <>
@@ -253,14 +253,11 @@ export function SiteHeader() {
 
           <div className="col-start-3 flex items-center justify-end gap-1.5">
             <ThemeToggle className="hidden md:inline-flex" />
-            <ButtonLink
-              to={onDashboard ? "/scout" : "/dashboard"}
-              variant="outline"
-              size="sm"
-              className="hidden bg-surface/70 lg:inline-flex"
-            >
-              {onDashboard ? "Scout" : "Dashboard"}
-            </ButtonLink>
+            {onStory && (
+              <ButtonLink to="/dashboard" variant="outline" size="sm" className="hidden bg-surface/70 lg:inline-flex">
+                Dashboard
+              </ButtonLink>
+            )}
             <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="sm" aria-label="Live demo, opens in a new tab">
               Live demo <ArrowUpRight aria-hidden className="hidden lg:block" />
             </ButtonA>

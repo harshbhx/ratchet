@@ -8,9 +8,12 @@ import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
 /** `RATCHET_FALLBACK_STUDENT`'s default; its badge is the hosted one the pages show for its answers. */
 const FALLBACK_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B";
 
+/** Token Factory's list of the models it can fine-tune (read 26 Oct 2026: DeepSeek, Gemma, GPT-OSS, Qwen and Llama; no Nemotron). */
+const TF_FINETUNE_MODELS = "https://docs.tokenfactory.nebius.com/post-training/models";
+
 interface Role {
   role: string;
-  service: string;
+  service: ReactNode;
   id?: string;
   why: string;
   badge?: ReactNode;
@@ -30,7 +33,7 @@ const ROLES: Role[] = [
     id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
     why: "Cheap and fast. The LoRA adapter is yours; the Nano base stays under NVIDIA's Nemotron Open Model License. Scripted for Nebius and ready to run.",
     badge: (
-      <span className="flex items-center gap-1.5">
+      <span className="flex flex-wrap items-center justify-end gap-1.5">
         <RealBadge status="not-run" />
         <WhoBadge servedBy="student" />
       </span>
@@ -68,7 +71,21 @@ const ROLES: Role[] = [
   },
   {
     role: "Why two places",
-    service: "Token Factory does not offer fine-tuning or LoRA serving for Nemotron yet (Oct 2026), so the student is designed to be trained and served on Nebius AI Cloud. Those scripts are tested offline and ready to run with make nebius-plan. The adapters so far were trained on a borrowed GPU.",
+    service: (
+      <>
+        Token Factory's list of models it can fine-tune has no Nemotron model (
+        <a
+          href={TF_FINETUNE_MODELS}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink"
+        >
+          its docs<span className="sr-only"> (opens in a new tab)</span>
+        </a>
+        , read 26 Oct 2026), so the student is designed to be trained and served on Nebius AI Cloud. Those scripts are tested offline and ready to
+        run with make nebius-plan. The adapters so far were trained on a borrowed GPU.
+      </>
+    ),
     why: "",
   },
 ];
@@ -92,9 +109,10 @@ export function Stack() {
             items={ROLES}
             keyOf={(r) => r.role}
             className="rounded-[22px] border border-line bg-surface p-1.5 shadow-card"
+            cellClassName="min-w-0"
             render={(r) => (
-              <div className="flex h-full flex-col rounded-2xl p-4 lg:p-5">
-                <div className="flex min-h-6 items-center justify-between gap-2">
+              <div className="flex h-full min-w-0 flex-col rounded-2xl p-4 lg:p-5">
+                <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
                   <span className="font-mono text-[11.5px] uppercase tracking-[0.12em] text-muted">{r.role}</span>
                   {r.badge}
                 </div>

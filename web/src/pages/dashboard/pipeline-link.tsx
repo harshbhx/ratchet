@@ -2,7 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import { DEMO_URL } from "@/lib/utils";
 import { PIPELINE_LINK } from "./pipeline-link-model";
 
-/** One calm pointer to the demo gateway, shown only in the live dashboard's empty state. */
+/** One calm pointer to the demo gateway, shown on the live dashboard while it has no trained version. */
 export function PipelineLink() {
   return (
     <a

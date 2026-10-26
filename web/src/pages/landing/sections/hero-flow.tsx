@@ -42,7 +42,7 @@ function geometry(W: number) {
 
 /**
  * The hero's one ambient loop: requests flow from your app into the Ratchet gateway and are
- * answered by Nano (yours) or Ultra (rented). Each "night" the wheel clicks one tooth forward and the
+ * answered by Nano (with your adapter) or Ultra (rented). Each "night" the wheel clicks one tooth forward and the
  * share routed to Nano follows the reference simulation (SIM_DAYS).
  */
 export function HeroFlow() {
@@ -405,7 +405,7 @@ export function HeroFlow() {
             <div className="h-full rounded-full bg-owned transition-[width] duration-700 ease-out" style={{ width: `${share * 100}%` }} />
           </div>
           <div className="mt-1.5 flex justify-between text-[11px] text-muted">
-            <span>yours</span>
+            <span>your adapter</span>
             <span>rented</span>
           </div>
         </div>

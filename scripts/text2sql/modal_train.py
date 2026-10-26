@@ -52,7 +52,7 @@ image = (
         "protobuf",
     )
     .env({"HF_HOME": "/hf", "TOKENIZERS_PARALLELISM": "false", "TRITON_CACHE_DIR": "/hf/triton"})
-    .add_local_file("train_t4.py", "/content/train_t4.py")
+    .add_local_file("train_lora.py", "/content/train_lora.py")
     .add_local_file("fast_generate.py", "/content/fast_generate.py")
     .add_local_file(os.environ.get("TRAIN_FILE", "train_r2.jsonl"), "/content/train.jsonl")
     .add_local_file("golden.jsonl", "/content/golden.jsonl")
@@ -138,7 +138,7 @@ def build():
 
 
 def _train_once(smoke: bool, st: dict) -> int:
-    """Run train_t4.py as a child, stream its output into the status dict, enforce the cost cap, return its exit code."""
+    """Run train_lora.py as a child, stream its output into the status dict, enforce the cost cap, return its exit code."""
     import shutil
 
     tag = "_smoke" if smoke else ""
@@ -158,7 +158,9 @@ def _train_once(smoke: bool, st: dict) -> int:
     }
     if smoke:
         env["SMOKE"] = "1"
-    child = subprocess.Popen(["python", "-u", "/content/train_t4.py"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    child = subprocess.Popen(
+        ["python", "-u", "/content/train_lora.py"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+    )
 
     def ticker():
         """Every 20 s, whatever the child prints: add the GPU seconds, publish, commit the volume, enforce the cap."""

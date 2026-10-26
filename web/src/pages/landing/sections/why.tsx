@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import { ArrowDown, EyeOff, FileCode2, FileSignature, Receipt, ScrollText, Split, Target, Undo2, type LucideIcon } from "lucide-react";
+import { ArrowUp, EyeOff, FileCode2, FileSignature, Receipt, ScrollText, Split, Target, Undo2, type LucideIcon } from "lucide-react";
 import { BentoGrid, bentoSpan } from "@/components/fx/bento-grid";
 import { GlowOrbs } from "@/components/fx/glow-orbs";
 import { SpotlightCard } from "@/components/fx/spotlight-card";
@@ -34,7 +34,7 @@ const TONE: Record<WhyId, "owned" | "rented" | "ink" | "good" | "bad"> = {
 function SeeChapter() {
   return (
     <a href="#catch" className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink">
-      Shown in full in chapter 02 <ArrowDown className="size-3.5" aria-hidden />
+      Shown in full in chapter 02 <ArrowUp className="size-3.5" aria-hidden />
     </a>
   );
 }

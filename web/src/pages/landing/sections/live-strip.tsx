@@ -25,7 +25,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   const shadow = [...stats.versions].reverse().find((v) => v.state === "shadow");
   const mock = stats.mode === "mock";
   const empty = stats.totals.requests === 0;
-  // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your model" (FR-7.40).
+  // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your adapter" (FR-7.40).
   const share = studentShareCopy(stats.student_serving);
 
   // The last real upstream calls (live mode only; the simulation records none), content-free (FR-11.31).

@@ -20,7 +20,7 @@ const STEPS: { title: string; body: ReactNode; chips: string[] }[] = [
     title: "The student tries first.",
     body: (
       <>
-        Every request goes to your small model, Nemotron 3 Nano 4B with a LoRA adapter. It answers three times. Confidence combines token
+        Every request goes to the student first: Nemotron 3 Nano 4B with your LoRA adapter. It answers three times. Confidence combines token
         probability, agreement across the three samples, and a valid format, because no single signal from a small model can be trusted.
       </>
     ),
@@ -40,11 +40,12 @@ const STEPS: { title: string; body: ReactNode; chips: string[] }[] = [
     title: "Night School retrains.",
     body: (
       <>
-        Each night Night School fine-tunes a new adapter from the base model, on every teacher answer so far. It is built to run as a Nebius Serverless Job; so far the adapters were trained by hand on a borrowed GPU. Never on the
-        student's own answers. Then it is tested on a held-out golden set that training never sees.
+        Each night Night School fine-tunes a new adapter from the base model, on every teacher answer so far, never on the student's own
+        answers. Then it is tested on a held-out golden set that training never sees. It is built to run as a Nebius Serverless Job; so far
+        the adapters were trained by hand on a borrowed GPU.
       </>
     ),
-    chips: ["Serverless Job · L40S (planned)", "from base, cumulative", "golden set held out"],
+    chips: ["Serverless Job · scripted, ready to run", "from base, cumulative", "golden set held out"],
   },
   {
     title: "The release gate decides.",

@@ -159,7 +159,7 @@ function ColdStart({ mock, onRun, busy, link }: { mock: boolean; onRun: () => vo
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="max-w-2xl">
           <p className="font-mono text-[11.5px] uppercase tracking-[0.14em] text-muted">Cold start</p>
-          <h2 className="mt-1.5 text-[18px] font-semibold tracking-[-0.015em] text-ink">{mock ? "No traffic yet. Every request will go to the teacher at first." : "No requests yet on this live demo. Every request goes to the teacher at first."}</h2>
+          <h2 className="mt-1.5 text-[18px] font-semibold tracking-[-0.015em] text-ink">{mock ? "No traffic yet. Every request will go to the teacher at first." : "No requests yet on this live demo. The teacher answers every request here."}</h2>
           <p className="mt-1.5 text-pretty text-[14px] leading-6 text-ink-2">
             {mock ? (
               <>
@@ -169,7 +169,7 @@ function ColdStart({ mock, onRun, busy, link }: { mock: boolean; onRun: () => vo
             ) : (
               <>
                 Send requests to <span className="font-mono text-[13px]">/v1/chat/completions</span> with an <span className="font-mono text-[13px]">X-Ratchet-Task</span>{" "}
-                header. The first student is trained after the first night with enough examples.
+                header. Night School does not run on this live demo, so no student is trained here; the simulation demo shows the whole loop.
               </>
             )}
           </p>
@@ -491,7 +491,7 @@ export default function DashboardPage() {
 
                 <Group id="versions" title="Versions and tasks" hint="Which student is serving, and for which tasks">
                   <Reveal delay={0.12}>
-                    <VersionsTable versions={stats.versions} />
+                    <VersionsTable versions={stats.versions} live={stats.mode === "live"} />
                   </Reveal>
                   <Reveal delay={0.13}>
                     <TasksTable tasks={stats.tasks} hosted={hostedServing(stats.student_serving)} />

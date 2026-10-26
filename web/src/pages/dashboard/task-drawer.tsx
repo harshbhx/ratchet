@@ -208,7 +208,7 @@ function TaskView({ task, detail, loading, missing }: { task: TaskEntry; detail:
         <Facts
           rows={[
             ["Requests", <span key="n" className="tabular">{fmtInt(t.requests)}</span>],
-            ["Answered by your model", t.pinned ? <span className="text-muted">– (pinned)</span> : <span className="tabular">{fmtShare(t.student_share)}</span>],
+            ["Answered by your adapter", t.pinned ? <span className="text-muted">– (pinned)</span> : <span className="tabular">{fmtShare(t.student_share)}</span>],
           ]}
         />
       </Section>
