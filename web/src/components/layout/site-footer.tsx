@@ -47,7 +47,7 @@ function GatewayStatus({ stats, error }: { stats: Stats | null; error: string | 
       ? stats.upstream?.token_factory
         ? "Gateway up · live on Nebius Token Factory"
         : "Gateway up · live"
-      : "Gateway up · simulation (mock models)";
+      : "Gateway up · mock models";
   return (
     <p className="inline-flex items-center gap-2 text-[13px] text-muted">
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", up ? "bg-good" : waking ? "bg-warn" : "bg-muted")} />
@@ -98,8 +98,8 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
             </p>
             <p className="mt-3 text-[13px] leading-relaxed text-muted">
               {stats?.mode === "mock"
-                ? "Numbers on this page are simulation unless labelled Measured. "
-                : "Numbers from the gateway are its own traffic; reference runs are labelled Simulation and exam results Measured. "}
+                ? "This gateway runs mock models, so its numbers are not measured. Exam results are labelled Measured. "
+                : "Numbers from the gateway are its own traffic and exam results are labelled Measured. "}
               The published adapters were trained on a borrowed GPU.
             </p>
             <div className="mt-4">

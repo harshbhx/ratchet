@@ -152,7 +152,7 @@
 <body>
 <main>
   <header>
-    <h1>Scout <span class="sim" id="simBadge" hidden>Simulation</span></h1>
+    <h1>Scout <span class="sim" id="simBadge" hidden>Mock models</span></h1>
     <nav aria-label="Ratchet">
       <a href="/">Ratchet home</a>
       <a href="/dashboard">Dashboard</a>
@@ -168,7 +168,7 @@
       <button class="primary" id="askBtn" type="submit">Ask</button>
     </div>
     <div class="chips" id="examples" role="group" aria-label="Example questions"></div>
-    <p class="note" id="modeNote" hidden>Mock mode: pick an example question. Search results are simulated.</p>
+    <p class="note" id="modeNote" hidden>Mock mode: pick an example question. Search results are examples.</p>
     <p class="note" id="budget"></p>
     <p class="status" id="status" role="status" aria-live="polite"></p>
     <div class="alert" id="alert" role="alert" hidden></div>
@@ -191,7 +191,7 @@
 
     <section class="lane" id="lane-searcher" data-state="idle" aria-labelledby="h-searcher">
       <div class="lane-h"><span class="num" aria-hidden="true">2</span><h2 id="h-searcher">Searcher</h2><code id="searchTool">Tavily</code><span class="lstate" id="st-searcher">waiting</span></div>
-      <p class="note" id="simResults" hidden style="margin:-2px 0 8px">Simulated search results (example.org pages).</p>
+      <p class="note" id="simResults" hidden style="margin:-2px 0 8px">Example search results (example.org pages).</p>
       <div id="searcher"><p class="empty">Runs each query on the web. A tool call, not an LLM call.</p></div>
     </section>
 
@@ -280,7 +280,7 @@
 
   // ---------- step meta (who answered, cost, latency) ----------
   function who(st) {
-    if (st.served_by === "tool") return `<span class="who tool">${st.model === "tavily" ? "Tavily" : "Simulated search"}</span>`;
+    if (st.served_by === "tool") return `<span class="who tool">${st.model === "tavily" ? "Tavily" : "Example search"}</span>`;
     if (st.served_by === "student") {
       const conf = st.confidence == null ? "" : ` · conf ${num(st.confidence).toFixed(2)}`;
       if (hosted(st)) return `<span class="who h" title="${esc(hostedTitle())}">Nano 30B · hosted</span><span>${esc(st.model)}${conf}</span>`;
@@ -614,7 +614,7 @@
       if (!r.ok) {
         const detail = body && (body.message || body.detail || body.error);
         const why = { 400: freeText ? "That question could not be run." : "In mock mode only the example questions work.",
-                      429: "The demo limit is reached for now (runs per hour or the daily budget). Try again later.",
+                      429: "The usage limit is reached for now (runs per hour or the daily budget). Try again later.",
                       503: "Live search is not configured on this server." }[r.status] || `The server answered ${r.status}.`;
         handle({ type: "error", message: typeof detail === "string" ? `${why} (${detail})` : why });
         return finish(token);
@@ -635,7 +635,7 @@
   // ---------- setup ----------
   function setMode(m) {
     mode = m;
-    $("searchTool").textContent = m === "mock" ? "simulated search" : "Tavily";
+    $("searchTool").textContent = m === "mock" ? "example search" : "Tavily";
     const mock = m === "mock";
     $("simBadge").hidden = !mock;
     $("simResults").hidden = !mock;
@@ -679,7 +679,7 @@
         // The public pool's budget left today: the total less the judges' reserve and what was spent (ADR 0120).
         const left = typeof d.public_budget_left_usd === "number" ? d.public_budget_left_usd
           : Math.max(0, num(d.budget_usd) - num(d.spent_today_usd));
-        $("budget").textContent = `Demo budget left today: $${Math.max(0, num(left)).toFixed(2)}` +
+        $("budget").textContent = `Free budget left today: $${Math.max(0, num(left)).toFixed(2)}` +
           (d.runs_per_hour_per_ip ? ` · up to ${num(d.runs_per_hour_per_ip)} runs per hour per visitor` : "");
       } else {
         $("budget").textContent = "";

@@ -42,7 +42,7 @@ const ROLES: Role[] = [
   {
     role: "Night School",
     service: "Nebius Serverless Jobs (L40S) with Unsloth (one hand-run job on 27 Oct 2026; the nightly job is scripted, ready to run)",
-    why: "Fine-tunes a new adapter each night. A job is billed only while it runs. The round-2 adapter was retrained once by hand on a Nebius L40S (27 Oct 2026); the original adapters were trained on a borrowed GPU.",
+    why: "Built to fine-tune a new adapter each night. A job is billed only while it runs. The round-2 adapter was retrained once by hand on a Nebius L40S (27 Oct 2026); the original adapters were trained on a borrowed GPU.",
     badge: <RealBadge status="not-run" />,
   },
   {
@@ -99,7 +99,7 @@ export function Stack() {
           title="Built on Nebius and NVIDIA."
           lead={
             <Lead>
-              Open Nemotron models for every model role. The teacher runs on Nebius Token Factory, and the round-2 adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job). The student was served once on a Nebius endpoint for a speed test; the demo is not connected to it. The web front end and the live demo run on Cloudflare. The gateway itself does no inference, so it fits on a
+              Open Nemotron models for every model role. The teacher runs on Nebius Token Factory, and the round-2 adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job). The student was served once on a Nebius endpoint for a speed test; the live gateway is not connected to it. The web front end and the live gateway run on Cloudflare. The gateway itself does no inference, so it fits on a
               small CPU machine.
             </Lead>
           }

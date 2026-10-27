@@ -141,7 +141,7 @@ export function Kpis({ stats }: { stats: Stats }) {
   );
 }
 
-/** The live demo's split (FR-12.34, ADR 0147), labelled as what it is: a random pick, not the confidence gate. Nothing while it is off. */
+/** The random split (FR-12.34, ADR 0147), labelled as what it is: a random pick, not the confidence gate. Nothing while it is off. */
 export function DemoSplitTile({ stats }: { stats: Stats }) {
   const s = demoSplitStat(stats.demo_split);
   if (!s) return null;

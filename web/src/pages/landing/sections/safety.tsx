@@ -9,7 +9,6 @@ import { Container } from "@/components/ui/section";
 import { EASE } from "@/lib/motion";
 import { LIFECYCLE_NUMBERS as N } from "../lifecycle-model";
 import { Chapter, ChapterHead, Lead, Reveal, ratchetPath } from "../shared";
-import { RollbackStory } from "./rollback-story";
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
@@ -251,10 +250,6 @@ export function Safety() {
             </h3>
           </div>
           <Timeline items={STAGES} />
-        </Reveal>
-
-        <Reveal className="mt-14 sm:mt-20">
-          <RollbackStory />
         </Reveal>
       </Container>
     </Chapter>

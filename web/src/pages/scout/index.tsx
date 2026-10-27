@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { FastForward, FlaskConical, Info, LoaderCircle, Play, Radio, Video } from "lucide-react";
+import { FlaskConical, Info, LoaderCircle, Radio } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { WhoProvider } from "@/components/ui/who";
 import { Container, Eyebrow } from "@/components/ui/section";
-import { Button } from "@/components/ui/button";
-import { recordingLabel, watchLabel } from "@/lib/recording-model";
 import { cn, fmtUsd } from "@/lib/utils";
 import { AgentGraph, GraphLegend } from "./agent-graph";
 import { AskBar } from "./ask-bar";
@@ -55,7 +53,7 @@ function RunsLeft({ status }: { status: NonNullable<ReturnType<typeof useScout>[
 /** Placeholder for the budget line while /scout/status loads for the first time. */
 function StatusSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading the demo budget" className="flex flex-wrap items-center gap-3 sm:justify-center">
+    <div aria-busy="true" aria-label="Loading the budget" className="flex flex-wrap items-center gap-3 sm:justify-center">
       <span className="h-4 w-56 animate-pulse rounded bg-surface-2" />
       <span className="h-4 w-28 animate-pulse rounded bg-surface-2" />
     </div>
@@ -93,7 +91,7 @@ export default function ScoutPage() {
 }
 
 function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
-  const { run, derived, examples, examplesError, status, statusLoading, mode, start, stop, reloadExamples, refreshStatus, recording, playing, recordings, liveRecording, play, skip } = scout;
+  const { run, derived, examples, examplesError, status, statusLoading, mode, start, stop, reloadExamples, refreshStatus } = scout;
   const [hint, setHint] = useState<string | null>(null);
   const graphRef = useRef<HTMLDivElement | null>(null);
   const running = run.status === "running";
@@ -130,26 +128,17 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
           className="bg-grid pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_60%_90%_at_50%_0%,#000_25%,transparent_75%)]"
         />
         <Container className="relative pb-10 pt-10 sm:pb-12 sm:pt-14 sm:text-center lg:pt-16">
-          <Eyebrow className="sm:justify-center">Multi-agent demo</Eyebrow>
+          <Eyebrow className="sm:justify-center">Multi-agent research</Eyebrow>
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-center">
             <h1 id="h-scout" className="text-[2.75rem] font-semibold leading-none tracking-[-0.035em] text-ink sm:text-[3.5rem]">
               Scout
             </h1>
-            {recording && (
-              <Badge
-                tone={recording.mode === "mock" ? "warn" : "neutral"}
-                className="text-[12.5px]"
-                title="Played back from a file, at the pace it ran. No model or search call is made now."
-              >
-                <Video aria-hidden /> {recordingLabel(recording)}
+            {mode === "mock" && (
+              <Badge tone="outline" className="text-[12.5px]" title="Mock models and example search results">
+                <FlaskConical aria-hidden /> Mock models
               </Badge>
             )}
-            {!recording && mode === "mock" && (
-              <Badge tone="outline" className="text-[12.5px]" title="Mock models and simulated search results">
-                <FlaskConical aria-hidden /> Simulation
-              </Badge>
-            )}
-            {!recording && mode === "live" && (
+            {mode === "live" && (
               <Badge tone="good" className="text-[12.5px]">
                 <Radio aria-hidden /> Live: real web search and models
               </Badge>
@@ -162,7 +151,7 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
           <div className="mt-3 flex min-h-5 flex-col items-start gap-1.5 sm:items-center">
             {mode === "mock" && (
               <p className="inline-flex items-center gap-1.5 text-[13px] text-muted">
-                <Info className="size-3.5" aria-hidden /> Search results are simulated, and so are the models and prices.
+                <Info className="size-3.5" aria-hidden /> Search results are examples, and so are the models and prices.
               </p>
             )}
             {status && <BudgetLine status={status} />}
@@ -181,20 +170,6 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
               onRetryExamples={() => void reloadExamples()}
               hint={setHint}
             />
-            {(liveRecording || playing) && (
-              <div className="mt-3 flex flex-wrap gap-2 sm:justify-center">
-                {liveRecording && !playing && (
-                  <Button type="button" variant="outline" size="sm" onClick={() => void play(liveRecording)}>
-                    <Play aria-hidden /> {watchLabel(liveRecording)}
-                  </Button>
-                )}
-                {playing && (
-                  <Button type="button" variant="outline" size="sm" onClick={skip}>
-                    <FastForward aria-hidden /> Skip to the end
-                  </Button>
-                )}
-              </div>
-            )}
             <JudgeCode status={status} running={running} onChange={refreshStatus} />
             {hint && (
               <p className="mt-2 inline-flex items-center gap-1.5 text-[13.5px] font-medium text-warn" role="alert">
@@ -215,9 +190,9 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
       <Container className={cn("space-y-6", started ? "pt-2" : "pt-8")}>
         {/* ---------------- agent graph (errors show right above it, where the eye is during a run) */}
         <div ref={graphRef} className="scroll-mt-[200px] space-y-6 sm:scroll-mt-[192px]">
-          {run.status === "error" && run.error && isScoutDailyLimit(run.error) && <DailyLimitNotice recordings={recordings} onWatch={(r) => void play(r)} />}
+          {run.status === "error" && run.error && isScoutDailyLimit(run.error) && <DailyLimitNotice />}
           {run.status === "error" && run.error && !isScoutDailyLimit(run.error) && (
-            <ErrorAlert message={run.error} onRetry={() => go(run.question)} onWatch={liveRecording ? () => void play(liveRecording) : undefined} />
+            <ErrorAlert message={run.error} onRetry={() => go(run.question)} />
           )}
           <Card className="overflow-hidden">
             <section aria-labelledby="h-graph">

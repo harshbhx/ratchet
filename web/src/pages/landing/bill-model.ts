@@ -1,12 +1,10 @@
 /**
  * Pure helpers for the story's "honest bill" chapter: what it prints from a cost report (GET /ratchet/cost, ADR 0023),
- * whether the report came from this gateway or is the reference simulation's (`SIM_COST_REPORT`). Every number comes
+ * whether this gateway has one. Every number comes
  * from the report; nothing here estimates one. No JSX, so `web/tests/story-model.test.mjs` can import it under Node.
  */
 import type { CostReport, Recommendation } from "@/lib/api";
 import { baselineOf, fmtMoney, fmtRate, fmtSignedPct, idleBuckets, meterScale, recMeta, type MeterScale } from "../dashboard/economics-model";
-
-export type BillSource = "gateway" | "reference";
 
 export interface BillView {
   total: number;
@@ -37,7 +35,7 @@ export interface Bill {
   observed: number | null;
   utilization: number | null;
   idleShare: number | null;
-  /** "in hours" (live ledger) or "on days" (simulator's clock): how idle time and off-endpoint answers were counted. */
+  /** "in hours" (live ledger) or "on days": how idle time and off-endpoint answers were counted. */
   idleBuckets: "in hours" | "on days";
   recommendation: Recommendation;
   explanation: string | null;
@@ -101,7 +99,7 @@ export function isCostReport(r: unknown): r is CostReport {
 
 /**
  * True when this gateway's report can tell the story by itself: it has requests, recorded endpoint hours and a
- * break-even volume. Otherwise the chapter opens on the reference simulation and still offers the gateway's report.
+ * break-even volume. Otherwise the chapter says there is no break-even yet.
  */
 export function tellsTheStory(r: CostReport | null | undefined): boolean {
   if (!r || !isCostReport(r)) return false;
@@ -232,20 +230,6 @@ const OUTCOMES: Array<{ key: Recommendation; when: string }> = [
 /** The four recommendations the report can make (ADR 0023), with the one this report made marked. */
 export function outcomes(current: Recommendation): Outcome[] {
   return OUTCOMES.map((o) => ({ ...o, label: recMeta(o.key).label, current: o.key === current }));
-}
-
-/**
- * The GPU-hour line `python -m sim.simulate` prints for a run (`sim/simulate.py` `table`), rebuilt from its report so the
- * page shows what the command prints. Python's `:.0%` and `:.2f`, without thousands separators.
- */
-export function simulateLine(r: CostReport): string {
-  const gpu = r.views.gpu_hours;
-  const pct = gpu.savings_pct == null ? "-" : `${(gpu.savings_pct * 100).toFixed(0)}%`;
-  return (
-    `by GPU-hours (simulation, ${r.prices?.label ?? "unverified list prices"}): $${gpu.total_usd.toFixed(2)} -> saved ${pct} ` +
-    `(${(r.endpoint_hours ?? 0).toFixed(0)} endpoint hours, ${(r.training_hours ?? 0).toFixed(2)} training hours); ` +
-    `recommendation: ${r.recommendation}`
-  );
 }
 
 /** A total and its breakdown as text, for the bars' screen-reader table: `$380.34 (teacher calls $6.26, ...)`. */

@@ -1,5 +1,3 @@
-import { useRef } from "react";
-import { motion, useInView } from "motion/react";
 import { ArrowRight, BookOpen, Filter, ListTree, PenLine, Search, type LucideIcon } from "lucide-react";
 import type { ServedBy } from "@/lib/api";
 import { GlowOrbs } from "@/components/fx/glow-orbs";
@@ -9,8 +7,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
 import { WhoBadge, useWho } from "@/components/ui/who";
 import { cn } from "@/lib/utils";
-import { WHO_TEXT } from "@/lib/who-model";
-import { Chapter, ChapterHead, EASE, ExtLink, LINKS, Lead, Reveal, SimBadge } from "../shared";
+import { Chapter, ChapterHead, ExtLink, LINKS, Lead, Reveal } from "../shared";
 
 const AGENTS: { name: string; icon: LucideIcon; task: string | null; calls: string; who: ServedBy; route: string; why: string }[] = [
   { name: "Planner", icon: ListTree, task: "research-plan", calls: "1 call", who: "teacher", route: "Pinned", why: "Open-ended: turns a question into three searches." },
@@ -19,15 +16,6 @@ const AGENTS: { name: string; icon: LucideIcon; task: string | null; calls: stri
   { name: "Reader", icon: BookOpen, task: "page-read", calls: "1 per relevant result, up to 6", who: "student", route: "Distilled", why: "Pulls one key fact from each relevant page." },
   { name: "Writer", icon: PenLine, task: "research-write", calls: "1 call", who: "teacher", route: "Pinned", why: "Open-ended: writes the cited answer." },
 ];
-
-// One mock run of "What is LoRA fine-tuning?" after a 4-day warm-up: model calls in order.
-const RUN: { agent: string; who: "student" | "teacher" }[] = [
-  { agent: "Planner", who: "teacher" },
-  ...Array.from({ length: 11 }, () => ({ agent: "Triage", who: "student" as const })),
-  ...Array.from({ length: 5 }, () => ({ agent: "Reader", who: "student" as const })),
-  { agent: "Writer", who: "teacher" },
-];
-const STUDENT_CALLS = RUN.filter((r) => r.who === "student").length;
 
 function Pipeline() {
   const who = useWho();
@@ -78,61 +66,6 @@ function Pipeline() {
   );
 }
 
-function RunStrip() {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const inView = useInView(ref, { once: true, margin: "0px 0px -15% 0px" });
-  const groups = [
-    { label: "Planner", n: 1 },
-    { label: "Triage × 11", n: 11 },
-    { label: "Reader × 5", n: 5 },
-    { label: "Writer", n: 1 },
-  ];
-  return (
-    <div ref={ref} className="rounded-[22px] border border-line bg-surface p-4 shadow-card sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[28px] font-semibold leading-none tracking-[-0.03em] text-ink sm:text-[34px]">
-            {STUDENT_CALLS} of {RUN.length}
-          </p>
-          <p className="mt-2 max-w-[44ch] text-[14px] leading-relaxed text-ink-2">
-            model calls in one Scout run were answered by the student, in the mock demo after a 4-day warm-up.
-          </p>
-        </div>
-        <SimBadge />
-      </div>
-      <div className="mt-6" role="img" aria-label={`Unit chart: ${RUN.length} model calls in order. Planner on Ultra, 11 triage and 5 reader calls on Nano, writer on Ultra.`}>
-        <div className="grid grid-cols-[repeat(18,minmax(0,1fr))] gap-1 sm:gap-1.5">
-          {RUN.map((r, i) => (
-            <motion.span
-              key={i}
-              initial={{ opacity: 0, scale: 0.6 }}
-              animate={inView ? { opacity: 1, scale: 1 } : undefined}
-              transition={{ duration: 0.35, delay: 0.15 + i * 0.05, ease: EASE }}
-              className={cn("aspect-square rounded-[4px] sm:rounded-md", r.who === "student" ? "bg-owned" : "bg-rented")}
-            />
-          ))}
-        </div>
-        <div className="mt-2 grid grid-cols-[repeat(18,minmax(0,1fr))] gap-1 text-[10.5px] text-muted sm:gap-1.5 sm:text-[11px]" aria-hidden>
-          {groups.map((g) => (
-            <span key={g.label} className="truncate border-t border-line-strong pt-1.5" style={{ gridColumn: `span ${g.n} / span ${g.n}` }}>
-              {g.n > 1 ? g.label : g.label[0]}
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-ink-2">
-        <span className="inline-flex items-center gap-2">
-          <span className="size-2.5 rounded-[3px] bg-owned" aria-hidden /> {WHO_TEXT.owned}
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="size-2.5 rounded-[3px] bg-rented" aria-hidden /> {WHO_TEXT.rented}
-        </span>
-        <span className="text-muted">P = Planner, W = Writer. The 3 searches are tool calls, not shown.</span>
-      </div>
-    </div>
-  );
-}
-
 export function Scout() {
   return (
     <Chapter id="scout">
@@ -158,10 +91,7 @@ export function Scout() {
         <div className="mt-12">
           <Pipeline />
         </div>
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-stretch lg:gap-8">
-          <Reveal>
-            <RunStrip />
-          </Reveal>
+        <div className="mt-6">
           <Reveal delay={0.1} className="flex flex-col justify-between gap-6 rounded-[22px] border border-line bg-surface-2/50 p-5 sm:p-6">
             <p className="text-pretty text-[17px] leading-relaxed text-ink-2">
               Ask Scout a question and watch every call arrive, each tagged with who answered it and what it cost against Ultra alone.
@@ -169,7 +99,7 @@ export function Scout() {
             <div className="mt-6 flex flex-wrap gap-3">
               <Magnet>
                 <ButtonLink to="/scout" size="lg">
-                  Try the Scout demo <ArrowRight />
+                  Try Scout live <ArrowRight />
                 </ButtonLink>
               </Magnet>
             </div>

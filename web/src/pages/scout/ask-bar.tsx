@@ -30,7 +30,7 @@ export function AskBar({
   hint: (msg: string | null) => void;
 }) {
   const freeText = examples?.free_text === true;
-  // A run is never started or retried for the visitor while the live demo starts: Run waits for /healthz.
+  // A run is never started or retried for the visitor while the live gateway starts: Run waits for /healthz.
   const waking = isWaking(useWaking());
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -49,7 +49,7 @@ export function AskBar({
       return;
     }
     if (!freeText && examples && !examples.examples.includes(q)) {
-      hint("This demo runs in simulation, so it answers the example questions only.");
+      hint("This gateway runs mock models, so it answers the example questions only.");
       return;
     }
     hint(null);
@@ -167,7 +167,7 @@ export function AskBar({
       </div>
       <p id="scout-q-note" className="mt-3 text-[13px] text-muted sm:text-center">
         {examples && !freeText
-          ? "In simulation, Scout answers the example questions only."
+          ? "With mock models, Scout answers the example questions only."
           : examples && freeText
             ? `Up to ${MAX} characters. Each run makes three web searches and at most 20 model calls.`
             : " "}

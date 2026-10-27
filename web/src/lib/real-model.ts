@@ -1,6 +1,6 @@
 /**
  * "What's real": one data file (`src/data/real.json`) says, for every claim the site makes about Ratchet, whether it is
- * real, measured, simulation, pending or ready to run, what it rests on and how to check it. The judges page's table and
+ * real, measured, pending or ready to run, what it rests on and how to check it. The judges page's table and
  * every `RealBadge` read it through these helpers, so a status changes in one place. Pure, no JSX: tested by
  * `tests/real-model.test.mjs`, and `tests/test_judges_page.py` holds the file to its rules (evidence and a way to check on
  * every row, a value on every measured number, no number on a pending one).
@@ -10,7 +10,7 @@
  */
 
 /** The status vocabulary, in the order the legend shows it. Keep on one line: the Python test reads it. */
-export const REAL_STATUSES = ["real", "measured", "simulation", "pending", "not-run"] as const;
+export const REAL_STATUSES = ["real", "measured", "pending", "not-run"] as const;
 
 export type RealStatus = (typeof REAL_STATUSES)[number];
 
@@ -51,8 +51,7 @@ export interface RealEntry {
 export interface RealLinks {
   repo: string;
   docs: string;
-  demo: string;
-  /** The demo video (public on YouTube since 26 Oct 2026); null hides every link to it. */
+  /** The video (public on YouTube since 26 Oct 2026); null hides every link to it. */
   video: string | null;
   /**
    * The video's counting link (video.ratchet.dualmindlab.tech): it counts the `from` tag and redirects to `video`. The page's own
@@ -88,7 +87,6 @@ export interface RealData {
 export const STATUS_TEXT: Record<RealStatus, { label: string; meaning: string }> = {
   real: { label: "Real", meaning: "Happened or runs as described, and you can check it" },
   measured: { label: "Measured", meaning: "A number measured on a real model or a live gateway" },
-  simulation: { label: "Simulation", meaning: "Mock models; no real model was measured" },
   pending: { label: "Pending", meaning: "Planned or in progress; not available yet" },
   "not-run": { label: "Ready to run", meaning: "Built and tested offline, ready to run for real" },
 };
@@ -97,7 +95,6 @@ export const STATUS_TEXT: Record<RealStatus, { label: string; meaning: string }>
 export const STATUS_TONE: Record<RealStatus, "good" | "owned" | "outline" | "warn" | "neutral"> = {
   real: "good",
   measured: "owned",
-  simulation: "outline",
   pending: "warn",
   "not-run": "neutral",
 };
@@ -152,7 +149,7 @@ export function parseReal(text: string): RealData {
   }
   return {
     updated: str(o.updated),
-    links: { repo: str(l.repo), docs: str(l.docs), demo: str(l.demo), video: str(l.video) || null, videoShort: str(l.videoShort) || null },
+    links: { repo: str(l.repo), docs: str(l.docs), video: str(l.video) || null, videoShort: str(l.videoShort) || null },
     entries,
   };
 }
@@ -182,11 +179,9 @@ export function statusLabel(s: RealStatus): string {
 }
 
 /**
- * The status of a number this page reads from the gateway it is served by: simulation on a mock gateway (the demo),
- * measured on a live one, and nothing while the mode is unknown (no badge rather than a wrong one).
+ * The status of a number this page reads from the gateway it is served by: measured on a live gateway, and nothing while the mode is unknown (no badge rather than a wrong one).
  */
 export function gatewayStatus(mode: string | null | undefined): RealStatus | null {
-  if (mode === "mock") return "simulation";
   if (mode === "live") return "measured";
   return null;
 }

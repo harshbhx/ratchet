@@ -29,11 +29,11 @@ export function unlockError(httpStatus: number): string {
     case 401:
       return "That code is not right. Check it and try again.";
     case 404:
-      return "Judge access is not turned on for this demo.";
+      return "Judge access is not turned on for this gateway.";
     case 429:
       return "Too many tries from this address. Try again in an hour.";
     case 0:
-      return "Could not reach the demo. Check your connection and try again.";
+      return "Could not reach the gateway. Check your connection and try again.";
     default:
       return `Something went wrong (${httpStatus}). Try again in a moment.`;
   }
@@ -41,7 +41,7 @@ export function unlockError(httpStatus: number): string {
 
 /** The message for a failed sign-out. */
 export function signOutError(httpStatus: number): string {
-  return httpStatus === 0 ? "Could not reach the demo. Check your connection and try again." : `Could not end the session (${httpStatus}).`;
+  return httpStatus === 0 ? "Could not reach the gateway. Check your connection and try again." : `Could not end the session (${httpStatus}).`;
 }
 
 /** The runs-left line of the "Judge access on" state. */

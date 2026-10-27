@@ -17,7 +17,7 @@ export function ToolCallBlock({ where }: { where: "top" | "bottom" }) {
   if (!d || blockPlace(d) !== where) return null;
   return (
     <section id="toolcall" aria-labelledby="toolcall-title" className="mt-9 rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5">
-      <p className="text-[12.5px] font-medium text-muted">Measured on real models{d.date ? `, ${fmtDate(d.date)}` : ""}. Not the simulation.</p>
+      <p className="text-[12.5px] font-medium text-muted">Measured on real models{d.date ? `, ${fmtDate(d.date)}` : ""}.</p>
       <h3 id="toolcall-title" className="mt-1 text-[17px] font-semibold tracking-[-0.01em] text-ink">
         Tool calling: a second adapter, scored strictly on two exams
       </h3>

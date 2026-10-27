@@ -48,5 +48,4 @@ export function safeHref(url: string | undefined): string | undefined {
 
 export const REPO_URL = "https://github.com/harshbhx/ratchet";
 export const DOCS_URL = "https://docs.ratchet.dualmindlab.tech/";
-export const DEMO_URL = "https://demo.ratchet.dualmindlab.tech";
 export const LIVE_URL = "https://live.ratchet.dualmindlab.tech";

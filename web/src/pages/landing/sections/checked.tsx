@@ -208,7 +208,7 @@ export function Checked({ stats }: { stats: Stats | null }) {
                   <p className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[12.5px] leading-relaxed text-muted">
                     {mock && (
                       <Badge tone="outline">
-                        <FlaskConical aria-hidden /> Simulation
+                        <FlaskConical aria-hidden /> Mock models
                       </Badge>
                     )}
                     <span>
@@ -236,7 +236,7 @@ export function Checked({ stats }: { stats: Stats | null }) {
             <p className="text-pretty text-[13.5px] leading-relaxed text-ink-2">
               Each candidate's signed bill of materials also carries a certified lower bound on its precision on the held-out golden rows,
               which <code className="font-mono text-[12.5px]">python -m ratchet.stats check</code> recomputes from the signed counts. Two more
-              checks are built and tested, and have only run in simulation: each adapter's training and golden sets committed under signed Merkle
+              checks are built and tested, and have not run on live traffic: each adapter's training and golden sets committed under signed Merkle
               roots (<code className="font-mono text-[12.5px]">python -m ratchet.proof</code>), and a signed savings receipt per day and API client (
               <code className="font-mono text-[12.5px]">python -m ratchet.receipt</code>).
             </p>

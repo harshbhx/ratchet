@@ -131,7 +131,7 @@ function GatewayLine() {
   if (!stats)
     return (
       <p className="text-[13px] leading-relaxed text-ink-2">
-        No gateway answered this page, so the live chapters say "not available". Run <code className="font-mono">make demo</code> and open{" "}
+        No gateway answered this page, so the live chapters say "not available". Run <code className="font-mono">RATCHET_MODE=mock uvicorn ratchet.gateway:app</code> and open{" "}
         <code className="font-mono">/judges</code> on it.
       </p>
     );
@@ -139,7 +139,7 @@ function GatewayLine() {
     <p className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[13px] leading-relaxed text-ink-2">
       {status && <RealBadge status={status} />}
       <span>
-        Live chapters read the gateway serving this page: {stats.mode === "mock" ? "the mock demo" : "a live gateway"}, day {fmtInt(stats.day)},{" "}
+        Live chapters read the gateway serving this page: {stats.mode === "mock" ? "a mock gateway" : "a live gateway"}, day {fmtInt(stats.day)},{" "}
         {fmtInt(stats.totals.requests)} requests so far.
       </span>
     </p>
@@ -252,7 +252,7 @@ function Page() {
           id="group-inside"
           title="Inside the gateway"
           group="inside"
-          purpose="The loop that trains a new small model each night and releases it safely, read live from this gateway. Open what you care about."
+          purpose="The loop built to train a new small model each night and release it safely, read live from this gateway. It has not run on live traffic. Open what you care about."
         >
           <ArchitectureChapter />
           <CascadeChapter />

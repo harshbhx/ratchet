@@ -42,12 +42,12 @@ const ITEMS: Item[] = [
   { icon: Database, title: "Training data", line: "4,322 teacher examples, every query run", entry: "teacher-labels", href: LINKS.hfTrain },
   { icon: ClipboardCheck, title: "Two exams", line: "Answers and scores, recomputable", entry: "exam-result", href: LINKS.hfExams },
   { icon: Route, title: "The gateway", line: "Small model first, teacher on doubt", entry: "machinery", to: "/judges#cascade" },
-  { icon: Undo2, title: "Release gate", line: "Shadow, canary, automatic rollback", entry: "demo-numbers", to: "/judges#release" },
+  { icon: Undo2, title: "Release gate", line: "Shadow, canary, automatic rollback", entry: "machinery", to: "/judges#release" },
   { icon: FileSignature, title: "Signed lineage", line: "A bill of materials per adapter", entry: "machinery", to: "/judges#certificate" },
   { icon: Scale, title: "License rule", line: "Closed models are refused as teachers", entry: "license-rule", to: "/judges#ledger" },
-  { icon: Bot, title: "Scout", line: "An agent demo on the gateway", entry: "scout-tavily", to: "/scout" },
+  { icon: Bot, title: "Scout", line: "A research agent on the gateway", entry: "scout-tavily", to: "/scout" },
   { icon: LayoutDashboard, title: "Dashboard", line: "Costs, routes, releases, receipts", entry: "live-demo", to: "/dashboard" },
-  { icon: Server, title: "Student on Nebius GPUs", line: "Wiring the demo to an endpoint, and Night School jobs (scripted, ready to run)", entry: "gateway-live", to: "/judges#real" },
+  { icon: Server, title: "Student on Nebius GPUs", line: "Wiring the gateway to an endpoint, and Night School jobs (scripted, ready to run)", entry: "gateway-live", to: "/judges#real" },
   { icon: BookOpen, title: "Docs", line: "Guides, API, evidence, how to verify", status: "real", href: DOCS_URL },
   { icon: Code, title: "Open source", line: "Apache-2.0, 1,900+ tests", status: "real", href: REPO_URL },
 ];
@@ -98,7 +98,7 @@ export function WhatsIn() {
             Everything in the box, and what is real.
           </h2>
           <p className="mt-3 max-w-[60ch] text-[15px] leading-relaxed text-ink-2">
-            Each tile says whether it is real, measured, simulation or ready to run. Click any one.
+            Each tile says whether it is real, measured, pending or ready to run. Click any one.
           </p>
           <ul className="mt-7 grid grid-cols-1 gap-3 min-[520px]:grid-cols-2 lg:grid-cols-4">
             {ITEMS.map((it) => (

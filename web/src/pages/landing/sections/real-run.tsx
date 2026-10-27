@@ -11,7 +11,7 @@ import { LINKS, Reveal } from "../shared";
  * The results, right after the hero: what two trained adapters scored on two exams, who wrote each exam, and the one limit that
  * matters. Short on purpose; the detail (difficulty, round 1 against round 2, the scoring rule, the fingerprints) is on the judges'
  * page and in the docs. Every figure comes from `src/data/exams.json`, which `scripts/text2sql/exam_numbers.py` computes from the
- * saved answers (a test fails if it drifts). The simulation chapters further down stay labelled as simulation.
+ * saved answers (a test fails if it drifts).
  */
 const LINK = "inline-flex items-center gap-1 font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink";
 
@@ -35,7 +35,7 @@ export function RealRun() {
         <Reveal>
           <div className="flex flex-wrap items-center gap-2">
             <RealBadge status="measured" />
-            <span className="text-[12.5px] text-muted">Real models, two exams, 22 to 24 Oct 2026. Not the simulation.</span>
+            <span className="text-[12.5px] text-muted">Real models, two exams, 22 to 24 Oct 2026.</span>
           </div>
           <h2 id="real-run-title" className="mt-4 max-w-3xl text-balance text-2xl font-semibold tracking-[-0.02em] text-ink sm:text-[2.1rem] sm:leading-[1.12]">
             A small model taught by a big one: {x2} to {x1} times the untrained score, for about $17 on record.

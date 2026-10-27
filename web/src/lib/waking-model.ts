@@ -1,5 +1,5 @@
 /**
- * The "waking up" state of the live demo, as a pure model (no DOM, no React, no timers).
+ * The "waking up" state of the live gateway, as a pure model (no DOM, no React, no timers).
  *
  * The live gateway sleeps 30 minutes after its last request. The first visitor after that waits for the container to
  * start (about 20 seconds). `waking-store.ts` feeds this reducer with what the page's own gateway calls saw and with
@@ -26,7 +26,7 @@ export type WakingEvent =
 export const POLL_MS = 3000;
 /** After this long without an answer the banner changes to "taking longer than usual". */
 export const GIVE_UP_MS = 90_000;
-/** A first call that is still waiting after this long counts as the demo waking up. */
+/** A first call that is still waiting after this long counts as the gateway waking up. */
 export const SLOW_CALL_MS = 6000;
 
 export const initialWaking: WakingState = { phase: "idle", since: null, recoveries: 0 };
@@ -48,7 +48,7 @@ export function reduce(state: WakingState, ev: WakingEvent): WakingState {
   }
 }
 
-/** True while the visitor should be told the demo is starting (or has not started in time). */
+/** True while the visitor should be told the gateway is starting (or has not started in time). */
 export function isWaking(state: WakingState): boolean {
   return state.phase === "waking" || state.phase === "slow";
 }
@@ -67,9 +67,9 @@ export function isSlowFirstCall(elapsedMs: number, anySuccess: boolean): boolean
   return !anySuccess && elapsedMs > SLOW_CALL_MS;
 }
 
-export const BANNER_WAKING = "Waking up the live demo, about 20 seconds. This page will update by itself.";
-export const BANNER_SLOW = "The live demo is taking longer than usual. Try again in a minute.";
-export const FOOTER_WAKING = "Waking up the live demo...";
+export const BANNER_WAKING = "Waking up the live gateway, about 20 seconds. This page will update by itself.";
+export const BANNER_SLOW = "The live gateway is taking longer than usual. Try again in a minute.";
+export const FOOTER_WAKING = "Waking up the live gateway...";
 export const RUN_WAKING = "Waking up...";
 
 export function bannerText(state: WakingState): string | null {

@@ -1,17 +1,16 @@
-import { CircleCheck, CircleDashed, FlaskConical, Gauge, Hourglass, type LucideIcon } from "lucide-react";
+import { CircleCheck, CircleDashed, Gauge, Hourglass, type LucideIcon } from "lucide-react";
 import { STATUS_TEXT, STATUS_TONE, statusLabel, type RealStatus } from "@/lib/real-model";
 import { Badge } from "./badge";
 
 const ICON: Record<RealStatus, LucideIcon> = {
   real: CircleCheck,
   measured: Gauge,
-  simulation: FlaskConical,
   pending: Hourglass,
   "not-run": CircleDashed,
 };
 
 /**
- * What a claim or a number rests on: Real, Measured, Simulation, Pending or Ready to run (`src/lib/real-model.ts`). The word
+ * What a claim or a number rests on: Real, Measured, Pending or Ready to run (`src/lib/real-model.ts`). The word
  * is always shown; the icon and colour only repeat it. Its accessible name says what the status means.
  */
 export function RealBadge({ status, className, label }: { status: RealStatus; className?: string; label?: string }) {

@@ -7,7 +7,7 @@ import { cn, fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { eventLabel, eventTone } from "@/pages/dashboard/model";
 import { getJson, useGateway, useJudges } from "./data";
 import { routeTotals, routeWords, type Fetched } from "./judges-model";
-import { Chapter, Facts, Loading, Panel, TryIt, Unavailable } from "./ui";
+import { Chapter, Facts, Loading, Panel, Unavailable } from "./ui";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
@@ -98,7 +98,7 @@ export function PrivacyChapter() {
               { label: "No-train end users", value: fmtInt(num(p.no_train_end_users)) },
               { label: "Erasures", value: fmtInt(num(p.erasures)) },
               { label: "Example retention", value: num(p.example_retention_days) ? `${num(p.example_retention_days)} days` : "kept" },
-              { label: "API keys", value: s.api_keys ? "on" : "off (open demo)" },
+              { label: "API keys", value: s.api_keys ? "on" : "off (public gateway)" },
               { label: "Dashboard reads", value: s.public_dashboard ? "public" : "need a key" },
             ]}
           />
@@ -144,12 +144,6 @@ export function ResilienceChapter() {
           while and probes it again later. Optional teacher calls (audits, arbitrations) never fail a request the student already answered.
         </p>
       }
-      tryIt={
-        <TryIt
-          actions={["outage", "day"]}
-          note="Start the outage, then run a simulated day while it lasts: requests take the breaker route to the teacher, and the breaker closes once the student answers again."
-        />
-      }
     >
       {!stats ? (
         statsRead.state === "error" ? <Unavailable path="/ratchet/stats" read={statsRead} /> : <Loading what="the breakers" />
@@ -188,7 +182,7 @@ export function ResilienceChapter() {
           </Panel>
           <Panel title="Breaker and fault events" aside={status && <RealBadge status={status} />}>
             {events.length === 0 ? (
-              <p className="text-[13.5px] text-muted">No breaker has moved yet.{stats?.mode === "mock" ? " Start the outage drill to see one open and close." : ""}</p>
+              <p className="text-[13.5px] text-muted">No breaker has moved yet.</p>
             ) : (
               <ol className="space-y-2.5">
                 {events.map((e, i) => (
@@ -243,7 +237,6 @@ export function CostChapter() {
           break-even volume a dedicated endpoint loses money, and the report says so instead of hiding it.
         </p>
       }
-      tryIt={<TryIt actions={["day"]} />}
     >
       {cost.state === "error" ? (
         <Unavailable path="/ratchet/cost" read={cost} />

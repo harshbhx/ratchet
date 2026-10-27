@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ArrowDown, ArrowUpRight, Hourglass } from "lucide-react";
 import { RealBadge } from "@/components/ui/real-badge";
 import { fmtDate, REAL_STATUSES, STATUS_TEXT, statusCounts, type RealEntry, type RealStatus } from "@/lib/real-model";
-import { cn, DEMO_URL } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { useJudges } from "./data";
 import { Chapter, Command, useChapters } from "./ui";
 import { REAL } from "./real";
@@ -13,35 +13,35 @@ interface PathStep {
   action: string;
   where: string;
   expect: string;
-  /** Another site the step opens instead (the simulation demo). */
-  href?: string;
 }
+
+const EXAMS: PathStep = {
+  to: "exams",
+  action: "Read the exam scores",
+  where: "Exams",
+  expect: "The same Nano 4B untrained, after round 1 and after round 2, on two exams it never saw. Every answer is public and the scores recompute from them.",
+};
 
 const READ_REAL: PathStep = {
   to: "real",
   action: "Read what is real",
   where: "What's real",
-  expect: "Which claims rest on real runs, which are simulation, and which are built and ready to run.",
+  expect: "Which claims rest on real runs, which are measured, and which are built and ready to run.",
 };
 
-/** On the simulation demo: mock models, and the demo controls that break a release on purpose. */
+/** On a mock gateway (a local install): the request is answered by a mock model. */
 const MOCK_PATH: PathStep[] = [
   {
     to: "client",
     action: "Send a request",
     where: "Send a request",
-    expect: "An answer comes back with who served it, the route it took and a request id. The demo's models are mock models.",
+    expect: "An answer comes back with who served it, the route it took and a request id. This gateway runs mock models.",
   },
-  {
-    to: "release",
-    action: "Inject a bad deploy, then run simulated days",
-    where: "Releases",
-    expect: "The next version Night School trains goes into canary, fails its audits and is rolled back on its own, within a few simulated days. The log shows each step.",
-  },
+  EXAMS,
   READ_REAL,
 ];
 
-/** On the live gateway: one real, keyless request here; the release drill on the simulation demo, which has the controls. */
+/** On the live gateway: one real, keyless request. */
 const LIVE_PATH: PathStep[] = [
   {
     to: "client",
@@ -49,13 +49,7 @@ const LIVE_PATH: PathStep[] = [
     where: "Send a request",
     expect: "An answer from Nemotron 3 Ultra on Nebius Token Factory, with a badge that says who answered. No key needed. It is a real call, so send a few at most; your text is not stored.",
   },
-  {
-    to: "release",
-    action: "Inject a bad deploy, then run simulated days",
-    where: "Simulation demo",
-    expect: "On the simulation demo (mock models): the next version Night School trains goes into canary, fails its audits and is rolled back on its own, within a few simulated days.",
-    href: `${DEMO_URL}/judges#release`,
-  },
+  EXAMS,
   READ_REAL,
 ];
 
@@ -84,25 +78,13 @@ export function StartHere() {
               <span className="text-muted">You should see: </span>
               {p.expect}
             </p>
-            {p.href ? (
-              <a
-                href={p.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
-              >
-                Open the simulation <ArrowUpRight className="size-3.5" aria-hidden />
-                <span className="sr-only"> (opens in a new tab)</span>
-              </a>
-            ) : (
-              <button
-                type="button"
-                onClick={() => jump(p.to)}
-                className="mt-4 inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
-              >
-                Go there <ArrowDown className="size-3.5" aria-hidden />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => jump(p.to)}
+              className="mt-4 inline-flex h-9 w-fit items-center gap-1.5 rounded-full border border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors hover:bg-surface-2"
+            >
+              Go there <ArrowDown className="size-3.5" aria-hidden />
+            </button>
           </li>
         ))}
       </ol>
@@ -189,12 +171,11 @@ export function WhatsReal() {
   return (
     <Chapter
       id="real"
-      title="What's real, and what is simulation"
+      title="What's real, and what is not run yet"
       lead={
         <>
           <p>
-            One file holds the status of each result and feature, with what it rests on and how to check it. The simulation demo's numbers come from mock
-            models; the text-to-SQL data and adapter are real; the gateway calls Nebius Token Factory for real; the round-2 adapter was retrained once on Nebius AI Cloud (a Serverless Job on one L40S); the student was served once on a Nebius endpoint for a speed test (the demo is not connected to it); the nightly job is scripted and ready to run. The web front end and the live demo run on Cloudflare.
+            One file holds the status of each result and feature, with what it rests on and how to check it. The text-to-SQL data and adapter are real; the gateway calls Nebius Token Factory for real; the round-2 adapter was retrained once on Nebius AI Cloud (a Serverless Job on one L40S); the student was served once on a Nebius endpoint for a speed test (the live gateway is not connected to it); the nightly job is built and tested but has not run on live traffic. The web front end and the live gateway run on Cloudflare.
           </p>
           {REAL.updated && <p className="text-[13.5px] text-muted">Updated {fmtDate(REAL.updated)}.</p>}
         </>

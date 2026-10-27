@@ -215,7 +215,7 @@ export interface Derived {
    * the student and the hosted fallback serves now (it tried them, or will try the next run's).
    */
   hosted: boolean;
-  /** Student calls of this run the live demo's split picked at random (labelled on the totals bar). */
+  /** Student calls of this run the random split picked at random (labelled on the totals bar). */
   demoSplit: number;
 }
 

@@ -185,9 +185,9 @@ export function MobileMenu({
                 rel="noopener noreferrer"
                 size="lg"
                 className="flex-1"
-                aria-label="Live demo, opens in a new tab"
+                aria-label="Live gateway, opens in a new tab"
               >
-                Live demo <ArrowUpRight aria-hidden />
+                Live gateway <ArrowUpRight aria-hidden />
               </ButtonA>
               <SheetThemeToggle />
             </div>

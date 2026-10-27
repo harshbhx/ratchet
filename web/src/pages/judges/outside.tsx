@@ -12,7 +12,7 @@ import { LiveRequest } from "@/pages/landing/sections/live-request";
 import { getJson, useGateway, useJudges } from "./data";
 import { baseUrl, routeWords } from "./judges-model";
 import { REAL } from "./real";
-import { Chapter, Ext, Panel, SimLink, Unavailable } from "./ui";
+import { Chapter, Ext, Panel, Unavailable } from "./ui";
 
 interface Surface {
   levels: { level: string; who: string }[];
@@ -43,7 +43,7 @@ function answerText(body: Record<string, unknown> | null): string {
 }
 
 /**
- * Send one chat request to this gateway's /v1/chat/completions and show what came back. On the mock demo: any task, and a
+ * Send one chat request to this gateway's /v1/chat/completions and show what came back. On a mock gateway: any task, and a
  * bad request. On a live gateway: the landing page's one keyless request (`store: false`, sent once, never retried).
  */
 function SendBox() {
@@ -108,8 +108,7 @@ function SendBox() {
       <div className="min-w-0">
         <LiveRequest mode={stats.mode} className="mt-0" />
         <p className="mt-2.5 text-[13px] leading-relaxed text-muted">
-          Choosing a task and sending a bad request (temperature 3) run on the <SimLink hash="client">simulation demo</SimLink>, with mock
-          models.
+          Choosing a task and sending a bad request (temperature 3) need a gateway on mock models: run one locally.
         </p>
       </div>
     );
@@ -119,7 +118,7 @@ function SendBox() {
   return (
     <Panel
       title="Send a request"
-      aside={status && <RealBadge status={status} label="Simulation: mock models answer" />}
+      aside={status && <RealBadge status={status} label="Mock models answer" />}
     >
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_200px]">
         <div className="min-w-0">
@@ -327,7 +326,7 @@ export function ApiChapter() {
             <p className="mt-2 text-[12.5px] leading-snug text-muted">
               {stats && !mock ? (
                 <>
-                  Try it on the <SimLink hash="client">simulation demo</SimLink>: "Send a bad one" sends <code className="font-mono">temperature: 3</code>.
+                  Try it on a local gateway with mock models: "Send a bad one" sends <code className="font-mono">temperature: 3</code>.
                 </>
               ) : (
                 <>

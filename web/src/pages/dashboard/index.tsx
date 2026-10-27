@@ -1,39 +1,33 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import { FlaskConical, Play, Radio, RefreshCw, ServerOff, Terminal, TriangleAlert } from "lucide-react";
-import { ApiError, api, type LedgerEvent, type NightReport, type Stats, type Workload } from "@/lib/api";
+import { FlaskConical, Radio, RefreshCw, ServerOff, Terminal, TriangleAlert } from "lucide-react";
+import type { Stats } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Container, Eyebrow } from "@/components/ui/section";
 import { WhoBadge } from "@/components/ui/who";
-import { cn, fmtInt, fmtPct } from "@/lib/utils";
-import { lastCall, lastCallLine, sharedNotice } from "@/lib/surface-model";
+import { cn, fmtInt } from "@/lib/utils";
+import { lastCall, lastCallLine } from "@/lib/surface-model";
 import { hostedServing, servingLine } from "@/lib/who-model";
 import { CostChart, PrecisionChart, ShareChart } from "./charts";
-import { DemoControls, WORKLOADS, type Busy, type Notice } from "./controls";
 import { EconomicsPanel, hasEconomics } from "./economics";
 import { DemoSplitTile, KpiSkeleton, Kpis } from "./kpis";
 import { MeasuredResults } from "./measured";
 import { Group, JumpBar, SECTIONS, type SectionId } from "./sections";
-import { armedFault, eventKey, fmtTime, newEvents, stateLabel } from "./model";
-import { skipInfo, skipSentence } from "./night-model";
+import { armedFault, fmtTime } from "./model";
 import { Pipeline } from "./pipeline";
-import { PipelineLink } from "./pipeline-link";
-import { showPipelineLink } from "./pipeline-link-model";
 import { Provenance } from "./provenance";
 import { TaskRegistryPanel } from "./registry";
 import { ReleaseLog } from "./release-log";
 import { ResiliencePanel } from "./resilience";
 import { TasksTable, VersionsTable } from "./tables";
 import { TrustPanel } from "./trust";
-import { DetailText, KindChip } from "./ui";
 import { useWaking } from "@/lib/waking-store";
 import { isWaking } from "@/lib/waking-model";
 import { useCostReport, useDashboardStats, useNow, useTaskRegistry } from "./use-dashboard";
 
 const POLL_MS = 15000;
-const DAY_REQUESTS = 1500;
-const NOTABLE = new Set(["rollback", "alert", "live", "rejected", "canary", "shadow", "student_error", "circuit", "degraded", "fallback_teacher"]);
+const NO_FRESH: Set<string> = new Set();
 
 function ago(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -43,47 +37,12 @@ function ago(ms: number): string {
   return `${m} min ago`;
 }
 
-function nightSentence(night: NightReport, after: Stats | null, skipText?: string): string {
-  const prec = night.eval?.precision != null ? `golden precision ${fmtPct(night.eval.precision)}` : null;
-  if (night.trained && night.version != null) {
-    const v = after?.versions.find((x) => x.id === night.version);
-    if (night.admitted) {
-      const where = v ? stateLabel(v).toLowerCase() : "the release pipeline";
-      return `Trained v${night.version}${prec ? `: ${prec}` : ""}, admitted to ${where}.`;
-    }
-    return `Trained v${night.version}${prec ? `: ${prec}` : ""}, rejected at the golden gate.`;
-  }
-  if (night.reason === "not enough new data" && skipText) return skipText;
-  const why: Record<string, string> = {
-    "release in flight": "release in flight",
-    "not enough new data": "not enough new data",
-    "no golden set": "no golden set yet",
-  };
-  return `Skipped training: ${why[night.reason] ?? night.reason}.`;
-}
-
-function sentence(msg: string): string {
-  const t = msg.trim();
-  if (!t) return t;
-  return t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? "" : ".");
-}
-
-function errorText(e: unknown, what: string): string {
-  if (e instanceof ApiError) {
-    if (e.status === 409) return `${what}. ${sentence(e.message || "another demo action is running; try again in a moment")}`;
-    if (e.status === 429) return `${what}. ${sentence(e.message || "the demo was reset less than 30 seconds ago")}`;
-    if (e.status === 403) return "Demo controls are only available in mock mode.";
-    return `${what}. ${sentence(e.message)}`;
-  }
-  return `${what}. The gateway did not answer.`;
-}
-
 function Unreachable({ error, onRetry, retrying }: { error: string; onRetry: () => void; retrying: boolean }) {
-  // While the live demo's container starts the banner under the header says so; this is not an outage.
+  // While the live gateway's container starts the banner under the header says so; this is not an outage.
   if (isWaking(useWaking())) {
     return (
       <div className="mx-auto max-w-xl rounded-2xl border border-line bg-surface p-6 text-center shadow-card sm:p-10">
-        <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">Waking up the live demo</h2>
+        <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">Waking up the live gateway</h2>
         <p className="mx-auto mt-2 max-w-md text-pretty text-[14px] leading-6 text-muted">
           It sleeps when idle to save cost. The dashboard fills in by itself when it is ready.
         </p>
@@ -101,7 +60,7 @@ function Unreachable({ error, onRetry, retrying }: { error: string; onRetry: () 
       </p>
       <div className="mx-auto mt-5 flex max-w-sm items-center gap-2 rounded-xl border border-line bg-bg-sunken px-3 py-2 text-left font-mono text-[12.5px] text-ink-2">
         <Terminal className="size-3.5 shrink-0 text-muted" aria-hidden />
-        <span className="truncate">make demo</span>
+        <span className="truncate">RATCHET_MODE=mock uvicorn ratchet.gateway:app</span>
         <span className="ml-auto text-muted">mock gateway on :8000</span>
       </div>
       <Button className="mt-6" onClick={onRetry} disabled={retrying}>
@@ -122,13 +81,6 @@ function Skeleton() {
       </div>
     </div>
   );
-}
-
-/** What a click's `auto_reset` says: the shared simulation started over before the day ran. */
-function resetSentence(reason: string, stats: Stats | null | undefined): string {
-  const d = stats?.demo;
-  const after = reason === "max_days" && d?.max_days ? `after ${d.max_days} simulated days` : reason === "max_requests" && d?.max_requests ? `after ${fmtInt(d.max_requests)} requests` : "";
-  return `The shared simulation reset${after ? ` ${after}` : ""} and ran its warm-up again.`;
 }
 
 /** The last real Token Factory and Tavily calls, content-free (FR-11.31); live mode only. */
@@ -152,34 +104,19 @@ function LastCalls({ stats }: { stats: Stats }) {
   );
 }
 
-function ColdStart({ mock, onRun, busy, link }: { mock: boolean; onRun: () => void; busy: boolean; link?: boolean }) {
+function ColdStart({ mock }: { mock: boolean }) {
   return (
     <div className="relative overflow-hidden rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
       <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:linear-gradient(to_left,black,transparent_70%)]" />
-      <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="max-w-2xl">
-          <p className="font-mono text-[11.5px] uppercase tracking-[0.14em] text-muted">Cold start</p>
-          <h2 className="mt-1.5 text-[18px] font-semibold tracking-[-0.015em] text-ink">{mock ? "No traffic yet. Every request will go to the teacher at first." : "No requests yet on this live demo. The teacher answers every request here."}</h2>
-          <p className="mt-1.5 text-pretty text-[14px] leading-6 text-ink-2">
-            {mock ? (
-              <>
-                Run a day to send {fmtInt(DAY_REQUESTS)} simulated requests through the cascade. That night, Night School trains v1 on the teacher's answers and the
-                release gate decides whether it may serve.
-              </>
-            ) : (
-              <>
-                Send requests to <span className="font-mono text-[13px]">/v1/chat/completions</span> with an <span className="font-mono text-[13px]">X-Ratchet-Task</span>{" "}
-                header. Night School does not run on this live demo, so no student is trained here; the simulation demo shows the whole loop.
-              </>
-            )}
-          </p>
-          {link && <PipelineLink />}
-        </div>
-        {mock && (
-          <Button onClick={onRun} disabled={busy} className="shrink-0">
-            <Play aria-hidden /> Run day 1 + night
-          </Button>
-        )}
+      <div className="relative max-w-2xl">
+        <p className="font-mono text-[11.5px] uppercase tracking-[0.14em] text-muted">No traffic yet</p>
+        <h2 className="mt-1.5 text-[18px] font-semibold tracking-[-0.015em] text-ink">
+          {mock ? "No traffic yet. Every request will go to the teacher at first." : "No requests yet on this live gateway. The teacher answers every request here."}
+        </h2>
+        <p className="mt-1.5 text-pretty text-[14px] leading-6 text-ink-2">
+          Send requests to <span className="font-mono text-[13px]">/v1/chat/completions</span> with an <span className="font-mono text-[13px]">X-Ratchet-Task</span>{" "}
+          header. The nightly training loop is built and tested but has not run on live traffic, so no student is trained from this traffic yet.
+        </p>
       </div>
     </div>
   );
@@ -209,7 +146,7 @@ function Header({
           {stats &&
             (mock ? (
               <Badge tone="outline" className="gap-1.5">
-                <FlaskConical aria-hidden /> Simulation (mock models)
+                <FlaskConical aria-hidden /> Mock models
               </Badge>
             ) : (
               <Badge tone="good" className="gap-1.5">
@@ -290,133 +227,8 @@ export default function DashboardPage() {
   const waking = isWaking(useWaking());
   const cost = useCostReport(updatedAt);
   const registry = useTaskRegistry(updatedAt);
-  // The gateway's clock minus this browser's, measured when this viewer starts an outage drill (for its countdown).
-  const [skewMs, setSkewMs] = useState(0);
-  const [workload, setWorkload] = useState<Workload>("mixed");
-  const [busy, setBusy] = useState<Busy>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
-  const [fresh, setFresh] = useState<Set<string>>(new Set());
-  const noticeId = useRef(0);
-  const skipStreak = useRef(0);
-  const statsRef = useRef<Stats | null>(null);
-  statsRef.current = stats;
-
-  const say = useCallback((n: Omit<Notice, "id">) => setNotice({ ...n, id: ++noticeId.current }), []);
-
-  const markFresh = (before: LedgerEvent[] | undefined, after: Stats | null): LedgerEvent[] => {
-    if (!after) return [];
-    const added = newEvents(before, after.events);
-    setFresh(new Set(added.map(eventKey)));
-    return added;
-  };
-
-  const runDay = async () => {
-    const before = statsRef.current?.events;
-    setBusy("day");
-    try {
-      const r = await api.demoDay(workload, DAY_REQUESTS);
-      if (r.auto_reset) setFresh(new Set());
-      const after = await refresh();
-      const added = markFresh(before, after);
-      const notable = added.filter((e) => NOTABLE.has(e.kind) && e.kind !== "trained");
-      const bad = added.some((e) => e.kind === "rollback" || e.kind === "alert" || e.kind === "student_error" || e.kind === "circuit");
-      const wl = WORKLOADS.find((w) => w.id === r.workload)?.label ?? r.workload;
-      // A night that trained resets the streak of skips; a skip for another reason leaves it alone.
-      if (r.night.trained) skipStreak.current = 0;
-      else if (r.night.reason === "not enough new data") skipStreak.current += 1;
-      const lastDay = after?.days[after.days.length - 1];
-      const skipText = skipSentence(skipInfo(added), lastDay ? lastDay.student_share : null, skipStreak.current);
-      say({
-        tone: r.auto_reset ? "info" : bad ? "warn" : r.night.admitted || added.some((e) => e.kind === "live") ? "good" : "info",
-        title: (
-          <>
-            {r.auto_reset && <>{resetSentence(r.auto_reset, after ?? stats)} </>}
-            Day {r.day} done: {fmtInt(DAY_REQUESTS)} requests ({wl}). {nightSentence(r.night, after, skipText)}
-          </>
-        ),
-        body:
-          notable.length > 0 ? (
-            <ul className="mt-1 space-y-1">
-              {notable.slice(-4).map((e, i) => (
-                <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <KindChip kind={e.kind} />
-                  <span>
-                    <DetailText text={e.detail} />
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : undefined,
-      });
-    } catch (e) {
-      say({ tone: e instanceof ApiError && (e.status === 409 || e.status === 429) ? "warn" : "bad", title: errorText(e, "Could not run the day") });
-      void refresh();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const breakNext = async () => {
-    const before = statsRef.current?.events;
-    setBusy("break");
-    try {
-      const r = await api.breakNext();
-      const after = await refresh();
-      markFresh(before, after);
-      const v = /student-v(\d+)/.exec(r.corrupt)?.[1];
-      say({
-        tone: "warn",
-        title: <>Fault armed: v{v ?? "?"} will be served corrupted once it reaches canary.</>,
-        body: "Its billing, refund and security answers will be confidently wrong. Run a day or two and watch the release gate roll it back.",
-      });
-    } catch (e) {
-      say({ tone: "bad", title: errorText(e, "Could not arm the fault") });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const studentOutage = async (seconds: number): Promise<Omit<Notice, "id"> | null> => {
-    const before = statsRef.current?.events;
-    setBusy("outage");
-    try {
-      const sent = Date.now();
-      const r = await api.studentOutage(seconds);
-      const got = Date.now();
-      // The gateway's `until` is its clock at the start plus the length; the start fell between `sent` and `got`.
-      if (Number.isFinite(r.until)) setSkewMs(Math.round(r.until * 1000 - r.seconds * 1000 - (sent + got) / 2));
-      const after = await refresh();
-      markFresh(before, after);
-      return null; // the panel's countdown says what happens next
-    } catch (e) {
-      return {
-        tone: e instanceof ApiError && (e.status === 409 || e.status === 429) ? "warn" : "bad",
-        title: errorText(e, "Could not take the student endpoint down"),
-      };
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const reset = async () => {
-    setBusy("reset");
-    try {
-      await api.reset();
-      skipStreak.current = 0;
-      await refresh();
-      setFresh(new Set());
-      say({ tone: "info", title: "Demo reset.", body: "New ledger, new mock fleet and fresh traffic streams. Any warm-up days ran again." });
-    } catch (e) {
-      say({ tone: e instanceof ApiError && (e.status === 409 || e.status === 429) ? "warn" : "bad", title: errorText(e, "Could not reset") });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const onOutageEnd = useCallback(() => void refresh(), [refresh]);
   const mock = stats?.mode === "mock";
   const cold = stats != null && stats.days.length === 0;
-  const link = showPipelineLink(stats);
   const fault = stats ? armedFault(stats) : null;
   const shown: SectionId[] = SECTIONS.map((x) => x.id);
 
@@ -445,36 +257,16 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {mock && sharedNotice(stats.demo) && (
-                <p className="rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-[13px] text-ink-2">{sharedNotice(stats.demo)}</p>
-              )}
+              <div className="space-y-4">
+                {cold && <ColdStart mock={mock} />}
 
-              {mock && (
-                <DemoControls
-                  workload={workload}
-                  onWorkload={setWorkload}
-                  busy={busy}
-                  onRunDay={() => void runDay()}
-                  onBreak={() => void breakNext()}
-                  onReset={() => void reset()}
-                  armed={fault?.id ?? null}
-                  armedPending={fault != null && !fault.trained}
-                  nextDay={stats.day + 1}
-                  notice={notice}
-                  onDismiss={() => setNotice(null)}
-                />
-              )}
-
-              <div className={cn("space-y-4 transition-opacity duration-500 ease-out", busy === "day" || busy === "reset" ? "opacity-60" : "opacity-100")} aria-busy={busy != null}>
-                {cold && <ColdStart mock={mock} onRun={() => void runDay()} busy={busy != null} link={link} />}
-
-                <Group id="overview" title="Overview" hint={mock ? "Simulation" : "Live"}>
+                <Group id="overview" title="Overview" hint={mock ? "Mock models" : "Live"}>
                   <Reveal>
                     <Kpis stats={stats} />
                     <DemoSplitTile stats={stats} />
                   </Reveal>
                   <Reveal delay={0.05}>
-                    <Pipeline versions={stats.versions} faultId={fault?.id} demoLink={link} />
+                    <Pipeline versions={stats.versions} faultId={fault?.id} />
                   </Reveal>
                 </Group>
 
@@ -504,22 +296,9 @@ export default function DashboardPage() {
                   )}
                 </Group>
 
-                <Group id="reliability" title="Reliability" hint="Breakers, fallbacks and the outage drill">
+                <Group id="reliability" title="Reliability" hint="Breakers and fallbacks">
                   <Reveal delay={0.15}>
-                    <ResiliencePanel
-                      stats={stats}
-                      demo={
-                        mock
-                          ? {
-                              busy,
-                              onOutage: studentOutage,
-                              onRunDay: () => void runDay(),
-                              onOutageEnd: onOutageEnd,
-                              skewMs,
-                            }
-                          : undefined
-                      }
-                    />
+                    <ResiliencePanel stats={stats} />
                   </Reveal>
                 </Group>
 
@@ -531,7 +310,7 @@ export default function DashboardPage() {
 
                 <Group id="activity" title="Activity" hint="The release log and precision over time">
                   <Reveal delay={0.17} className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
-                    <ReleaseLog events={stats.events} fresh={fresh} />
+                    <ReleaseLog events={stats.events} fresh={NO_FRESH} />
                     <div className="flex min-w-0 flex-col gap-4">
                       <PrecisionChart
                         days={stats.days}
@@ -544,18 +323,12 @@ export default function DashboardPage() {
                   </Reveal>
                 </Group>
 
-                <Group id="measured" title="Measured" hint="Real models, not the simulation">
+                <Group id="measured" title="Measured" hint="Real models">
                   <Reveal>
                     <MeasuredResults />
                   </Reveal>
                 </Group>
 
-                {mock && (
-                  <p className="pt-2 text-center text-[12px] text-muted">
-                    Simulation: mock teacher, student and trainer from <span className="font-mono">sim/</span>. Numbers show how the loop behaves, not real model quality
-                    or prices.
-                  </p>
-                )}
               </div>
             </>
           )}
