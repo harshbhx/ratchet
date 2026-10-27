@@ -1,0 +1,25 @@
+{
+  "mode": "real",
+  "gpu": "NVIDIA L40S",
+  "base": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+  "rows": 4322,
+  "epochs": 2.0,
+  "max_steps": 0,
+  "loss_first": [
+    0.34644830226898193
+  ],
+  "loss_last": [
+    0.0876646637916565
+  ],
+  "train_seconds": 728.7368,
+  "peak_gb": 7.44,
+  "versions": {
+    "torch": "2.11.0+cu128",
+    "transformers": "5.20.1",
+    "trl": "1.16.0",
+    "peft": "0.21.2",
+    "bitsandbytes": "0.50.2",
+    "mamba-ssm": "2.3.2.post1",
+    "causal-conv1d": "1.6.2.post1"
+  }
+}

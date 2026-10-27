@@ -1,0 +1,82 @@
+[run 0s] start mode=full job_name=ratchet-r2-full host=9e6c9d5a2179
+Tue Oct 27 15:12:00 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.173.02             Driver Version: 580.173.02     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA L40S                    On  |   00000000:8D:00.0 Off |                    0 |
+| N/A   24C    P0             34W /  325W |       0MiB /  46068MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+Python 3.12.3
+torch 2.11.0+cu128 12.8
+[run 2s] apt
+[run 12s] venv (system python is externally managed, PEP 668)
+[run 15s] using /content/venv
+python=/content/venv/bin/python pip=/content/venv/bin/pip nvcc=/usr/local/cuda/bin/nvcc CUDA_HOME=/usr/local/cuda
+Python 3.12.3
+[run 15s] pip pins (round 2)
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+spin 0.17 requires click!=8.3.0,<8.4,>=8, but you have click 8.5.0 which is incompatible.
+versions {'torch': '2.11.0+cu128', 'transformers': '5.20.1', 'trl': '1.16.0', 'peft': '0.21.2', 'bitsandbytes': '0.50.2'}
+accelerate==1.15.0
+bitsandbytes==0.50.2
+datasets==5.1.0
+peft==0.21.2
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
+torchelastic==0.2.2
+torchvision==0.26.0+cu128
+transformers==5.20.1
+trl==1.16.0
+[run 49s] restore cached wheels (8.9): causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl 
+[run 50s] wheel present: causal-conv1d==1.6.2.post1
+[run 50s] wheel present: mamba-ssm==2.3.2.post1
+total 444804
+drwxr-xr-x 2 root root      4096 Oct 27 15:12 .
+drwxr-xr-x 5 root root      4096 Oct 27 15:12 ..
+-rw-r--r-- 1 root root 171161508 Oct 27 15:12 causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl
+-rw-r--r-- 1 root root 284304899 Oct 27 15:12 mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl
+[run 50s] kernels done
+[run 51s] restored checkpoint-550 from the bucket
+[run 51s] train start (checkpoints in the bucket, resumes if any)
+[sync] checkpoint-600 copied to the bucket
+[sync] checkpoint-650 copied to the bucket
+[sync] checkpoint-700 copied to the bucket
+[sync] checkpoint-750 copied to the bucket
+[sync] checkpoint-800 copied to the bucket
+[sync] checkpoint-850 copied to the bucket
+[sync] checkpoint-900 copied to the bucket
+[sync] checkpoint-950 copied to the bucket
+[sync] checkpoint-1000 copied to the bucket
+[run 978s] train rc=0
+/1082 [11:48<00:20,  1.20s/it]                                                   {'loss': '0.09249', 'grad_norm': '0.7797', 'learning_rate': '3.327e-06', 'entropy': '0.09457', 'mean_token_accuracy': '0.9627', 'num_tokens': '2.419e+06', 'epoch': '1.97'}
+ 98%|█████████▊| 1065/1082 [11:48<00:20,  1.20s/it] 99%|█████████▊| 1066/1082 [11:49<00:18,  1.18s/it] 99%|█████████▊| 1067/1082 [11:50<00:17,  1.16s/it] 99%|█████████▊| 1068/1082 [11:51<00:16,  1.18s/it] 99%|█████████▉| 1069/1082 [11:53<00:15,  1.16s/it] 99%|█████████▉| 1070/1082 [11:54<00:14,  1.17s/it]                                                   {'loss': '0.06797', 'grad_norm': '0.5692', 'learning_rate': '2.403e-06', 'entropy': '0.08204', 'mean_token_accuracy': '0.9747', 'num_tokens': '2.443e+06', 'epoch': '1.979'}
+ 99%|█████████▉| 1070/1082 [11:54<00:14,  1.17s/it] 99%|█████████▉| 1071/1082 [11:55<00:12,  1.16s/it] 99%|█████████▉| 1072/1082 [11:56<00:11,  1.20s/it] 99%|█████████▉| 1073/1082 [11:57<00:10,  1.20s/it] 99%|█████████▉| 1074/1082 [11:58<00:09,  1.18s/it] 99%|█████████▉| 1075/1082 [12:00<00:08,  1.18s/it]                                                   {'loss': '0.07316', 'grad_norm': '0.5722', 'learning_rate': '1.479e-06', 'entropy': '0.07632', 'mean_token_accuracy': '0.9685', 'num_tokens': '2.466e+06', 'epoch': '1.988'}
+ 99%|█████████▉| 1075/1082 [12:00<00:08,  1.18s/it] 99%|█████████▉| 1076/1082 [12:01<00:07,  1.24s/it]100%|█████████▉| 1077/1082 [12:02<00:06,  1.20s/it]100%|█████████▉| 1078/1082 [12:04<00:05,  1.26s/it]100%|█████████▉| 1079/1082 [12:05<00:03,  1.23s/it]100%|█████████▉| 1080/1082 [12:06<00:02,  1.30s/it]                                                   {'loss': '0.08766', 'grad_norm': '0.5035', 'learning_rate': '5.545e-07', 'entropy': '0.09008', 'mean_token_accuracy': '0.9742', 'num_tokens': '2.491e+06', 'epoch': '1.998'}
+100%|█████████▉| 1080/1082 [12:06<00:02,  1.30s/it]100%|█████████▉| 1081/1082 [12:07<00:01,  1.26s/it]100%|██████████| 1082/1082 [12:08<00:00,  1.03it/s]                                                   {'train_runtime': '728.7', 'train_samples_per_second': '5.832', 'train_steps_per_second': '0.73', 'train_loss': '0.0838', 'entropy': '0.05865', 'mean_token_accuracy': '0.9823', 'num_tokens': '2.497e+06', 'epoch': '2'}
+100%|██████████| 1082/1082 [12:08<00:00,  1.03it/s]100%|██████████| 1082/1082 [12:08<00:00,  1.48it/s]
+[stage   923s] trained: loss [0.34644830226898193] -> [0.0876646637916565] in 729s, peak 7.4 GB
+[stage   923s] adapter saved
+PACKAGE_READY
+[run 979s] adapter copied
+68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5  /data/r2-nebius/adapter/adapter_model.safetensors
+[run 979s] exam 1
+[sync] checkpoint-1050 copied to the bucket
+[sync] checkpoint-1082 copied to the bucket
+[run 1825s] exam1 rc=0
+row 171/172  820s  adapter 57 tok, base 38 tok
+row 172/172  827s  adapter 90 tok, base 107 tok
+done: 172 rows in 827s
+[run 1825s] exam 2
+[run 2557s] exam2 rc=0
+row 199/200  711s  adapter 51 tok, base 62 tok
+row 200/200  715s  adapter 33 tok, base 68 tok
+done: 200 rows in 715s
+[run 2557s] ALL DONE
