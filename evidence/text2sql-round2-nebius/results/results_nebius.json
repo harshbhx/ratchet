@@ -1,0 +1,201 @@
+{
+ "what": "Round-2 recipe retrained on Nebius AI Cloud (one preemptible L40S), adapter answers only",
+ "exams": {
+  "exam1": {
+   "nebius_retrain": {
+    "agree": 70,
+    "n": 172,
+    "rate": 0.407,
+    "wilson95": [
+     0.3364,
+     0.4817
+    ]
+   },
+   "original_round2_borrowed_gpu": {
+    "agree": 67,
+    "n": 172,
+    "rate": 0.3895,
+    "wilson95": [
+     0.3198,
+     0.4641
+    ]
+   },
+   "row_by_row_vs_original": {
+    "wrong_to_right": 6,
+    "right_to_wrong": 3,
+    "both_right": 64,
+    "both_wrong": 99,
+    "p_exact_two_sided": 0.508
+   },
+   "by_difficulty": {
+    "simple": {
+     "n": 51,
+     "nebius": 17,
+     "original_round2": 16
+    },
+    "join": {
+     "n": 53,
+     "nebius": 25,
+     "original_round2": 26
+    },
+    "aggregate": {
+     "n": 36,
+     "nebius": 21,
+     "original_round2": 18
+    },
+    "hard": {
+     "n": 32,
+     "nebius": 7,
+     "original_round2": 7
+    }
+   },
+   "by_industry": {
+    "seen_industries": {
+     "n": 115,
+     "nebius": 47,
+     "original_round2": 44
+    },
+    "unseen_industries": {
+     "n": 57,
+     "nebius": 23,
+     "original_round2": 23
+    }
+   },
+   "measurement_half": {
+    "rows": {
+     "total": 172,
+     "calibration": 86,
+     "measured": 86
+    },
+    "adapter_agreement": {
+     "n": 86,
+     "agree": 34,
+     "rate": 0.3953,
+     "wilson95": [
+      0.2986,
+      0.501
+     ]
+    },
+    "confidence_threshold": 0.9878,
+    "target_precision": 0.95,
+    "coverage": {
+     "answered": 3,
+     "of": 86,
+     "rate": 0.0349
+    },
+    "precision_when_answered": {
+     "n": 3,
+     "agree": 1,
+     "rate": 0.3333,
+     "wilson95": [
+      0.0615,
+      0.7923
+     ]
+    }
+   },
+   "answers_identical_to_original_adapter": 130,
+   "inputs_sha256": {
+    "answers": "a84454eede5c8668956ec9d5832ddd1370389f37b35eecb768d9a371874b12c7",
+    "golden": "6b9c1db49bbe2aecf4157ed27845fe024d1b4fcb540f93d81b6987b982b22864",
+    "dbs": "fa7b6c709366771a8c6232e1f072d5b277674cbcf3d7a00f296a9c4eda8700dc",
+    "original_answers": "7d98dececf5dd269243da82c4fab01f1f12cc404468c5129a31e320a948cd84f"
+   }
+  },
+  "exam2": {
+   "nebius_retrain": {
+    "agree": 69,
+    "n": 200,
+    "rate": 0.345,
+    "wilson95": [
+     0.2826,
+     0.4132
+    ]
+   },
+   "original_round2_borrowed_gpu": {
+    "agree": 66,
+    "n": 200,
+    "rate": 0.33,
+    "wilson95": [
+     0.2686,
+     0.3978
+    ]
+   },
+   "row_by_row_vs_original": {
+    "wrong_to_right": 7,
+    "right_to_wrong": 4,
+    "both_right": 62,
+    "both_wrong": 127,
+    "p_exact_two_sided": 0.549
+   },
+   "by_difficulty": {
+    "simple": {
+     "n": 60,
+     "nebius": 17,
+     "original_round2": 16
+    },
+    "join": {
+     "n": 60,
+     "nebius": 13,
+     "original_round2": 12
+    },
+    "aggregate": {
+     "n": 40,
+     "nebius": 25,
+     "original_round2": 24
+    },
+    "hard": {
+     "n": 40,
+     "nebius": 14,
+     "original_round2": 14
+    }
+   },
+   "by_industry": {
+    "unseen_industries": {
+     "n": 200,
+     "nebius": 69,
+     "original_round2": 66
+    }
+   },
+   "measurement_half": {
+    "rows": {
+     "total": 200,
+     "calibration": 100,
+     "measured": 100
+    },
+    "adapter_agreement": {
+     "n": 100,
+     "agree": 28,
+     "rate": 0.28,
+     "wilson95": [
+      0.2014,
+      0.3749
+     ]
+    },
+    "confidence_threshold": 1.01,
+    "target_precision": 0.95,
+    "coverage": {
+     "answered": 0,
+     "of": 100,
+     "rate": 0.0
+    },
+    "precision_when_answered": {
+     "n": 0,
+     "agree": 0,
+     "rate": null,
+     "wilson95": [
+      0.0,
+      1.0
+     ]
+    }
+   },
+   "answers_identical_to_original_adapter": 144,
+   "inputs_sha256": {
+    "answers": "eb927afeab2a3d98419f99f383a22aebca1283bde7ec7a70c68a1fd47347dc4e",
+    "golden": "b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058",
+    "dbs": "5d85d2603bc8ea4f6ceb1779cc6c5016cfb770ce1fff24ba0729bb3d337c3b35",
+    "original_answers": "e0a0048c521cc449d1ba49e08453432ef3e70e88649103d217cd1145462547c9"
+   }
+  }
+ },
+ "adapter_weights_sha256": "68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5"
+}

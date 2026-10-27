@@ -1,0 +1,58 @@
+[run 0s] start mode=full job_name=ratchet-r2-full host=6f10db6bdce6
+Tue Oct 27 14:43:29 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.173.02             Driver Version: 580.173.02     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA L40S                    On  |   00000000:8D:00.0 Off |                    0 |
+| N/A   25C    P8             36W /  350W |       0MiB /  46068MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+Python 3.12.3
+torch 2.11.0+cu128 12.8
+[run 2s] apt
+[run 11s] venv (system python is externally managed, PEP 668)
+[run 14s] using /content/venv
+python=/content/venv/bin/python pip=/content/venv/bin/pip nvcc=/usr/local/cuda/bin/nvcc CUDA_HOME=/usr/local/cuda
+Python 3.12.3
+[run 14s] pip pins (round 2)
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+spin 0.17 requires click!=8.3.0,<8.4,>=8, but you have click 8.5.0 which is incompatible.
+versions {'torch': '2.11.0+cu128', 'transformers': '5.20.1', 'trl': '1.16.0', 'peft': '0.21.2', 'bitsandbytes': '0.50.2'}
+accelerate==1.15.0
+bitsandbytes==0.50.2
+datasets==5.1.0
+peft==0.21.2
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
+torchelastic==0.2.2
+torchvision==0.26.0+cu128
+transformers==5.20.1
+trl==1.16.0
+[run 48s] restore cached wheels (8.9): causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl 
+[run 49s] wheel present: causal-conv1d==1.6.2.post1
+[run 49s] wheel present: mamba-ssm==2.3.2.post1
+total 444804
+drwxr-xr-x 2 root root      4096 Oct 27 14:44 .
+drwxr-xr-x 5 root root      4096 Oct 27 14:44 ..
+-rw-r--r-- 1 root root 171161508 Oct 27 14:44 causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl
+-rw-r--r-- 1 root root 284304899 Oct 27 14:44 mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl
+[run 49s] kernels done
+[run 50s] train start (checkpoints in the bucket, resumes if any)
+[sync] checkpoint-50 copied to the bucket
+[sync] checkpoint-100 copied to the bucket
+[sync] checkpoint-150 copied to the bucket
+[sync] checkpoint-200 copied to the bucket
+[sync] checkpoint-250 copied to the bucket
+[sync] checkpoint-300 copied to the bucket
+[sync] checkpoint-350 copied to the bucket
+[sync] checkpoint-400 copied to the bucket
+[sync] checkpoint-450 copied to the bucket
+[sync] checkpoint-500 copied to the bucket
+[sync] checkpoint-550 copied to the bucket

@@ -1,0 +1,84 @@
+{
+ "machine_seconds_total": 9836,
+ "machine_hours_total": 2.73,
+ "cost_usd_total_estimate": 2.16,
+ "per_job": [
+  {
+   "job": "aijob-e00scwpz2mpdafev9s",
+   "machine_seconds": 0,
+   "usd": 0.0
+  },
+  {
+   "job": "aijob-e00ag2q64ve6d2bkzr",
+   "machine_seconds": 0,
+   "usd": 0.0
+  },
+  {
+   "job": "aijob-e00m2g2akcy80k7g33",
+   "machine_seconds": 457.0,
+   "usd": 0.231
+  },
+  {
+   "job": "aijob-e00akymxpncr2k3nbx",
+   "machine_seconds": 457.0,
+   "usd": 0.0939
+  },
+  {
+   "job": "aijob-e00a9ckefte48tsb1b",
+   "machine_seconds": 627.0,
+   "usd": 0.1289
+  },
+  {
+   "job": "aijob-e00gnezt514ksnvek6",
+   "machine_seconds": 2177.0,
+   "usd": 0.4475
+  },
+  {
+   "job": "aijob-e00ps5qpwc7cq43stp",
+   "machine_seconds": 564.0,
+   "usd": 0.1159
+  },
+  {
+   "job": "aijob-e00ndk3tjrk5ey4wja",
+   "machine_seconds": 960.0,
+   "usd": 0.1973
+  },
+  {
+   "job": "aijob-e00fs4t3dvds96fm9f",
+   "machine_seconds": 1630.0,
+   "usd": 0.3351
+  },
+  {
+   "job": "aijob-e00dkp005020fw78g5",
+   "machine_seconds": 2964.0,
+   "usd": 0.6093
+  }
+ ],
+ "training_step_seconds_by_attempt": [
+  {
+   "log": "train-1793111137.log",
+   "last_step_seen": 50,
+   "step_seconds": 144
+  },
+  {
+   "log": "train-1793111522.log",
+   "last_step_seen": 50,
+   "step_seconds": 0
+  },
+  {
+   "log": "train-1793112209.log",
+   "last_step_seen": 625,
+   "step_seconds": 843
+  },
+  {
+   "log": "train-1793113920.log",
+   "last_step_seen": 1082,
+   "step_seconds": 728
+  }
+ ],
+ "training_step_seconds_total": 1715,
+ "first_training_step_utc": "14:29:36",
+ "adapter_saved_utc_approx": "15:28:19",
+ "wall_clock_first_step_to_adapter_saved_seconds": 3523,
+ "note": "cost is machine seconds at the list price (per-second billing); disks and anything else the Nebius bill adds are not included"
+}

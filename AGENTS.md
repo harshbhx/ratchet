@@ -18,7 +18,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon** (deadline Oct 30, 2026, 10
 
 ```bash
 make install        # pip install -e ".[dev]" (the dev extra includes ruff, which make lint needs)
-make test           # pytest -q (1976 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
+make test           # pytest -q (1977 tests, ~120 s, no network, no GPU; slow Monte Carlo runs only with --runslow)
 make lint           # ruff check + ruff format --check + python scripts/reqtrace.py --check
 make fmt            # ruff format + ruff check --fix
 make trace          # regenerate docs/REQUIREMENTS.md after changing PRD rows, invariants or test markers
@@ -207,7 +207,7 @@ Always run `make lint test reference` before committing.
 
 ## Current status (Oct 27, 2026)
 
-- Oct 27, 2026: the round-2 text-to-SQL adapter was retrained on Nebius AI Cloud (one preemptible L40S, a Serverless Job, checkpoints in Object Storage, Mamba kernels built for sm_89; training loss 0.346 to 0.088; adapter SHA-256 `68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5`). The new adapter's exam scores are <<NEBIUS_EXAM1>> (exam 1) and <<NEBIUS_EXAM2>> (exam 2); training took <<NEBIUS_TRAIN_MIN>> minutes and cost <<NEBIUS_TRAIN_USD>> USD. The original adapters were trained on a borrowed GPU. Serving on a Nebius endpoint has not happened yet (planned Oct 28).
+- Oct 27, 2026: the round-2 text-to-SQL adapter was retrained on Nebius AI Cloud (one preemptible L40S, a Serverless Job, checkpoints in Object Storage, Mamba kernels built for sm_89; training loss 0.346 to 0.088; adapter SHA-256 `68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5`). The new adapter scored 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance); training took 28.6 minutes of GPU time (58.7 minutes wall clock across two spot interruptions); the whole Nebius effort, failed and interrupted attempts included, used 2.73 GPU-hours, about $2.16 at list prices (the Nebius bill decides). The original adapters were trained on a borrowed GPU. Serving on a Nebius endpoint has not happened yet (planned Oct 28).
 - Oct 22 to 24, 2026: real text-to-SQL and tool-calling adapters measured on Nemotron 3 Nano 4B (`evidence/`, recomputable with `docs/VERIFY.md`); adapters, training data and exams published on Hugging Face; the live demo and the simulation run on Cloudflare; the docs site is at docs.ratchet.dualmindlab.tech. The older bullets below are history and still hold for the code.
 
 - v0.5.0: live and simulation side by side (FR-11.30, FR-11.31, NFR-67, [ADR 0133](docs/adr/0133-live-and-simulation-hosts.md)): a second, keyless mock gateway (`ratchet-sim`) at `sim.<domain>` beside the live one with per-IP limits and self-resets (`RATCHET_DEMO_*`), a header switch (`RATCHET_LIVE_URL`, `RATCHET_SIM_URL`), a content-free last-call record per role (`/ratchet/stats` `upstream`, `links`, `demo`) shown on the live pages, and `update.sh` checking both hosts. INV-8 stays in the app. Fit of both gateways in the VM is unverified. No decision or simulation number moved.

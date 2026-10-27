@@ -38,7 +38,7 @@ Every score comes with a range, like "somewhere between 64% and 82%". A small ex
 
 <StatRow cols={3} label="What these results are">
   <Stat value="Unseen databases" label="the exam" note="Whole databases, some from industries never in training." />
-  <Stat value="A borrowed GPU" label="where the adapters trained" note="The published text-to-SQL rounds and the tool-calling adapter. The teacher ran on Nebius Token Factory. The round-2 recipe was retrained once on Nebius AI Cloud (27 Oct 2026); its scores are not in the tables below." />
+  <Stat value="A borrowed GPU" label="where the adapters trained" note="Both text-to-SQL rounds and the tool-calling adapter. The teacher ran on Nebius Token Factory. The round-2 recipe was also retrained once by hand on Nebius AI Cloud (one preemptible L40S, 27 Oct 2026): exam 1 40.7%, exam 2 34.5%, against 39.0% and 33.0% for the original run. See evidence/text2sql-round2-nebius." />
   <Stat value="CPU only" label="to recompute every number" note="From the raw answers, with one command." />
 </StatRow>
 

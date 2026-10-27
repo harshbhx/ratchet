@@ -30,12 +30,12 @@ import{_ as e,a as t,m as n,p as r}from"./utils-CjFVJpAU.js";import{_ as i,a,c a
       "id": "adapter-training",
       "claim": "LoRA adapters were trained on that data",
       "status": "real",
-      "evidence": "The published adapters were trained on a borrowed GPU: a 4-bit LoRA (r=16) on Nemotron 3 Nano 4B, 2 epochs each. Round 2, the headline adapter: 4,322 rows, 1,080 steps in about 5.2 hours, training loss 0.345 to 0.087. Round 1: 821 rows, 206 steps in 66 minutes, training loss 0.334 to 0.075. A training loss is not a quality result. On 27 Oct 2026 the round-2 recipe (the same 4,322 rows and settings) was retrained on Nebius AI Cloud, by hand, as a Serverless Job on one preemptible L40S with checkpoints in Object Storage: training loss 0.346 to 0.088, adapter SHA-256 68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5. Its exam 1 and exam 2 scores are <<NEBIUS_EXAM1>> and <<NEBIUS_EXAM2>>; it took <<NEBIUS_TRAIN_MIN>> minutes and cost <<NEBIUS_TRAIN_USD>> USD.",
+      "evidence": "The published adapters were trained on a borrowed GPU: a 4-bit LoRA (r=16) on Nemotron 3 Nano 4B, 2 epochs each. Round 2, the headline adapter: 4,322 rows, 1,080 steps in about 5.2 hours, training loss 0.345 to 0.087. Round 1: 821 rows, 206 steps in 66 minutes, training loss 0.334 to 0.075. A training loss is not a quality result. On 27 Oct 2026 the round-2 recipe (the same 4,322 rows and settings) was retrained on Nebius AI Cloud, by hand, as a Serverless Job on one preemptible L40S with checkpoints in Object Storage: training loss 0.346 to 0.088, adapter SHA-256 68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5. It scored 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance); training took 28.6 minutes of GPU time (58.7 minutes wall clock across two spot interruptions); the whole Nebius effort, failed and interrupted attempts included, used 2.73 GPU-hours, about $2.16 at list prices (the Nebius bill decides).",
       "check": {
         "label": "Read the training script",
         "href": "https://github.com/harshbhx/ratchet/blob/main/scripts/text2sql/train_lora.py"
       },
-      "paths": ["scripts/text2sql/train_lora.py", "evidence/text2sql-round2/adapter/run_info.json", "evidence/text2sql-round1/adapter/run_info.json"],
+      "paths": ["scripts/text2sql/train_lora.py", "evidence/text2sql-round2/adapter/run_info.json", "evidence/text2sql-round1/adapter/run_info.json", "evidence/text2sql-round2-nebius/"],
       "date": "2026-10-23",
       "facts": [
         { "label": "Hardware", "value": "A borrowed GPU (published adapters)" },

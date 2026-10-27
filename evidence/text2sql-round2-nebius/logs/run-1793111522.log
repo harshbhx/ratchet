@@ -1,0 +1,149 @@
+[run 0s] start mode=full job_name=ratchet-r2-full host=3a4e2bad8390
+Tue Oct 27 14:25:38 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.173.02             Driver Version: 580.173.02     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA L40S                    On  |   00000000:8D:00.0 Off |                    0 |
+| N/A   25C    P0             35W /  325W |       0MiB /  46068MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+Python 3.12.3
+torch 2.11.0+cu128 12.8
+[run 2s] apt
+[run 12s] venv (system python is externally managed, PEP 668)
+[run 15s] using /content/venv
+python=/content/venv/bin/python pip=/content/venv/bin/pip nvcc=/usr/local/cuda/bin/nvcc CUDA_HOME=/usr/local/cuda
+Python 3.12.3
+[run 15s] pip pins (round 2)
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+spin 0.17 requires click!=8.3.0,<8.4,>=8, but you have click 8.5.0 which is incompatible.
+versions {'torch': '2.11.0+cu128', 'transformers': '5.20.1', 'trl': '1.16.0', 'peft': '0.21.2', 'bitsandbytes': '0.50.2'}
+accelerate==1.15.0
+bitsandbytes==0.50.2
+datasets==5.1.0
+peft==0.21.2
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
+torchelastic==0.2.2
+torchvision==0.26.0+cu128
+transformers==5.20.1
+trl==1.16.0
+[run 49s] restore cached wheels (8.9): causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl 
+[run 50s] wheel present: causal-conv1d==1.6.2.post1
+[run 50s] wheel present: mamba-ssm==2.3.2.post1
+total 444804
+drwxr-xr-x 2 root root      4096 Oct 27 14:26 .
+drwxr-xr-x 5 root root      4096 Oct 27 14:26 ..
+-rw-r--r-- 1 root root 171161508 Oct 27 14:26 causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl
+-rw-r--r-- 1 root root 284304899 Oct 27 14:26 mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl
+[run 50s] kernels done
+[run 51s] train start (checkpoints in the bucket, resumes if any)
+[run 384s] train rc=1
+ 1.19s/it]  4%|▍         | 45/1082 [02:17<21:02,  1.22s/it]                                                 {'loss': '0.1766', 'grad_norm': 'nan', 'learning_rate': '0.0001919', 'entropy': '0.1673', 'mean_token_accuracy': '0.9439', 'num_tokens': '2.116e+05', 'epoch': '0.08329'}
+  4%|▍         | 45/1082 [02:17<21:02,  1.22s/it]  4%|▍         | 46/1082 [02:18<20:31,  1.19s/it]  4%|▍         | 47/1082 [02:19<20:18,  1.18s/it]  4%|▍         | 48/1082 [02:20<20:47,  1.21s/it]  5%|▍         | 49/1082 [02:21<21:11,  1.23s/it]  5%|▍         | 50/1082 [02:23<21:16,  1.24s/it]                                                 {'loss': '0.1751', 'grad_norm': '0.4422', 'learning_rate': '0.0001909', 'entropy': '0.1711', 'mean_token_accuracy': '0.9443', 'num_tokens': '2.352e+05', 'epoch': '0.09255'}
+  5%|▍         | 50/1082 [02:23<21:16,  1.24s/it][stage   332s] TRAIN FAILED SafetensorError: Error while serializing: I/O error: Operation not permitted (os error 1)
+[stage   332s] trainable (param dtype, grad dtype): {('torch.float32', 'none'): 100}
+[stage   332s] all param dtypes: {'torch.float16': 213, 'torch.uint8': 50, 'torch.float32': 100}
+Traceback (most recent call last):
+  File "/content/train_lora.py", line 144, in <module>
+    res = tr.train(resume_from_checkpoint=bool(_ck) and not SMOKE)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 1559, in train
+    return inner_training_loop(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 1643, in _inner_training_loop
+    self._run_epoch(
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 1930, in _run_epoch
+    self._maybe_log_save_evaluate(
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 2257, in _maybe_log_save_evaluate
+    self._save_checkpoint(model, trial)
+  File "/content/venv/lib/python3.12/site-packages/trl/trainer/sft_trainer.py", line 1715, in _save_checkpoint
+    super()._save_checkpoint(model, trial)
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 3332, in _save_checkpoint
+    self.save_model(output_dir, _internal_call=True)
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 4108, in save_model
+    self._save(output_dir)
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 4138, in _save
+    self.model.save_pretrained(output_dir, state_dict=state_dict)
+  File "/content/venv/lib/python3.12/site-packages/peft/peft_model.py", line 356, in save_pretrained
+    safe_save_file(
+  File "/content/venv/lib/python3.12/site-packages/safetensors/torch.py", line 323, in save_file
+    serialize_file(
+safetensors._safetensors_rust.SafetensorError: Error while serializing: I/O error: Operation not permitted (os error 1)
+  5%|▍         | 50/1082 [02:24<49:38,  2.89s/it]
+[run 384s] TRAIN FAILED
+[run 0s] start mode=full job_name=ratchet-r2-full host=3a4e2bad8390
+Tue Oct 27 14:32:02 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.173.02             Driver Version: 580.173.02     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA L40S                    On  |   00000000:8D:00.0 Off |                    0 |
+| N/A   48C    P0            118W /  325W |       0MiB /  46068MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+Python 3.12.3
+torch 2.11.0+cu128 12.8
+[run 2s] apt
+[run 4s] venv (system python is externally managed, PEP 668)
+[run 6s] using /content/venv
+python=/content/venv/bin/python pip=/content/venv/bin/pip nvcc=/usr/local/cuda/bin/nvcc CUDA_HOME=/usr/local/cuda
+Python 3.12.3
+[run 7s] pip pins (round 2)
+versions {'torch': '2.11.0+cu128', 'transformers': '5.20.1', 'trl': '1.16.0', 'peft': '0.21.2', 'bitsandbytes': '0.50.2'}
+accelerate==1.15.0
+bitsandbytes==0.50.2
+causal_conv1d @ file:///content/wheels/causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl#sha256=535d62d68ee813f9e6c41c2a452a0034e71d650d20d478330fae99756dc1d02d
+datasets==5.1.0
+mamba_ssm @ file:///content/wheels/mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl#sha256=d32fcc890976082a219fc9c869e57c51bec7b5aca18df67b297e3e327feac7e8
+peft==0.21.2
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
+torchelastic==0.2.2
+torchvision==0.26.0+cu128
+transformers==5.20.1
+trl==1.16.0
+[run 16s] restore cached wheels (8.9): causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl 
+[run 23s] wheel present: causal-conv1d==1.6.2.post1
+[run 23s] wheel present: mamba-ssm==2.3.2.post1
+total 444808
+drwxr-xr-x 2 root root      4096 Oct 27 14:26 .
+drwxr-xr-x 5 root root      4096 Oct 27 14:26 ..
+-rw-r--r-- 1 root root 171161508 Oct 27 14:32 causal_conv1d-1.6.2.post1-cp312-cp312-linux_x86_64.whl
+-rw-r--r-- 1 root root 284304899 Oct 27 14:32 mamba_ssm-2.3.2.post1-cp312-cp312-linux_x86_64.whl
+[run 23s] kernels done
+[run 23s] train start (checkpoints in the bucket, resumes if any)
+[run 63s] train rc=1
+[00:00<00:00, 3752.28 examples/s]Building labels for train dataset:  60%|█████▉    | 2582/4322 [00:00<00:00, 3676.30 examples/s]Building labels for train dataset:  69%|██████▉   | 3000/4322 [00:00<00:00, 3408.67 examples/s]Building labels for train dataset:  82%|████████▏ | 3561/4322 [00:00<00:00, 3922.27 examples/s]Building labels for train dataset:  93%|█████████▎| 4000/4322 [00:01<00:00, 3577.85 examples/s]Building labels for train dataset: 100%|██████████| 4322/4322 [00:01<00:00, 3645.48 examples/s]
+Truncating train dataset:   0%|          | 0/4322 [00:00<?, ? examples/s]Truncating train dataset:  23%|██▎       | 1000/4322 [00:00<00:00, 5938.42 examples/s]Truncating train dataset:  46%|████▋     | 2000/4322 [00:00<00:00, 6075.65 examples/s]Truncating train dataset:  69%|██████▉   | 3000/4322 [00:00<00:00, 6283.07 examples/s]Truncating train dataset:  93%|█████████▎| 4000/4322 [00:00<00:00, 6331.17 examples/s]Truncating train dataset: 100%|██████████| 4322/4322 [00:00<00:00, 6304.12 examples/s]
+Dropping fully masked examples from train dataset:   0%|          | 0/4322 [00:00<?, ? examples/s]Dropping fully masked examples from train dataset:  46%|████▋     | 2000/4322 [00:00<00:00, 16765.92 examples/s]Dropping fully masked examples from train dataset:  93%|█████████▎| 4000/4322 [00:00<00:00, 17457.93 examples/s]Dropping fully masked examples from train dataset: 100%|██████████| 4322/4322 [00:00<00:00, 17565.95 examples/s]
+[stage    38s] trainable dtypes after the trainer: torch.float32
+[stage    38s] training
+[stage    38s] resuming from /content/ckpt/checkpoint-50
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'eos_token_id': 11}.
+[stage    38s] TRAIN FAILED ValueError: Can't find a valid checkpoint at /content/ckpt/checkpoint-50
+[stage    38s] trainable (param dtype, grad dtype): {('torch.float32', 'none'): 100}
+[stage    38s] all param dtypes: {'torch.float16': 213, 'torch.uint8': 50, 'torch.float32': 100}
+Traceback (most recent call last):
+  File "/content/train_lora.py", line 144, in <module>
+    res = tr.train(resume_from_checkpoint=bool(_ck) and not SMOKE)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 1547, in train
+    self._load_from_checkpoint(resume_from_checkpoint)
+  File "/content/venv/lib/python3.12/site-packages/transformers/trainer.py", line 3620, in _load_from_checkpoint
+    raise ValueError(f"Can't find a valid checkpoint at {resume_from_checkpoint}")
+ValueError: Can't find a valid checkpoint at /content/ckpt/checkpoint-50
+[run 63s] TRAIN FAILED
