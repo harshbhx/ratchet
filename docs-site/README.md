@@ -69,10 +69,36 @@ The custom domain `docs.ratchet.dualmindlab.tech` is attached to the Pages proje
 
 ## Diagrams
 
-Every diagram in a guide is a ` ```mermaid ` block. [astro-mermaid](https://github.com/joesaby/astro-mermaid) renders it in the
-browser from the bundled `mermaid` package (no CDN). The one picture is the architecture overview on the big picture page:
-`public/img/architecture-light.png` and `-dark.png`, copies of the exports that `scripts/render_architecture.py` renders from
-`docs/img/architecture.svg`.
+Every diagram in a guide is a ` ```mermaid ` block. [astro-mermaid](https://github.com/joesaby/astro-mermaid) turns it into a
+`<pre class="mermaid">`, and the build then replaces that with the finished SVG, so the browser runs no Mermaid (on a long page
+Mermaid's text measuring froze the main thread for seconds). The one picture is the architecture overview on the big picture
+page: `public/img/architecture-light.png` and `-dark.png`, copies of the exports that `scripts/render_architecture.py` renders
+from `docs/img/architecture.svg`.
+
+### Diagrams are drawn at build time
+
+- `generated/mermaid/<key>.svg` holds one finished SVG per diagram, committed. The key is the first 16 hex characters of the
+  SHA-256 of the diagram's source exactly as written in the block (the same hash astro-mermaid's client puts in
+  `data-diagram`). Mermaid's random SVG id is replaced by `rt-m-<key>`, and `handDrawnSeed` is fixed in
+  `src/config/mermaid.mjs`, so drawing a diagram twice gives the same bytes. `generated/mermaid/config.json` records the
+  Mermaid version and a hash of the Mermaid configuration the SVGs were drawn with.
+- `npm run build` calls `inlineDiagrams` (`scripts/mermaid-cache.mjs`, an integration in `astro.config.mjs`) after the pages
+  are written, before the search index: each `<pre class="mermaid">` that has a saved SVG becomes
+  `<div class="mermaid" data-processed="true" data-static="">` holding the SVG. A page whose diagrams are all inlined has no
+  `pre.mermaid`, so astro-mermaid's script does not even load Mermaid there. A diagram without a saved SVG stays a `<pre>`,
+  the browser draws it (the old behaviour), and the build warns.
+- **After you add or change a diagram** (or change `src/config/mermaid.mjs` or the `mermaid` version), run
+
+  ```bash
+  npm run build && node scripts/mermaid-cache.mjs --write   # needs Chrome or Chromium; CHROME_PATH=/path/to/chrome if not installed as Chrome
+  ```
+
+  and commit `generated/mermaid`. `--write` opens each page that still has a `<pre class="mermaid">` in Chromium
+  (`playwright-core`), waits for Mermaid, saves the SVGs, removes files no diagram uses and inlines them into `dist/`. After a change to the Mermaid
+  configuration or version, delete `generated/mermaid` first so every diagram is drawn again (`--write` refuses to mix).
+- CI runs `node scripts/mermaid-cache.mjs --check` after the build: it fails if a diagram has no saved SVG, a saved SVG belongs
+  to no diagram, or the SVGs were drawn with another Mermaid version or configuration.
+- `npm run dev` is unchanged: the browser draws the diagrams.
 
 How it is themed:
 
@@ -82,7 +108,7 @@ How it is themed:
   its own colours, and they follow the light and dark theme as soon as it changes, with no re-render.
 - astro-mermaid's `autoTheme` is off on purpose: it would swap Mermaid to its own `default` and `dark` themes and drop
   `base` and the brand colours.
-- `src/styles/diagrams.css` is the frame: the rounded card, the optional caption and key, scroll shadows, and sideways
+- `src/styles/diagrams.css` is the frame (it matches both the `<pre>` and the static `<div>`): the rounded card, the optional caption and key, scroll shadows, and sideways
   scrolling on a phone instead of shrinking the text.
 
 ### The class kit

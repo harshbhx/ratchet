@@ -188,6 +188,9 @@ export const mermaidConfig = {
   fontFamily: FONT,
   // Mermaid's default is 16; sequence diagrams take their message, note and actor sizes from this one.
   fontSize: 14,
+  // Mermaid draws node outlines with rough.js, which is random unless seeded: a fixed seed makes every drawing of a diagram
+  // identical, so the SVGs saved at build time (scripts/mermaid-cache.mjs) do not change from one run to the next.
+  handDrawnSeed: 1,
   themeCSS,
   themeVariables: {
     darkMode: false,

@@ -3,7 +3,7 @@
  * Small helpers for reading a long doc page, on every doc page (rendered by Footer.astro). No framework, no work while
  * the reader scrolls beyond a class change in a requestAnimationFrame.
  *
- * - Expand: every diagram gets an "Expand" button once Mermaid has drawn it, and content images open on click. Both
+ * - Expand: every diagram gets an "Expand" button once it is drawn (at build time, or by Mermaid in the browser), and content images open on click. Both
  *   open in a full-screen dialog at the screen's width (a tall one scrolls), with "Fit to screen" to see all of it
  *   at once (after beUI's Image Viewer, MIT). Esc, the close button or a click outside closes it.
  * - Back to top: a button that appears once the page title is out of view, below 1280px (wider, "On this page"
@@ -89,8 +89,9 @@
     });
     pre.append(button);
   };
-  // Mermaid replaces each block's content when it draws, then marks it data-processed.
-  const diagrams = content ? Array.from(content.querySelectorAll<HTMLElement>('pre.mermaid')) : [];
+  // A diagram drawn at build time (div.mermaid[data-static]) is processed already. A <pre class="mermaid"> without a saved
+  // SVG is drawn in the browser: Mermaid replaces its content, then marks it data-processed.
+  const diagrams = content ? Array.from(content.querySelectorAll<HTMLElement>('pre.mermaid, div.mermaid[data-static]')) : [];
   diagrams.forEach((pre) => {
     if (pre.hasAttribute('data-processed')) addExpand(pre);
     else
