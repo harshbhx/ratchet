@@ -138,4 +138,3 @@ def test_judges_page_is_served_and_public(gw):
     r = TestClient(gw.app).get("/judges")
     assert r.status_code == 200 and "<" in r.text
     assert access.route_access("GET", "/judges") == access.PUBLIC
-
