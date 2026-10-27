@@ -1,9 +1,9 @@
 # HTTP API
 
-The gateway (`ratchet/gateway.py`, FastAPI app `ratchet.gateway:app`) speaks the OpenAI chat-completions format, so any OpenAI SDK works. It also exposes a small Ratchet API for stats and provenance, mock-only demo controls, three web pages and the Scout demo endpoints.
+The gateway (`ratchet/gateway.py`, FastAPI app `ratchet.gateway:app`) speaks the OpenAI chat-completions format, so any OpenAI SDK works. It also exposes a small Ratchet API for stats and provenance, mock-only test controls, three web pages and the Scout endpoints.
 
 ```bash
-RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000      # offline demo
+RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000      # offline, mock models
 RATCHET_MODE=live NEBIUS_API_KEY=... uvicorn ratchet.gateway:app --port 8000
 ```
 
@@ -13,13 +13,13 @@ Errors on `/v1/*` use OpenAI's error envelope, so OpenAI SDKs raise typed except
 
 Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.md); FR-, NFR- and INV- ids are requirement and invariant ids ([REQUIREMENTS.md](REQUIREMENTS.md)). A one-page overview is in [README.md](../README.md).
 
-Sections after the route table: [OpenAI endpoints](#openai-endpoints), [Authentication](#authentication), [`/v1/chat/completions`](#post-v1chatcompletions) (request, response, streaming, errors), [End users and storage](#end-users-and-storage), [Feedback](#feedback), [Erasure and export](#erasure-and-export), [Health and readiness](#get-healthz), [Models](#get-v1models), [Embeddings](#post-v1embeddings), [Completions](#post-v1completions), [Responses](#post-v1responses), [Stats](#get-ratchetstats), [KPIs](#get-ratchetkpisdaysn), [Request lookups](#request-lookups), [Metrics](#get-metrics), [BOM](#get-ratchetbom), [Certificates](#get-ratchetversionsidcertificate), [Committed training sets](#committed-training-sets), [Drift](#get-ratchetdrift), [Teacher watch](#teacher-watch), [Cost](#cost), [Ledger replay](#ledger-replay), [Savings receipts](#savings-receipts), [Tasks](#tasks), [Admin](#admin), [Demo controls](#demo-controls-mock-mode-only) and [Scout endpoints](#scout-endpoints).
+Sections after the route table: [OpenAI endpoints](#openai-endpoints), [Authentication](#authentication), [`/v1/chat/completions`](#post-v1chatcompletions) (request, response, streaming, errors), [End users and storage](#end-users-and-storage), [Feedback](#feedback), [Erasure and export](#erasure-and-export), [Health and readiness](#get-healthz), [Models](#get-v1models), [Embeddings](#post-v1embeddings), [Completions](#post-v1completions), [Responses](#post-v1responses), [Stats](#get-ratchetstats), [KPIs](#get-ratchetkpisdaysn), [Request lookups](#request-lookups), [Metrics](#get-metrics), [BOM](#get-ratchetbom), [Certificates](#get-ratchetversionsidcertificate), [Committed training sets](#committed-training-sets), [Drift](#get-ratchetdrift), [Teacher watch](#teacher-watch), [Cost](#cost), [Ledger replay](#ledger-replay), [Savings receipts](#savings-receipts), [Tasks](#tasks), [Admin](#admin), [Test controls](#test-controls-mock-mode-only) and [Scout endpoints](#scout-endpoints).
 
 | Method | Path | Mode | Access | Purpose |
 |---|---|---|---|---|
 | GET | `/` | both | [public](#access-levels) | Story page: the React app (`ratchet/web/dist/index.html`); falls back to `ratchet/web/landing.html` if the build is missing |
 | GET | `/dashboard` | both | [public](#access-levels) | Dashboard (React app; fallback `ratchet/dashboard.html`) |
-| GET | `/scout` | both | [public](#access-levels) | Scout demo page (React app; fallback `ratchet/web/scout.html`) |
+| GET | `/scout` | both | [public](#access-levels) | Scout page (React app; fallback `ratchet/web/scout.html`) |
 | GET | `/judges` | both | [public](#access-levels) | The judges' console: what is real, the gateway's own read endpoints chapter by chapter, and a guided tour (React app; a placeholder page without the build) |
 | GET | `/assets/*` | both | [public](#access-levels) | Built JavaScript, CSS and fonts of the React app (a static mount, not in `access.py`) |
 | GET | `/lite`, `/lite/scout`, `/lite/dashboard` | both | [public](#access-levels) | The hand-written pages (no build step, no JavaScript framework) |
@@ -121,7 +121,7 @@ What an OpenAI client pointed at `http://<gateway>/v1` can call ([ADR 0050](adr/
 
 ## Authentication
 
-Off by default in mock mode, so the demo and local runs need no key. Set `RATCHET_API_KEYS` ([CONFIGURATION.md](CONFIGURATION.md#privacy-and-security)) to require a key on `/v1/*` and `/openai/*`. Live mode refuses to start without them, unless `RATCHET_ALLOW_UNAUTHENTICATED=1` says something in front of the gateway (the demo VM's Caddy guard, a private network) checks callers:
+Off by default in mock mode, so the live gateway and local runs need no key. Set `RATCHET_API_KEYS` ([CONFIGURATION.md](CONFIGURATION.md#privacy-and-security)) to require a key on `/v1/*` and `/openai/*`. Live mode refuses to start without them, unless `RATCHET_ALLOW_UNAUTHENTICATED=1` says something in front of the gateway (the VM's Caddy guard, a private network) checks callers:
 
 ```bash
 RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" uvicorn ratchet.gateway:app
@@ -134,7 +134,7 @@ RATCHET_API_KEYS="acme:$(openssl rand -hex 24),globex:$(openssl rand -hex 24)" u
 - **Admin keys** (`RATCHET_ADMIN_KEYS`, same syntax, never the same keys) guard management writes: `PUT` and `DELETE /ratchet/tasks/{name}`, `POST /ratchet/tasks/validate` ([Tasks](#tasks)) and `POST /ratchet/cost/endpoint` ([Cost](#cost)); every route under `/ratchet/admin/`, its reads included ([Admin](#admin)); the training-set proofs, `POST /ratchet/versions/{id}/proof` and `GET /ratchet/versions/{id}/heldout` ([Committed training sets](#committed-training-sets)), which would otherwise tell anyone whether a text they can guess was trained on; and they may register or remove a no-train end user for any client ([End users and storage](#end-users-and-storage)). Send one the same way. A missing or wrong key is **401** `invalid or missing admin key` (`WWW-Authenticate: Bearer`), an API key or a dashboard key **403**. An admin key also reads the dashboard API. Without admin keys these calls are **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode, and open in mock mode (recorded as `mock-admin`). The ledger and the event log record the admin's name, never the key.
 - **Savings receipts** (`/ratchet/receipts*`, [Savings receipts](#savings-receipts)): with API keys on, a key reads only its own receipts and proofs; an admin key reads every receipt; any other caller is **401**. In mock mode without keys they are open; in live mode without any keys they are **403** (`receipts need RATCHET_API_KEYS or RATCHET_ADMIN_KEYS in live mode`), because their leaves list every request's time, task and cost.
 - **Dashboard keys** (`RATCHET_DASHBOARD_KEYS`, same syntax, never an API or admin key) read the dashboard API and write nothing. Who needs which key is the route's access level ([Access levels](#access-levels)): in live mode the dashboard API needs an admin or dashboard key by default.
-- Pages, `/healthz`, `/livez`, `/readyz`, `/ratchet/bom/public-key` and Scout are always public. The mock-only demo controls are covered by the Caddy guard on the demo VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
+- Pages, `/healthz`, `/livez`, `/readyz`, `/ratchet/bom/public-key` and Scout are always public. The mock-only test controls are covered by the Caddy guard on the VM. Scout's agents call the cascade inside the process, so they never need a key; the Scout budget guard protects them.
 
 ### Access levels
 
@@ -156,7 +156,7 @@ On a public dashboard a key is optional: an admin or dashboard key gets the full
 
 **Security headers.** Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and the `Content-Security-Policy` in `RATCHET_CSP` when it is set (none by default, so the pages never break; [CONFIGURATION.md](CONFIGURATION.md#privacy-and-security) has a recommended value).
 
-The demo VM's Caddy config also has an opt-in edge guard for `/v1/*`, `/openai/*` (the [Azure-style route](#azure-style-route) runs the same paid cascade), `/ratchet/demo/*` and `/ratchet/admin/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
+The VM's Caddy config also has an opt-in edge guard for `/v1/*`, `/openai/*` (the [Azure-style route](#azure-style-route) runs the same paid cascade), `/ratchet/demo/*` and `/ratchet/admin/*` ([DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md#security-notes)). Use either or both. See [THREAT_MODEL.md](THREAT_MODEL.md) T1 and T19.
 
 ### Limits and headers
 
@@ -182,7 +182,7 @@ They are checked in this order, so a refusal calls no model and costs nothing: t
 | The gateway's US dollars per UTC day, all keys together | `RATCHET_DAILY_BUDGET_USD`, `RATCHET_BUDGET_MODE` | `block`: **429** `insufficient_quota` / `gateway_budget_exceeded` for every chat request until 00:00 UTC. `student_only`: a confident student answer is still a 200 (no audit, no shadow); a request that needs the teacher (an escalation, a cold start, a pinned or unregistered task, `tools`) gets that 429. The gateway's budget is not named in the message | `Retry-After` (to 00:00 UTC), `X-Should-Retry: false` |
 | Training data from a key | `store=0` | Never refused: the key's teacher answers are served and audited but never stored as training examples (`requests.stored = 0`) | None |
 
-On a 200, a key with a daily request quota gets the `X-RateLimit-*-Requests` headers for that quota (as since v0.4); a key with a rate and no daily quota gets them for its bucket. A key with a US dollar budget also gets `X-Ratchet-Spend-Today-USD` (its dollars since 00:00 UTC, this request included, six decimals) and `X-Ratchet-Budget-Remaining-USD` (what it may still spend before its first cap). Dollars are per-token prices, answered and failed requests together (a request that failed after the student was sampled spent those samples); they are simulated in mock mode.
+On a 200, a key with a daily request quota gets the `X-RateLimit-*-Requests` headers for that quota (as since v0.4); a key with a rate and no daily quota gets them for its bucket. A key with a US dollar budget also gets `X-Ratchet-Spend-Today-USD` (its dollars since 00:00 UTC, this request included, six decimals) and `X-Ratchet-Budget-Remaining-USD` (what it may still spend before its first cap). Dollars are per-token prices, answered and failed requests together (a request that failed after the student was sampled spent those samples); they are mock in mock mode.
 
 A check reads what was spent before the request, so a request in flight can overshoot a cap by its own cost, and concurrent requests by theirs. Counts live in memory: the gateway reads today's (and with a monthly budget this month's) spend from the ledger at startup, so a restart forgets nothing, and a new UTC day or month starts from zero. Only gateway API requests count: Scout's agents call the cascade inside the process and stay under the Scout budget (invariant 11).
 
@@ -442,7 +442,7 @@ A standard `chat.completion`, with every field OpenAI's has, plus a `ratchet` bl
 | `ratchet` field | Meaning |
 |---|---|
 | `served_by` | `student` or `teacher` |
-| `route` | How it was served: one of the routes in the table below. `demo_split` marks the live demo's random share that went to the hosted Nano whatever its confidence ([ADR 0147](adr/0147-demo-split.md)) |
+| `route` | How it was served: one of the routes in the table below. `demo_split` marks the live gateway's random share that went to the hosted Nano whatever its confidence ([ADR 0147](adr/0147-demo-split.md)) |
 | `student_version` | Version that answered; `null` when the teacher answered (including escalations), and when the hosted fallback student answered (no `RATCHET_STUDENT_BASE`): that answer is not any version's, and never counts toward a release ([ADR 0073](adr/0073-fallback-attribution.md)) |
 | `confidence` | Student confidence if a student was tried, else `null` |
 | `escalated` | `true` if the student was tried and was below its threshold |
@@ -590,7 +590,7 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | Status | `type` | `code` | When | Retried by OpenAI SDKs? |
 |---|---|---|---|---|
 | 400 | `invalid_request_error` | `invalid_json`, `invalid_type`, `invalid_value`, `missing_required_parameter`, `unsupported_value`, `context_length_exceeded`, `unsupported_content_type` | The request breaks a rule in [Request validation](#request-validation); `param` names the field | No |
-| 400 | `invalid_request_error` | `null` | Mock mode with `RATCHET_MOCK_STRICT=1` only: the request is not a synthetic demo ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`). Without it the generic mock world answers every request ([Mock mode](#mock-mode-answers)) | No |
+| 400 | `invalid_request_error` | `null` | Mock mode with `RATCHET_MOCK_STRICT=1` only: the request is not a synthetic test ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`). Without it the generic mock world answers every request ([Mock mode](#mock-mode-answers)) | No |
 | 400 | `invalid_request_error` | `reserved_task` | The request names the task `embeddings` (header, `metadata.ratchet_task`, `model` or Azure deployment), the name `/v1/embeddings` logs its requests under ([Embeddings](#post-v1embeddings)); `param` says where it came from. Checked before the quota | No |
 | 400 | `invalid_request_error` | `unknown_task` | `RATCHET_UNKNOWN_TASKS=reject` and the task is not registered (`unknown task "x"; registered: default, page-read, ...`, at most 20 names, only tasks this key may use); `param` is `metadata.ratchet_task` when the name came from there, and `response_format` for a json_schema request that named no task and whose schema gave no auto task ([Structured outputs](#structured-outputs)) | No |
 | 401 | `invalid_request_error` | `invalid_api_key` | API keys are on and the key is missing or wrong (`WWW-Authenticate: Bearer`) | No |
@@ -683,7 +683,7 @@ const r = await client.chat.completions.create(
 
 ### Mock mode answers
 
-In mock mode every request gets an answer from mock models (simulation; nothing here measures a real model). The synthetic tickets generated by `sim/tickets.py` and Scout's requests for the example questions (`sim/research.py`) get their demo answers: use the demo endpoints, take a ticket from `sim.tickets.TicketStream` in Python, or run the Scout CLI (`python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1`). Any other request gets a deterministic answer from the generic mock world (`sim/generic.py`, [ADR 0041](adr/0041-generic-mock-world.md)), the same every time for the same text:
+In mock mode every request gets an answer from mock models (mock-mode run; nothing here measures a real model). The synthetic tickets generated by `sim/tickets.py` and Scout's requests for the example questions (`sim/research.py`) get their mock answers: use the mock-mode endpoints, take a ticket from `sim.tickets.TicketStream` in Python, or run the Scout CLI (`python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1`). Any other request gets a deterministic answer from the generic mock world (`sim/generic.py`, [ADR 0041](adr/0041-generic-mock-world.md)), the same every time for the same text:
 
 | The request | The mock teacher's answer |
 |---|---|
@@ -693,7 +693,7 @@ In mock mode every request gets an answer from mock models (simulation; nothing 
 | Ending with a `tool` message | `[mock teacher] The tool returned: "...". ...` |
 | `tools` that reach the teacher | A tool call, returned as `message.tool_calls` ([Tools and function calling](#tools-and-function-calling)): `lookup_order(order_id)` or `refund(order_id, amount, reason)` (the mock catalogue, `sim.generic.TOOLS`) with the order number, amount and reason read from the prompt, or a call to your own tool with arguments built from its parameters schema. The call ids are stable, so the same request gets the same call. A request that carries tool turns or offers tools is answered by the mock teacher alone and never stored, as in live mode |
 
-The mock student learns these requests as it learns tickets, per schema name or system prompt (tool requests never reach it). `RATCHET_MOCK_STRICT=1` restores the earlier behaviour: anything but a demo request is a 400 `mock mode only answers demo requests`.
+The mock student learns these requests as it learns tickets, per schema name or system prompt (tool requests never reach it). `RATCHET_MOCK_STRICT=1` restores the earlier behaviour: anything but a test run request is a 400 `mock mode only answers demo requests`.
 
 ---
 
@@ -732,12 +732,12 @@ From then on, requests from that end user are answered as usual but never stored
 - **Who.** Open wherever chat completions are: with `RATCHET_API_KEYS` set it needs an API key and registers that key's own end user; without keys it registers the end user of keyless requests. An admin key (`RATCHET_ADMIN_KEYS`) may add `"client": "<key name>"` to register that client's end user, or leave it out to register the end user for every client (scope `"*"`): every API key, also keys added later, and keyless requests, as for a data subject's request.
 - `created` is `false` when the end user was already registered in that scope. It is told only to an API key or an admin key: without API keys anyone may call this endpoint, so a keyless caller gets `null` either way and cannot learn whether an identifier was registered. A registration an admin makes cannot be removed by the client.
 - A client's registration is scoped to its key's name: renaming the key in `RATCHET_API_KEYS` unlinks it ([End users](#end-users-and-storage)); an admin's registration for every client does not depend on key names.
-- **Errors.** 400 for a body that is not an object, an unknown field (`unknown_parameter`), a missing, non-string or empty `end_user` (never quoted back), or a `client` that names no API key; 401 for a wrong key; 403 when an API key names another client; 409 when new registrations would pass 1,000 in mock mode (the shared demo; a reset clears them; one already registered does not count again). A live gateway has no cap: a cap anyone could fill would block real opt-outs.
+- **Errors.** 400 for a body that is not an object, an unknown field (`unknown_parameter`), a missing, non-string or empty `end_user` (never quoted back), or a `client` that names no API key; 401 for a wrong key; 403 when an API key names another client; 409 when new registrations would pass 1,000 in mock mode (the shared mock-mode gateway; a reset clears them; one already registered does not count again). A live gateway has no cap: a cap anyone could fill would block real opt-outs.
 - The event log records a count and who registered (`no_train` events), never the end user or its hash.
 
 ### DELETE `/v1/ratchet/no-train`
 
-The same JSON body as `POST`, never a query string (access logs keep URLs). Removes the registration, so that end user's requests are stored again. The response lists each client scope with a `status`: `removed`, `kept` (the end user is still no-train there: an admin registered it in that scope, which an API key cannot remove, or an admin's registration for every client still covers it) or `absent`. An API key removes its own end users' registrations; an admin key removes any, for a named `client`, or with none in every scope: each configured key, the keyless scope, every scope a registration is stored in (also a renamed key's) and `"*"`. Without API keys, a live gateway answers 403 unless an admin key is sent, so nobody can switch storage back on for someone else's end users; the mock demo stays open, and its keyless callers get `status: null`, as they get `created: null` from `POST`.
+The same JSON body as `POST`, never a query string (access logs keep URLs). Removes the registration, so that end user's requests are stored again. The response lists each client scope with a `status`: `removed`, `kept` (the end user is still no-train there: an admin registered it in that scope, which an API key cannot remove, or an admin's registration for every client still covers it) or `absent`. An API key removes its own end users' registrations; an admin key removes any, for a named `client`, or with none in every scope: each configured key, the keyless scope, every scope a registration is stored in (also a renamed key's) and `"*"`. Without API keys, a live gateway answers 403 unless an admin key is sent, so nobody can switch storage back on for someone else's end users; the mock-mode gateway stays open, and its keyless callers get `status: null`, as they get `created: null` from `POST`.
 
 ## Feedback
 
@@ -854,7 +854,7 @@ One table as NDJSON (`application/x-ndjson`, one JSON object per line, in id ord
 
 ## GET `/healthz`
 
-Liveness: the process answers. Always public, also when API keys are on. The demo VM's Docker health check uses it. It is a coroutine on the event loop, so it answers while every worker thread is busy (a full thread pool is not a dead process); it asks no dependency, so a restart loop never follows a slow teacher. For "can this gateway serve?", use [`/readyz`](#get-readyz).
+Liveness: the process answers. Always public, also when API keys are on. The VM's Docker health check uses it. It is a coroutine on the event loop, so it answers while every worker thread is busy (a full thread pool is not a dead process); it asks no dependency, so a restart loop never follows a slow teacher. For "can this gateway serve?", use [`/readyz`](#get-readyz).
 
 ```json
 {"status": "ok", "version": "0.5.0", "mode": "mock"}
@@ -962,7 +962,7 @@ The response is OpenAI's (`openai.types.CreateEmbeddingResponse`) plus a `ratche
              "all_teacher_cost_usd": 5e-08, "latency_ms": 41.2, "requested_model": "text-embedding-3-small"}}
 ```
 
-Each answered call is one request row (task `embeddings`, served_by `upstream`, route `passthrough`, `stored` 0) priced at the configured model's input price (`EMBEDDING_PRICES` in `ratchet/config.py`, unverified until the day-1 checks pass; a model without a price there is priced as the teacher), so it counts against the key's quota and shows in the cost report and as the `embeddings` row of `/ratchet/stats` `tasks`, with its own cost as its all-teacher baseline. The headline figures (`days`, `totals`, `clients`) leave it out: they describe the distillation, which embeddings are not part of, so a client that embeds once per chat request does not halve its student share. Headers: `X-Ratchet-Served-By: upstream`, `X-Ratchet-Task: embeddings`. The task name `embeddings` is reserved for these rows: a chat, completions or responses request that names it (`X-Ratchet-Task`, `metadata.ratchet_task`, `model: "ratchet/embeddings"`, an Azure deployment) is a 400 `reserved_task`, and no task spec or model alias may use it. A failed call logs nothing; its error is mapped by cause ([Errors](#errors): `upstream_*` codes). The shared mock demo returns at most 131,072 values (inputs x dimensions) per request, about 3 MB of JSON.
+Each answered call is one request row (task `embeddings`, served_by `upstream`, route `passthrough`, `stored` 0) priced at the configured model's input price (`EMBEDDING_PRICES` in `ratchet/config.py`, unverified until the day-1 checks pass; a model without a price there is priced as the teacher), so it counts against the key's quota and shows in the cost report and as the `embeddings` row of `/ratchet/stats` `tasks`, with its own cost as its all-teacher baseline. The headline figures (`days`, `totals`, `clients`) leave it out: they describe the distillation, which embeddings are not part of, so a client that embeds once per chat request does not halve its student share. Headers: `X-Ratchet-Served-By: upstream`, `X-Ratchet-Task: embeddings`. The task name `embeddings` is reserved for these rows: a chat, completions or responses request that names it (`X-Ratchet-Task`, `metadata.ratchet_task`, `model: "ratchet/embeddings"`, an Azure deployment) is a 400 `reserved_task`, and no task spec or model alias may use it. A failed call logs nothing; its error is mapped by cause ([Errors](#errors): `upstream_*` codes). The shared mock-mode gateway returns at most 131,072 values (inputs x dimensions) per request, about 3 MB of JSON.
 
 ```python
 vectors = client.embeddings.create(model="ratchet", input=["refund my order", "reset my password"])
@@ -1136,15 +1136,15 @@ Access level `dashboard` ([Access levels](#access-levels)): open in mock mode; i
   | `tasks` | Only while the hosted student answers (`RATCHET_HOSTED_STUDENT`, FR-12.33): each task it answers with its measured threshold, `{"source-triage": 0.955}`; `version` is then its row (state `hosted`, never in `versions`), and `threshold` is the one task's threshold, or `null` for several. A hosted row that answers no task is reported as `none` |
 
   While `kind` is `hosted_fallback`, the pages say "Nano 30B · hosted" for a student answer (with the threshold, and "not covered by the certificate"), stop saying "your adapter", and hide the live version's golden precision ([SCOUT.md](SCOUT.md#who-answered)).
-- `demo_split` (FR-12.34, [ADR 0147](adr/0147-demo-split.md)): the live demo's split: `enabled`, `rate` (`RATCHET_DEMO_SPLIT`), `audit_rate`, and from the request rows still held `requests` (answered with route `demo_split`), `of_requests` (the requests of the tasks they came from), `share`, `audits` and `agreed` (audits that came back with a verdict, Ultra's answer against the Nano's) with `agreement`, and `cost_usd`, `baseline_usd`, `saved_usd`, `savings_pct` of those requests; null where there is nothing to divide. Counts and dollars only. `student_serving` gains `demo_split` (the rate) while the split is on.
-- `days`: one entry per `requests.day` (see `Ledger.stats_by_day`), including days whose rows retention folded into daily sums (`RATCHET_REQUEST_RETENTION_DAYS`); every figure in `days`, `tasks`, `clients` and `totals` adds those sums back. `/v1/embeddings` calls (route `passthrough`) are left out of `days`, `totals` and `clients`, and counted in `tasks` (the `embeddings` row) and in `cost`. `audit_agreement` is `null` on days without audits. `degraded` and `fallback_teacher` count that day's requests a stand-in answered because the teacher was unavailable (the routes of the same names below). `fallback_served` counts that day's student-served requests whose answer another model than their version's adapter wrote: the hosted fallback student, without `RATCHET_STUDENT_BASE` (v0.5, FR-12.32). They are in `student_share` and `audit_agreement`, but count toward no version's release (days whose rows retention folded report 0). `avg_latency_ms` averages the providers' time (`requests.latency_ms`). `p50_student_ms` (the day's student-served requests) and `p95_ms` (all of them) are nearest-rank percentiles of `requests.wall_ms`, the whole cascade on the gateway's clock (v0.5, FR-12.8): the numbers NFR-1's target (p50 under 1 s for student-served requests) is checked against. Each is `null` for a day without such rows, such as days logged before v0.5. In mock mode the models answer at once, so these are Ratchet's own time, while `avg_latency_ms` is the simulated model latency.
+- `demo_split` (FR-12.34, [ADR 0147](adr/0147-demo-split.md)): the live gateway's split: `enabled`, `rate` (`RATCHET_DEMO_SPLIT`), `audit_rate`, and from the request rows still held `requests` (answered with route `demo_split`), `of_requests` (the requests of the tasks they came from), `share`, `audits` and `agreed` (audits that came back with a verdict, Ultra's answer against the Nano's) with `agreement`, and `cost_usd`, `baseline_usd`, `saved_usd`, `savings_pct` of those requests; null where there is nothing to divide. Counts and dollars only. `student_serving` gains `demo_split` (the rate) while the split is on.
+- `days`: one entry per `requests.day` (see `Ledger.stats_by_day`), including days whose rows retention folded into daily sums (`RATCHET_REQUEST_RETENTION_DAYS`); every figure in `days`, `tasks`, `clients` and `totals` adds those sums back. `/v1/embeddings` calls (route `passthrough`) are left out of `days`, `totals` and `clients`, and counted in `tasks` (the `embeddings` row) and in `cost`. `audit_agreement` is `null` on days without audits. `degraded` and `fallback_teacher` count that day's requests a stand-in answered because the teacher was unavailable (the routes of the same names below). `fallback_served` counts that day's student-served requests whose answer another model than their version's adapter wrote: the hosted fallback student, without `RATCHET_STUDENT_BASE` (v0.5, FR-12.32). They are in `student_share` and `audit_agreement`, but count toward no version's release (days whose rows retention folded report 0). `avg_latency_ms` averages the providers' time (`requests.latency_ms`). `p50_student_ms` (the day's student-served requests) and `p95_ms` (all of them) are nearest-rank percentiles of `requests.wall_ms`, the whole cascade on the gateway's clock (v0.5, FR-12.8): the numbers NFR-1's target (p50 under 1 s for student-served requests) is checked against. Each is `null` for a day without such rows, such as days logged before v0.5. In mock mode the models answer at once, so these are Ratchet's own time, while `avg_latency_ms` is the mock model latency.
 - `tasks`: one entry per task name over all days, busiest first (`Ledger.stats_by_task`). `student_share` and `escalation_rate` are shares of that task's requests; `savings_pct = 1 − cost_usd / baseline_usd`. Pinned tasks always show `student_share` 0 and `savings_pct` 0. `pinned` is true for tasks that always go to the teacher and are never trained on (`research-plan`, `research-write`); the dashboard's **By task** table shows them as "pinned to teacher". `routes` counts the task's requests by how they were served (the ledger's `requests.route`), most frequent first, and adds up to `requests`:
 
   | Route | Served by | Why |
   |---|---|---|
   | `student` | student | Its confidence reached the version's threshold (and, for `n` > 1 choices, at least `n` samples agreed) |
   | `confidence` | teacher | The student was unsure (below the threshold) |
-  | `demo_split` | student | The live demo's split (`RATCHET_DEMO_SPLIT`, FR-12.34) picked this request for the hosted Nano at random, not by confidence; the answer names the Nano and no version, is audited at `RATCHET_DEMO_SPLIT_AUDIT` and counts in no release |
+  | `demo_split` | student | The live gateway's split (`RATCHET_DEMO_SPLIT`, FR-12.34) picked this request for the hosted Nano at random, not by confidence; the answer names the Nano and no version, is audited at `RATCHET_DEMO_SPLIT_AUDIT` and counts in no release |
   | `cold_start` | teacher | No version serves yet (no live version, and the canary was not picked) |
   | `pinned` | teacher | A pinned task (by its spec, or at runtime by an operator: [Admin](#admin)); before v0.5, also a request with a part only the teacher reads (now route `ineligible:content_type`) |
   | `student_error` | teacher | The student call failed (timeout, connection error, an error status, a lost adapter) |
@@ -1254,7 +1254,7 @@ Prometheus metrics in the text exposition format 0.0.4 (`Content-Type: text/plai
 | `ratchet_request_seconds` | histogram | `served_by` | Wall-clock time per request (`requests.wall_ms` for answered ones; `none`: until the error) |
 | `ratchet_upstream_requests_total` | counter | `upstream`, `outcome` | Model calls: `upstream` is `teacher`, `fallback_teacher`, `student`, `shadow`, `audit` or `arbitration`; `outcome` is `ok`, `error`, `timeout` or `circuit_open` (refused by the breaker, no call made) |
 | `ratchet_upstream_seconds` | histogram | `upstream` | Time per model call made, the provider's retries included |
-| `ratchet_cost_usd_total` | counter | `client` | US dollars spent, failed requests' spend included (per-token prices; simulated in mock mode) |
+| `ratchet_cost_usd_total` | counter | `client` | US dollars spent, failed requests' spend included (per-token prices; mock in mock mode) |
 | `ratchet_failed_cost_usd_total` | counter | `client` | What requests that failed without an answer spent (the student's samples before a teacher failure); also in `ratchet_cost_usd_total` and in `/ratchet/stats`' `totals.failed_cost_usd` |
 | `ratchet_baseline_usd_total` | counter | `client` | What the answered requests would have cost with the teacher alone |
 | `ratchet_escalations_total` | counter | `task` | Requests the student tried and the teacher answered |
@@ -1274,7 +1274,7 @@ Prometheus metrics in the text exposition format 0.0.4 (`Content-Type: text/plai
 | `ratchet_inflight_requests` | gauge | | Chat requests in flight at the scrape; `RATCHET_MAX_INFLIGHT` refuses past it with a 503 ([Limits and headers](#limits-and-headers)) |
 | `ratchet_info` | gauge | `version`, `mode` | Always 1 |
 
-Label values stay a small set: `task` is a registered task's name, `other` for a name the registry does not hold, or `none` before a request named one; `client` is a `RATCHET_API_KEYS` name, `none` (no key: an open gateway, Scout) or `other`. Counters count from the start of the process (a demo reset keeps them); use `rate()` or `increase()`. Validation 400s are counted here (`ratchet_requests_total{status="400"}`, `ratchet_rejections_total`) and nowhere else. Alert examples are in [RUNBOOK.md](RUNBOOK.md#alerts).
+Label values stay a small set: `task` is a registered task's name, `other` for a name the registry does not hold, or `none` before a request named one; `client` is a `RATCHET_API_KEYS` name, `none` (no key: an open gateway, Scout) or `other`. Counters count from the start of the process (a test run reset keeps them); use `rate()` or `increase()`. Validation 400s are counted here (`ratchet_requests_total{status="400"}`, `ratchet_rejections_total`) and nowhere else. Alert examples are in [RUNBOOK.md](RUNBOOK.md#alerts).
 
 ```yaml
 scrape_configs:
@@ -1286,7 +1286,7 @@ scrape_configs:
 
 ## GET `/ratchet/kpis?days=N`
 
-PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, computed from the ledger by `ratchet/kpis.py` the same way as in the simulator and in CI ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). Access level `dashboard`, like `/ratchet/stats`, whose `kpis` block is this report. SM-1 to SM-3 and NFR-1 cover the last `days` ledger days with traffic (1 to 3,650, default `RATCHET_KPI_WINDOW_DAYS`, 3; anything else is **400**, a non-number **422**); SM-4 and SM-5 cover the whole history. An example from the mock demo (simulation numbers from mock models, `simulated: true`):
+PRD §8.1's success metrics (SM-1 to SM-5) and NFR-1's latency target, computed from the ledger by `ratchet/kpis.py` the same way as in the simulator and in CI ([ADR 0083](adr/0083-success-metrics-from-the-ledger.md)). Access level `dashboard`, like `/ratchet/stats`, whose `kpis` block is this report. SM-1 to SM-3 and NFR-1 cover the last `days` ledger days with traffic (1 to 3,650, default `RATCHET_KPI_WINDOW_DAYS`, 3; anything else is **400**, a non-number **422**); SM-4 and SM-5 cover the whole history. An example from the mock-mode gateway (numbers from mock models, `simulated: true`):
 
 ```json
 {
@@ -1436,7 +1436,7 @@ What a version's golden evals certify about the answers it serves (FR-16.3, [ADR
 }
 ```
 
-(Mock gateway after five simulated days of mixed traffic; simulation numbers from mock models, rounded here.)
+(Mock gateway after five mock days of mixed traffic; numbers from mock models, rounded here.)
 
 - `status`: `certified` or `not certified` from the latest certificate (`current`'s when the version was re-scored, else `training`'s); `suspended` while a drift alarm is open for the version (FR-16.6): its own traffic stopped looking like its earlier traffic, so the golden rows no longer stand for what it serves. The certificate is still shown. An alarm stays open for the version's life; the next version gets new streams. `no certificate` for a version evaluated before v0.5 or by an evaluator that writes none (also under an alarm).
 - `training`: from the signed BOM's `manifest.eval`, written once at training time (INV-14); `null` without a BOM. `current`: from the version's eval, which the nightly champion re-score overwrites for the live version (with `rechecked_day`, `null` until then). Each holds `certificate`, `frontier`, `per_task`, `threshold`, `calibration` and `paired` (`null` when that eval lacks one).
@@ -1495,7 +1495,7 @@ curl -s "localhost:8000/ratchet/versions/3/proof?split=train" -H "Authorization:
 }
 ```
 
-(Mock gateway after four simulated days; hashes shortened here.)
+(Mock gateway after four mock days; hashes shortened here.)
 
 - `result` is `included` or `absent`. `value` (only when included) is the example's leaf value; anyone holding the example's stored answer, teacher, license and redaction count can recompute it.
 - `proof.siblings` are the sibling hashes from the root down (about log2 of `size`); `proof.terminal` is where the key's path ends: `{"leaf": {key, value}}` (the key itself when included; for an absent key, the one example that shares its path, whose key and value hashes the proof therefore discloses) or `{"empty": true}`.
@@ -1516,7 +1516,7 @@ The held-out certificate: the golden set's leaves, and for each golden key a non
 }
 ```
 
-About 113 KB for 133 golden rows against 1,288 training leaves (mock gateway after four simulated days). `held_out` is the gateway's own check; a verifier ignores it and checks the proofs.
+About 113 KB for 133 golden rows against 1,288 training leaves (mock gateway after four mock days). `held_out` is the gateway's own check; a verifier ignores it and checks the proofs.
 
 When the stored leaves no longer rebuild the root and size the BOM signs (the ledger file was edited outside Ratchet: SQLite's triggers refuse any edit through its API), both endpoints answer **500** and the gateway writes one `integrity` event per version and split; it never serves a proof that would fail against the signed root.
 
@@ -1557,7 +1557,7 @@ The label-free drift monitor (FR-16.6, [ADR 0032](adr/0032-label-free-drift-alar
 }
 ```
 
-(Mock gateway after six simulated days of tickets with a product launch on day 5; simulation numbers from mock models, one stream left out.)
+(Mock gateway after six mock days of tickets with a product launch on day 5; numbers from mock models, one stream left out.)
 
 - `enabled`: false when `RATCHET_DRIFT_ALARM=0`; then `threshold`, `false_alarm_bound` and `family_bound` are `null`, the counts 0 and `streams` empty.
 - `false_alarm_bound`: 1 / `threshold`, for one stream. `family_bound`: min(1, K / `threshold`) with K = `monitored`, the chance that any stream the monitor holds ever alarms on unchanged traffic. It grows with every version and task; it is reported, not hidden.
@@ -1602,7 +1602,7 @@ Access level `dashboard` and read-only, like `/ratchet/stats` ([Access levels](#
 }
 ```
 
-(Mock gateway, four days of tickets, the mock teacher changing 15% of labels from day 3 (`POST /ratchet/demo/teacher-drift`); simulation numbers from mock models, rounded here.)
+(Mock gateway, four days of tickets, the mock teacher changing 15% of labels from day 3 (`POST /ratchet/demo/teacher-drift`); numbers from mock models, rounded here.)
 
 - `enabled`: `RATCHET_TEACHER_WATCH`. When 0 the checks are still recorded and reported, but nothing acts on them.
 - `epoch`, `epoch_started_day`: the check epoch (1 until the first ack or model change) and the ledger day it started. Each stored request gives at most one check per epoch: its first re-test. That is what keeps the e-value valid (comparing one stored label with several re-tests makes the checks dependent).
@@ -1661,13 +1661,13 @@ curl -s 'localhost:8000/ratchet/redact?style=numbered' -H 'content-type: applica
 
 ## Cost
 
-Utilization-aware cost accounting ([ADR 0023](adr/0023-utilization-aware-cost-accounting.md), formulas in [ARCHITECTURE.md](ARCHITECTURE.md#7-cost-accounting)). The self-hosted student endpoint and the training jobs bill GPU-hours while they run; the ledger records when they ran (`compute_intervals`) and the report prices them. Every list price is unverified until the day-1 checks pass; the report says so (`prices.label`) until `RATCHET_PRICES_VERIFIED=1`. Numbers from the mock demo are simulation output.
+Utilization-aware cost accounting ([ADR 0023](adr/0023-utilization-aware-cost-accounting.md), formulas in [ARCHITECTURE.md](ARCHITECTURE.md#7-cost-accounting)). The self-hosted student endpoint and the training jobs bill GPU-hours while they run; the ledger records when they ran (`compute_intervals`) and the report prices them. Every list price is unverified until the day-1 checks pass; the report says so (`prices.label`) until `RATCHET_PRICES_VERIFIED=1`. Numbers from the mock-mode gateway are mock-model output.
 
 ### GET `/ratchet/cost?days=N`
 
 The example's GPU rate of $1.55 per hour is the setting's default, not Nebius's listed $1.35 (see [CONFIGURATION.md](CONFIGURATION.md#cost-accounting)); every price here is unverified.
 
-The cost report for every ledger day, or for the last `days` days (1 to 36,500; anything else is **400**, a non-number **422**). Access level `dashboard`, like `/ratchet/stats`. `python -m ratchet.cost report [--days N] [--json]` prints the same report. An example from the mock demo (simulation numbers, nine days of 1,500 requests with the endpoint up 24 hours a day):
+The cost report for every ledger day, or for the last `days` days (1 to 36,500; anything else is **400**, a non-number **422**). Access level `dashboard`, like `/ratchet/stats`. `python -m ratchet.cost report [--days N] [--json]` prints the same report. An example from the mock-mode gateway (numbers from mock models, nine days of 1,500 requests with the endpoint up 24 hours a day):
 
 ```json
 {
@@ -1709,10 +1709,10 @@ The cost report for every ledger day, or for the last `days` days (1 to 36,500; 
 }
 ```
 
-- `views.per_token` is what every other savings figure uses; `views.gpu_hours` prices the student by the GPU-hours paid: teacher spend + endpoint hours + training hours (each interval at the rate it was recorded at) + the student's per-token spend in hours (live ledger) or days (simulation) with no recorded endpoint uptime (`hosted_student_usd`, `student_served_off_endpoint` answers: the hosted fallback served, or nobody recorded the endpoint). Savings can be negative and are never clamped; `savings_pct` is `null` without a baseline. `headline` is the view `RATCHET_STUDENT_COST_MODEL` picks.
+- `views.per_token` is what every other savings figure uses; `views.gpu_hours` prices the student by the GPU-hours paid: teacher spend + endpoint hours + training hours (each interval at the rate it was recorded at) + the student's per-token spend in hours (live ledger) or days (mock models) with no recorded endpoint uptime (`hosted_student_usd`, `student_served_off_endpoint` answers: the hosted fallback served, or nobody recorded the endpoint). Savings can be negative and are never clamped; `savings_pct` is `null` without a baseline. `headline` is the view `RATCHET_STUDENT_COST_MODEL` picks.
 - `avoided_teacher_usd_per_student_request` is the teacher spend a student answer saves on average (its all-teacher baseline less the teacher calls it still made); `break_even_student_requests_per_gpu_hour` is `endpoint_usd_per_hour` divided by it, so it counts student answers per hour of the whole endpoint. `endpoint_usd_per_hour` is the endpoint's GPU cost in the window over its hours (each interval at the rate it was recorded at, per-GPU price × GPUs), the same rate the GPU-hour view bills; the configured rate while no uptime is recorded. Break-even prices the endpoint's hours alone: training jobs can still leave the window at a loss above it, and the explanation then says so. `null` until the student has served, and when its answers save nothing.
 - `hosted_fallback_usd_per_request` is what the hosted fallback student (`RATCHET_FALLBACK_STUDENT`, per token) would bill for all the student calls, per student answer; `self_host_beats_hosted_above_requests_per_hour` (`endpoint_usd_per_hour` / that price) is the volume above which the endpoint is cheaper per answer. It compares price per answer only: the hosted model is untuned, so it may serve fewer requests than the tuned student and send more to the teacher. Every `hosted_fallback` explanation says so; compare the student's share of requests over a day on each before switching.
-- `observed_student_requests_per_endpoint_hour` counts student answers in buckets when the endpoint had uptime over its hours; `idle_hours` are endpoint hours in buckets when no request reached the student. `idle_granularity` names the bucket: `hour` on a live ledger (requests and uptime share the wall clock; an hour with any uptime is credited with all its answers), `day` on the simulator's synthetic clock (hours idle inside a busy simulated day are not counted).
+- `observed_student_requests_per_endpoint_hour` counts student answers in buckets when the endpoint had uptime over its hours; `idle_hours` are endpoint hours in buckets when no request reached the student. `idle_granularity` names the bucket: `hour` on a live ledger (requests and uptime share the wall clock; an hour with any uptime is credited with all its answers), `day` on the simulator's synthetic clock (hours idle inside a busy mock day are not counted).
 - `recommendation` is `self_host`, `hosted_fallback`, `scale_to_zero` or `insufficient_data` (rules in [ARCHITECTURE.md](ARCHITECTURE.md#the-report-costpy)), with a plain-English `explanation`. It says separately whether the observed volume covers the endpoint's hours and whether the window lost money by GPU-hours: between break-even and the crossover, `hosted_fallback` comes with "Self-hosting costs less than the teacher, but the hosted fallback would cost less per answer", and it never says "pays" when `views.gpu_hours.savings_usd` is negative.
 - `split_unknown_requests`: rows from before v0.5 have no student/teacher split; their whole cost counts as teacher spend in the GPU-hour view (`split_unknown_usd`), and a warning says so. `warnings` also names a training job open for more than 12 hours, which counts up to now until it is closed.
 - `daily`: one row per day with requests or compute, the latest 731 days at most (`daily_truncated`); the totals always cover the whole window.
@@ -1724,23 +1724,23 @@ Records the self-hosted student endpoint going up or down, as `python -m ratchet
 
 ```bash
 curl -s localhost:8000/ratchet/cost/endpoint -H "Authorization: Bearer $ADMIN_KEY" -H 'content-type: application/json' \
-  -d '{"state": "up", "usd_per_hour": 1.55, "gpus": 1, "note": "recording the demo video"}'
+  -d '{"state": "up", "usd_per_hour": 1.55, "gpus": 1, "note": "recording a speed test"}'
 ```
 
 ```json
 {"state": "up", "changed": true,
  "interval": {"id": 3, "kind": "student_endpoint", "start_ts": 1792400000.0, "end_ts": null, "usd_per_hour": 1.55, "gpus": 1,
-              "version": null, "source": "api", "note": "recording the demo video"},
+              "version": null, "source": "api", "note": "recording a speed test"},
  "summary": "student endpoint up at 2026-10-20 10:13:20 UTC: 1 GPU at $1.55 per GPU-hour (interval 3)"}
 ```
 
 - `state` is required (`up` or `down`); `usd_per_hour` (per GPU, 0 to 1,000; default `RATCHET_STUDENT_GPU_USD_PER_HOUR`), `gpus` (0 to 1,024; default `RATCHET_STUDENT_GPUS`) and `note` (at most 200 characters, PII redacted) are optional. Any other key, or a bad value, is **400**.
 - `up` while the endpoint is up returns its open interval with `changed: false`; `down` while it is down returns `interval: null`, `changed: false`. `down` closes every open endpoint interval. A change writes an `endpoint` event naming the source and the admin's name, never the key.
-- In mock mode the time is on the demo's synthetic clock (the current simulated day at the wall clock's time of day), and the shared demo holds at most 200 such records (**409**; a reset clears them).
+- In mock mode the time is on the live gateway's synthetic clock (the current mock day at the wall clock's time of day), and the shared mock-mode gateway holds at most 200 such records (**409**; a reset clears them).
 
 ## Ledger replay
 
-The ledger time machine ([ADR 0028](adr/0028-designed-propensity-replay.md), FR-16.5): what one version's logged traffic would have looked like at another threshold or audit rate. Ratchet designs its own labelling, so every label's probability is logged (`requests.label_p`: 1.0 for a request the student answered and escalated, the audit rate for an answer it served), and precision is estimated at any threshold with weights 1 / `label_p` (Hajek), including thresholds below the live one. Both endpoints are read-only, access level `dashboard` like `/ratchet/stats` ([Access levels](#access-levels)) (aggregates only, never request text), in both modes. Numbers from the mock demo are simulation output and say so (`label`).
+The ledger time machine ([ADR 0028](adr/0028-designed-propensity-replay.md), FR-16.5): what one version's logged traffic would have looked like at another threshold or audit rate. Ratchet designs its own labelling, so every label's probability is logged (`requests.label_p`: 1.0 for a request the student answered and escalated, the audit rate for an answer it served), and precision is estimated at any threshold with weights 1 / `label_p` (Hajek), including thresholds below the live one. Both endpoints are read-only, access level `dashboard` like `/ratchet/stats` ([Access levels](#access-levels)) (aggregates only, never request text), in both modes. Numbers from the mock-mode gateway are mock-model output and say so (`label`).
 
 - `version`: one version id in ASCII digits (default: the live version; **400** `no live version: name one with ?version=` without one). A version that does not exist is **404**. `version` twice, a list (`1,2`), a word (`all`) or other digits (`²`) is **400**: confidence scales differ between versions, so a replay never pools them.
 - One replay runs at a time: it reads the version's whole history into memory, so a request while another replay runs is **429** with `Retry-After: 1`.
@@ -1750,7 +1750,7 @@ The ledger time machine ([ADR 0028](adr/0028-designed-propensity-replay.md), FR-
 
 ### GET `/ratchet/replay?version=&threshold=&audit_rate=&since_day=&until_day=`
 
-`threshold` is more than 0 and at most 1.01 (serve nothing; **400** otherwise), default: the version's threshold now (`current_threshold`: the one the router holds its answers to, which for the hosted fallback student, in live mode without a student endpoint, is `RATCHET_CONFIDENCE_THRESHOLD`). An example from the mock demo after four simulated days (simulation, mock models):
+`threshold` is more than 0 and at most 1.01 (serve nothing; **400** otherwise), default: the version's threshold now (`current_threshold`: the one the router holds its answers to, which for the hosted fallback student, in live mode without a student endpoint, is `RATCHET_CONFIDENCE_THRESHOLD`). An example from the mock-mode gateway after four mock days (mock models):
 
 ```json
 {
@@ -1774,7 +1774,7 @@ The ledger time machine ([ADR 0028](adr/0028-designed-propensity-replay.md), FR-
 - `n`: requests the version's student answered with the replay's columns logged. `excluded_by` counts the version's other rows: written before the columns (`before_logging`), without a student answer (`no_student_answer`: the call failed or its breaker was open), of a task pinned now (`pinned_now`), or with out-of-range values (`malformed`, a ledger edited outside Ratchet). A request whose escalation failed outright was never logged, so it is not here.
 - `actual`: the cascade's threshold decision as logged (`threshold: null`): each request at the threshold it was logged with, and each audit priced at its logged rate times the request's all-teacher cost (an expected cost, not the audits drawn). Its `served` is exactly the requests the student's confidence served (route `student`); a degraded answer (the student standing in for an unavailable teacher, route `degraded`) is counted as not served and priced as if the teacher had answered it. Arbitration spend is left out, so `cost_usd` can be below the logged cost.
 - `counterfactual` at `threshold` and `audit_rate`: `coverage` is exact (no label needed); `precision` is Hajek's weighted mean of `student_agree` over labelled served requests, null with `precision_reason` when nothing is served, when a served request could never be labelled (audit rate 0: "audit rate was 0: precision above the live threshold cannot be identified") or when none has a label; `interval` is approximate (Wilson at Kish's `n_eff`), not a certificate. `cost_usd` = student spend + the all-teacher cost of every request not served + the audit rate times that of every request served; `baseline_usd` = the all-teacher cost of every request; `savings` = 1 − cost / baseline (per token). A request with no valid answer, one that could not fill its `n` choices (route `n_choices`), or one logged at 1.01 while its task's spec is still changed for the version (the router answers that task with the teacher at any threshold until a night re-scores the version) is never served. Not logged, and so counted as servable: a request for `n` > 1 choices that escalated below the threshold (route `confidence`) whose samples also had fewer than `n` in agreement; at a lower threshold it would escalate on route `n_choices`, so coverage below the logged threshold can be slightly high for such traffic. `student_agree` comes from an audit, or from an escalation the teacher answered under an audit's conditions (one choice, temperature 0, none of the client's `top_p`, `seed`, penalties or `logit_bias`); an escalation under the client's sampling parameters, or for `n` > 1 choices, has no label.
-- `calibrated_baseline`: the ratio `R` of what the teacher really cost to the token formula's estimate (which assumes `RATCHET_TEACHER_REASONING_TOKENS`), on audited answers, with its standard error and an approximate 95% interval; `insufficient` (R = 1) below 30 audited answers. The replay prices unaudited answers at R times the estimate. The mock teacher writes exactly the assumed tokens, so R is about 1 in the demo.
+- `calibrated_baseline`: the ratio `R` of what the teacher really cost to the token formula's estimate (which assumes `RATCHET_TEACHER_REASONING_TOKENS`), on audited answers, with its standard error and an approximate 95% interval; `insufficient` (R = 1) below 30 audited answers. The replay prices unaudited answers at R times the estimate. The mock teacher writes exactly the assumed tokens, so R is about 1 in the live gateway.
 
 ### GET `/ratchet/replay/frontier?version=&target=&audit_rate=&since_day=&until_day=`
 
@@ -1798,13 +1798,13 @@ The ledger time machine ([ADR 0028](adr/0028-designed-propensity-replay.md), FR-
 - `suggested`: the scan goes down `stats.CERT_GRID` from 0.95 and stops at the first threshold whose interval's lower bound is below `target`; it returns the last one that passed, or null when 0.95 already fails. It is advice: the interval is approximate and computed on the traffic being looked at, so it is not a certificate, and nothing applies it. Thresholds change only through Night School's held-out calibration ([ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)).
 - `money_left_on_table`: `{threshold, current_threshold, savings, usd}`, what serving at the suggested threshold would have saved over the current one, when the suggestion is lower; null otherwise (above, the suggestion says the current threshold is not supported at the target by this approximate interval).
 
-`python -m ratchet.replay --db PATH [--version V] [--sweep 0.3:0.95:0.05] [--audit-rate A] [--target 0.97] [--since-day D] [--until-day D] [--json]` prints the frontier report as one table per version (labelled as simulation when the simulator wrote the ledger); exit 2 on bad input. `python -m sim.simulate --db PATH` keeps a simulated run's ledger in a new file for it.
+`python -m ratchet.replay --db PATH [--version V] [--sweep 0.3:0.95:0.05] [--audit-rate A] [--target 0.97] [--since-day D] [--until-day D] [--json]` prints the frontier report as one table per version (labelled as mock-mode run when the simulator wrote the ledger); exit 2 on bad input. `python -m sim.simulate --db PATH` keeps a mock run's ledger in a new file for it.
 
 ## Savings receipts
 
-Verified savings receipts ([ADR 0029](adr/0029-verified-savings-receipts.md), FR-15.5): for each ledger day, one receipt for the whole gateway and one per API client, sealed once the day is over and never changed (invariant 17). A receipt states what the day cost and saved, with the all-teacher baseline of the answers the student served **calibrated on audited teacher bills** and a one-sided 95% lower bound, and bills only on that bound. It is an RFC 9162 Merkle tree over each request's metadata (never request text; the client by its key's name), signed with the BOM key (`/ratchet/bom/public-key`) and chained to the same client's previous receipt. Every amount is whole nano-USD (1e-9 USD); numbers that are not whole are decimal strings, so the signed JSON has no floats. Who may read what is under [Authentication](#authentication). In the mock demo the numbers are simulation output and say so (`label`).
+Verified savings receipts ([ADR 0029](adr/0029-verified-savings-receipts.md), FR-15.5): for each ledger day, one receipt for the whole gateway and one per API client, sealed once the day is over and never changed (invariant 17). A receipt states what the day cost and saved, with the all-teacher baseline of the answers the student served **calibrated on audited teacher bills** and a one-sided 95% lower bound, and bills only on that bound. It is an RFC 9162 Merkle tree over each request's metadata (never request text; the client by its key's name), signed with the BOM key (`/ratchet/bom/public-key`) and chained to the same client's previous receipt. Every amount is whole nano-USD (1e-9 USD); numbers that are not whole are decimal strings, so the signed JSON has no floats. Who may read what is under [Authentication](#authentication). In the mock-mode gateway the numbers are mock-model output and say so (`label`).
 
-A day is sealed when it is over and someone asks: the mock demo after each simulated night, any of these endpoints (lazily, every unsealed day up to the one asked for, oldest first), `python -m ratchet.live seal` from cron ([RUNBOOK](RUNBOOK.md#savings-receipts)) or `python -m ratchet.receipt seal --db`. On a live ledger a day is over 5 minutes after it ended. A day that has not ended is **409**; a day on which the client sent no request (nobody did, for the gateway's receipt) is **404**; a `period` outside 0 to 10,000,000 is **400**.
+A day is sealed when it is over and someone asks: the mock-mode gateway after each mock night, any of these endpoints (lazily, every unsealed day up to the one asked for, oldest first), `python -m ratchet.live seal` from cron ([RUNBOOK](RUNBOOK.md#savings-receipts)) or `python -m ratchet.receipt seal --db`. On a live ledger a day is over 5 minutes after it ended. A day that has not ended is **409**; a day on which the client sent no request (nobody did, for the gateway's receipt) is **404**; a `period` outside 0 to 10,000,000 is **400**.
 
 ### GET `/ratchet/receipts`
 
@@ -1813,11 +1813,11 @@ A day is sealed when it is over and someone asks: the mock demo after each simul
  "sealed_through": 2, "public_key": "YLHq1TAo…", "key_id": "9d2479f21890a44f", "label": "live traffic"}
 ```
 
-Every sealed receipt the caller may read, by day, after sealing every day that has ended: an admin (or the open mock demo) sees the gateway's (`global`) and every client's; an API key sees only its own (`global: false`). `sealed_through` is the last day that has ended; `public_key` is null when receipts are unsigned.
+Every sealed receipt the caller may read, by day, after sealing every day that has ended: an admin (or the open mock-mode gateway) sees the gateway's (`global`) and every client's; an API key sees only its own (`global: false`). `sealed_through` is the last day that has ended; `public_key` is null when receipts are unsigned.
 
 ### GET `/ratchet/receipts/{period}?client=`
 
-The signed document of day `period`: the gateway's, or `client`'s for an admin; an API key always gets its own (`?client=` naming another client is **403**). An example from the mock demo with `RATCHET_MOCK_TEACHER_REASONING_MEAN=420`, after four simulated days (simulation, mock models; shortened):
+The signed document of day `period`: the gateway's, or `client`'s for an admin; an API key always gets its own (`?client=` naming another client is **403**). An example from the mock-mode gateway with `RATCHET_MOCK_TEACHER_REASONING_MEAN=420`, after four mock days (mock-mode run, mock models; shortened):
 
 ```json
 {
@@ -2077,13 +2077,13 @@ python -m ratchet.admin pin ticket-triage --reason "..."                # and un
 python -m ratchet.admin audit-log [--limit 50] [--json]
 ```
 
-## Demo controls (mock mode only)
+## Test controls (mock mode only)
 
 All of these return **403** `demo controls are only available in mock mode` when `RATCHET_MODE=live`.
 
-The mock demo is shared by every visitor, so the controls protect themselves:
+The mock-mode gateway is shared by every visitor, so the controls protect themselves:
 
-- **One demo action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next`, `student-outage` and `teacher-drift` do not take the lock.)
+- **One mock-mode action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next`, `student-outage` and `teacher-drift` do not take the lock.)
 - **Reset cooldown.** `reset` returns **429** `the demo was reset less than 30 seconds ago` within 30 seconds (`RESET_COOLDOWN_S`) of the last successful reset.
 
 The dashboard shows these messages under its buttons.
@@ -2094,7 +2094,7 @@ Three additive blocks, content-free, under `/ratchet/stats`'s access and scrubbi
 
 | Block | Fields |
 |---|---|
-| `links` | `live`, `sim`: `RATCHET_LIVE_URL` and `RATCHET_SIM_URL` as set, else `null`. The menu link to the simulation and the footer read them |
+| `links` | `live`, `sim`: `RATCHET_LIVE_URL` and `RATCHET_SIM_URL` as set, else `null`. The menu link to the mock-mode gateway and the footer read them |
 | `demo` | `surface` (`simulation` in mock mode, else `live`), `controls` and `shared` (true in mock mode), `max_days`, `max_requests`, `idle_reset_s`, `actions_per_minute` (`null` when off), `auto_resets` (since the process started), `last_reset_at` (epoch seconds or `null`) |
 | `upstream` | `recording` (true in live mode), `since` (epoch seconds the record started, `null` in mock mode), `token_factory` (whether `RATCHET_TEACHER_BASE` is Token Factory's host, which decides if a page may say "Live on Nebius Token Factory"), `calls`: the newest call per role called since start, in the order teacher, fallback_teacher, student, tavily |
 
@@ -2102,14 +2102,14 @@ A `calls` item: `role`, `host` (`token_factory`, `student_endpoint`, `tavily` or
 
 ### POST `/ratchet/demo/day?requests=1500&workload=tickets`
 
-Advances `Ledger.day` by one and sends `requests` simulated requests through the cascade, calling `gate.tick()` every `requests/10`. Then it runs one night (`run_night`). `requests` is clamped to 100–5000.
+Advances `Ledger.day` by one and sends `requests` mock requests through the cascade, calling `gate.tick()` every `requests/10`. Then it runs one night (`run_night`). `requests` is clamped to 100–5000.
 
 | Query param | Default | Values |
 |---|---|---|
 | `requests` | `1500` | Requests for the day (clamped to 100–5000) |
 | `workload` | `tickets` | `tickets` (support tickets), `research` (Scout's triage and reader calls), `mixed` (half each), `schema` (structured outputs: `response_format` json_schema requests over three schemas under the tasks `review-rating`, `ticket-route` and `meeting-extract`, and from day 5 `warranty-claim`, with nested records) or `tools` (support requests sent with the mock tool catalogue under the task `order-support`). Anything else returns **400** `workload must be one of [...]`; `schema` and `tools` return **400** under `RATCHET_MOCK_STRICT=1`, before the day starts, since only the generic mock world answers them |
 
-With `workload=tickets` the night trains on `ticket-triage` only, as in v0.1. With any other workload it trains on every stored task. Each workload has its own seeded stream, so the streams do not affect each other. The dashboard's **Traffic** selector sets `workload` (default there: `mixed`). A `tools` workload request is a tool request: the mock teacher answers it alone with a tool call, nothing is stored, and the student never learns it ([ADR 0043](adr/0043-tool-calls-teacher-only-by-default.md)). The numbers are simulation output from mock models, and the response says so (`simulation: true`).
+With `workload=tickets` the night trains on `ticket-triage` only, as in v0.1. With any other workload it trains on every stored task. Each workload has its own seeded stream, so the streams do not affect each other. The dashboard's **Traffic** selector sets `workload` (default there: `mixed`). A `tools` workload request is a tool request: the mock teacher answers it alone with a tool call, nothing is stored, and the student never learns it ([ADR 0043](adr/0043-tool-calls-teacher-only-by-default.md)). The numbers are mock-model output from mock models, and the response says so (`simulation: true`).
 
 ```json
 {"day": 4, "workload": "tickets", "simulation": true, "auto_reset": null,
@@ -2119,7 +2119,7 @@ With `workload=tickets` the night trains on `ticket-triage` only, as in v0.1. Wi
 
 `night.reason` is one of `admitted`, `rejected`, `release in flight`, `not enough new data`, `no golden set`.
 
-`auto_reset` is `null`, or `"max_days"` or `"max_requests"` when the shared simulation reached `RATCHET_DEMO_MAX_DAYS` or `RATCHET_DEMO_MAX_REQUESTS`: it started over (a fresh ledger, the warm-up again, one `demo_reset` event) before this day ran, so `day` is then the first day after the warm-up. On a gateway with `RATCHET_DEMO_RPM` set, every non-GET `/ratchet/demo/*` call takes a token from the caller's IP bucket, and an empty bucket answers **429** `the shared simulation takes N actions a minute per visitor; try again in S s` with `Retry-After`. Live mode answers 403 before any of this.
+`auto_reset` is `null`, or `"max_days"` or `"max_requests"` when the shared mock-mode gateway reached `RATCHET_DEMO_MAX_DAYS` or `RATCHET_DEMO_MAX_REQUESTS`: it started over (a fresh ledger, the warm-up again, one `demo_reset` event) before this day ran, so `day` is then the first day after the warm-up. On a gateway with `RATCHET_DEMO_RPM` set, every non-GET `/ratchet/demo/*` call takes a token from the caller's IP bucket, and an empty bucket answers **429** `the shared simulation takes N actions a minute per visitor; try again in S s` with `Retry-After`. Live mode answers 403 before any of this.
 
 ### POST `/ratchet/demo/break-next`
 
@@ -2158,7 +2158,7 @@ Fault injection for the [teacher watch](#teacher-watch): from now on the mock te
 {"noise": 0.15}
 ```
 
-Then run days: re-tests and Night School's probes start to disagree with the stored labels, contested labels are adjudicated each night (`teacher_watch` events), and once the e-value reaches 100 a `teacher_drift` event freezes Night School (`skip` events) until `POST /ratchet/teacher/ack`. At 0.15 that takes a few days of mock traffic, because a student that serves most requests leaves few re-tests to the teacher (simulation).
+Then run days: re-tests and Night School's probes start to disagree with the stored labels, contested labels are adjudicated each night (`teacher_watch` events), and once the e-value reaches 100 a `teacher_drift` event freezes Night School (`skip` events) until `POST /ratchet/teacher/ack`. At 0.15 that takes a few days of mock traffic, because a student that serves most requests leaves few re-tests to the teacher (mock models).
 
 ### POST `/ratchet/demo/reset`
 
@@ -2172,7 +2172,7 @@ Rebuilds the runtime: new in-memory ledger, new mock fleet, all three traffic st
 
 ## Scout endpoints
 
-Scout is the multi-agent research demo. The event contract (every field of `start`, `step`, `done` and `error` events) is in [SCOUT.md](SCOUT.md#event-objects-sse-data-payloads-in-order). This section covers the HTTP side.
+Scout is the multi-agent research live gateway. The event contract (every field of `start`, `step`, `done` and `error` events) is in [SCOUT.md](SCOUT.md#event-objects-sse-data-payloads-in-order). This section covers the HTTP side.
 
 Before a run starts, both run endpoints check, in this order:
 
@@ -2190,7 +2190,7 @@ A run that passes these checks counts against the per-IP hourly limit and the da
 
 **Search unavailable.** A search that fails (any HTTP or transport error) or that the Tavily credit meter refuses does not end the run: the searcher step carries `detail.unavailable` (the reason), no more queries are made, triage and reader run on whatever earlier queries found, and the writer answers (without sources if nothing was found). The `done` event says so in `search`. The planner, pinned to the teacher, has called Token Factory before any search, so every admitted run makes a runtime Token Factory call.
 
-The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when `RATCHET_TRUST_PROXY=1` ([CONFIGURATION.md](CONFIGURATION.md#scout-the-multi-agent-demo)).
+The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when `RATCHET_TRUST_PROXY=1` ([CONFIGURATION.md](CONFIGURATION.md#scout-the-multi-agent-research-tool)).
 
 ### GET `/scout/examples`
 
@@ -2240,7 +2240,7 @@ One recording: `{"id", "schema": "ratchet.scout-recording/v1", "recorded_at", "h
 | `tavily` | `true` when live search (Tavily) is configured |
 | `fallback_student` | v0.5: the hosted fallback's model id, as in `/ratchet/stats`. A `step` whose `served_by` is `student` and whose `model` is this id came from the untuned hosted Nano, not our adapter |
 | `student_serving` | v0.5: the same object as in [`/ratchet/stats`](#get-ratchetstats), so the Scout page labels each call without a stats call |
-| `live_check` | The demo watchdog's flag (FR-11.33, [ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md)): `{"state", "since", "checked", "search"}`. `state` is `failing` only after the watchdog's hourly probe, through the public URL, got a teacher-side or gateway-side failure within `RATCHET_WATCH_FLAG_MAX_AGE_S`; `ok`; `stale` (the watchdog stopped); `unknown` (no row yet); `off` (mock mode). Never an error code or text, so a keyword monitor can match `"state":"failing"` and a page can show a banner |
+| `live_check` | The live gateway watchdog's flag (FR-11.33, [ADR 0132](adr/0132-demo-watchdog-and-rollback-first-updates.md)): `{"state", "since", "checked", "search"}`. `state` is `failing` only after the watchdog's hourly probe, through the public URL, got a teacher-side or gateway-side failure within `RATCHET_WATCH_FLAG_MAX_AGE_S`; `ok`; `stale` (the watchdog stopped); `unknown` (no row yet); `off` (mock mode). Never an error code or text, so a keyword monitor can match `"state":"failing"` and a page can show a banner |
 | `public_runs_left_today` | Runs the public can still start today: the run cap minus the judges' reserve, minus public runs and judge runs past the reserve; `null` without a cap (mock mode) |
 | `public_budget_left_usd` | The same for spend; `null` without a budget. A public run can be refused a little earlier, while a judge budget is reserved: the largest finished run today is kept as a margin |
 | `judge_runs_today` | Judge runs admitted today |
@@ -2274,7 +2274,7 @@ Server-Sent Events (`text/event-stream`). Each event is one `data:` line holding
 
 This endpoint **always answers HTTP 200**, because the browser's `EventSource` cannot read status codes. Any failure, before or during the run, arrives as a single `error` event, which ends the stream.
 
-In mock mode the run waits `RATCHET_MOCK_PACE` × each call's simulated latency, so the page shows agents working.
+In mock mode the run waits `RATCHET_MOCK_PACE` × each call's mock latency, so the page shows agents working.
 
 ```bash
 curl -sN "http://localhost:8000/scout/stream?q=What%20is%20LoRA%20fine-tuning%3F"

@@ -33,7 +33,7 @@ The gateway in [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/m
 
 1. **Build `Settings`.** `Settings()` in [`ratchet/config.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/config.py) reads every `RATCHET_*` variable (and `NEBIUS_API_KEY`) from the environment; keyword arguments override them, for example `Settings(mode="live")`. `Settings()` itself does not validate. `config.load()` returns the settings plus a list of variables that did not parse, and `config.check(settings)` lists every problem the gateway's startup would find, errors first. Run the check before you spend money.
 
-2. **Open the ledger.** For live use, open it the way the gateway and `python -m ratchet.live` do: `Ledger(s.db_path, s.golden_fraction, auto_day=True, sync=s.ledger_sync())`. `auto_day=True` numbers days from the first logged request on the wall clock; without it the caller sets `ledger.day`, as simulations do. Then load the task registry with `taskspec.install(ledger, s.tasks_file)`: the built-in tasks, then `RATCHET_TASKS_FILE`'s, then the API and auto tasks stored in the ledger.
+2. **Open the ledger.** For live use, open it the way the gateway and `python -m ratchet.live` do: `Ledger(s.db_path, s.golden_fraction, auto_day=True, sync=s.ledger_sync())`. `auto_day=True` numbers days from the first logged request on the wall clock; without it the caller sets `ledger.day`, as the mock example below does. Then load the task registry with `taskspec.install(ledger, s.tasks_file)`: the built-in tasks, then `RATCHET_TASKS_FILE`'s, then the API and auto tasks stored in the ledger.
 
 3. **Make the providers.** The teacher is an `OpenAICompatProvider` on Token Factory with the teacher's timeouts and retries (`s.teacher_timeout()`, `s.teacher_retry()`). The student is an `OpenAICompatProvider` on your vLLM endpoint with the student's timeouts and **no retry**: on the request path the teacher is the student's retry.
 
@@ -140,7 +140,7 @@ As of Oct 26, 2026, the teacher runs on Nebius Token Factory and a 20-request li
 ## For engineers
 
 <StatRow cols={2} label="Embedded or over HTTP">
-  <Stat value="Embedded" label="your own trusted Python code" note="A batch job, a test, a notebook, a simulation or an agent in the same process. No HTTP hop, and the whole Result object." />
+  <Stat value="Embedded" label="your own trusted Python code" note="A batch job, a test, a notebook or an agent in the same process. No HTTP hop, and the whole Result object." />
   <Stat value="Over HTTP" label="other services, languages or people" note="API keys, quotas, streaming and any OpenAI SDK unchanged. Put the gateway in front of anything untrusted." />
 </StatRow>
 
@@ -206,10 +206,10 @@ r = Ratchet(s, ledger, teacher, lambda v: (fallback, s.fallback_student_model)) 
 
 ### A runnable example in mock mode
 
-The mock models in [`sim/mock_models.py`](https://github.com/harshbhx/ratchet/blob/main/sim/mock_models.py) need no keys, no network and no GPU. `MockFleet` is the trainer, the golden evaluator and the student resolver at once, and `MockTeacher` plays Nemotron 3 Ultra. Everything this prints is **simulation (mock models)**. Save it as `embed_mock.py` and run `python embed_mock.py` after `make install`:
+The mock models in [`sim/mock_models.py`](https://github.com/harshbhx/ratchet/blob/main/sim/mock_models.py) need no keys, no network and no GPU. `MockFleet` is the trainer, the golden evaluator and the student resolver at once, and `MockTeacher` plays Nemotron 3 Ultra. Everything this prints comes from mock models. Save it as `embed_mock.py` and run `python embed_mock.py` after `make install`:
 
 ```python
-"""Ratchet embedded in mock mode: mock models, no keys, no network (simulation)."""
+"""Ratchet embedded in mock mode: mock models, no keys, no network."""
 
 from ratchet import taskspec
 from ratchet.config import Settings
@@ -231,7 +231,7 @@ stream = make_stream("tickets", seed=7)  # synthetic support tickets
 
 
 def day(n: int, requests: int = 300) -> None:
-    ledger.day = n  # simulations set the day; a live ledger (auto_day=True) counts days from the clock
+    ledger.day = n  # a mock run sets the day; a live ledger (auto_day=True) counts days from the clock
     for _ in range(requests):
         t = stream.sample(n)
         result = r.handle(t.messages(), "ticket-triage")
@@ -249,7 +249,7 @@ print(r.close(0.0)["by_version"])
 ledger.close()
 ```
 
-On day 1 every request has route `cold_start`. Night 1 trains version 1 and admits it, and because there is no live version yet it goes straight to a 10% canary, so on day 2 only a small share of requests is served by the student. The mock gateway (`make demo`) and the simulator (`python -m sim.simulate`) are built from these same pieces.
+On day 1 every request has route `cold_start`. Night 1 trains version 1 and admits it, and because there is no live version yet it goes straight to a 10% canary, so on day 2 only a small share of requests is served by the student.
 
 ### `Ratchet(...)` constructor
 
@@ -358,7 +358,7 @@ See [training on your data](/guides/training-on-your-data/) for the task spec ru
 
 ### Off-path checks and `close`
 
-A request's audit and shadow run **after** `handle` returns only when you pass a `RequestMeta` with `offpath=True` (the default) and the sidecar has workers. Then, if an audit was drawn or a shadow runs, `result.overhead_pending` is True, `cost_usd` covers serving only, `audited` is False, and the ledger row is finished when the job ends. A call without `meta`, with `RequestMeta(offpath=False)`, or on a `Ratchet(..., sidecar=SideCar(0))` keeps every check inline, so every cent is in the `Result`. Scout and the simulator call `handle(messages, task)` with no meta for exactly that reason: Scout's budget guard sums `cost_usd`.
+A request's audit and shadow run **after** `handle` returns only when you pass a `RequestMeta` with `offpath=True` (the default) and the sidecar has workers. Then, if an audit was drawn or a shadow runs, `result.overhead_pending` is True, `cost_usd` covers serving only, `audited` is False, and the ledger row is finished when the job ends. A call without `meta`, with `RequestMeta(offpath=False)`, or on a `Ratchet(..., sidecar=SideCar(0))` keeps every check inline, so every cent is in the `Result`. Scout calls `handle(messages, task)` with no meta for exactly that reason: Scout's budget guard sums `cost_usd`.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -436,7 +436,7 @@ The test suite's own patterns are in [testing](/reference/testing/).
 
 ### When should I embed instead of calling the gateway over HTTP?
 
-Embed when the caller is your own trusted Python code in the same process: a batch job over a backlog, a test, a notebook, a simulation, or an agent framework like Scout inside the gateway. You save the HTTP hop and get the `Result` object with every field. Use the gateway when callers are other services, other languages or other people, when you need API keys, quotas or streaming, or when you want any OpenAI SDK to work unchanged. If untrusted input can reach your program, put the gateway in front of it.
+Embed when the caller is your own trusted Python code in the same process: a batch job over a backlog, a test, a notebook, or an agent framework like Scout inside the gateway. You save the HTTP hop and get the `Result` object with every field. Use the gateway when callers are other services, other languages or other people, when you need API keys, quotas or streaming, or when you want any OpenAI SDK to work unchanged. If untrusted input can reach your program, put the gateway in front of it.
 
 ### Is `handle` thread-safe?
 

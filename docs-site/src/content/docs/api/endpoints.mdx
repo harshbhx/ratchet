@@ -16,7 +16,7 @@ The full schema of every route is in the generated [HTTP API reference](/api/htt
   <PathCard title="OpenAI-compatible" href="#openai-compatible" icon="code" eyebrow="API key" description="Chat, completions, responses, embeddings and models: what your app calls." />
   <PathCard title="Stats, evidence and cost" href="#stats-and-provenance" icon="chart" eyebrow="Dashboard key" tone="neutral" description="Stats, bills of materials, certificates, cost, replay and receipts." />
   <PathCard title="Admin and tasks" href="#admin" icon="key" eyebrow="Admin key" tone="neutral" description="Versions, switches, task pins, erasure and the task registry, with an audit trail." />
-  <PathCard title="Scout and pages" href="#scout" icon="search" eyebrow="Public" tone="neutral" description="The research demo behind its budget guard, and the web pages." />
+  <PathCard title="Scout and pages" href="#scout" icon="search" eyebrow="Public" tone="neutral" description="The research agent behind its budget guard, and the web pages." />
 </PathGrid>
 
 ## The routes by purpose
@@ -33,7 +33,7 @@ flowchart LR
   P["<b>Prove</b><br/>/ratchet/bom<br/>/ratchet/versions/id/bom,<br/>certificate, proof<br/>/ratchet/receipts"]
   O["<b>Observe</b><br/>/ratchet/stats, kpis, cost<br/>/ratchet/drift, teacher, replay<br/>/metrics, /healthz, /readyz"]
   D["<b>Operate</b><br/>/ratchet/admin/*<br/>/ratchet/tasks<br/>/ratchet/cost/endpoint<br/>/ratchet/teacher/ack"]
-  E["<b>Demo</b><br/>pages: / /dashboard /scout /judges<br/>/scout/*<br/>/ratchet/demo/*, mock only"]
+  E["<b>Pages</b><br/>pages: / /dashboard /scout /judges<br/>/scout/*"]
   app --> S
   app --> P
   watch --> O
@@ -48,7 +48,7 @@ flowchart LR
 
 <figcaption>
 
-**Reading this diagram.** Read it from the left, from who calls to what they call. Your application only needs the first group, Serve: the OpenAI-shaped routes and the three Ratchet routes for feedback, no-train registrations and erasing its own examples. Prove holds the signed evidence: bills of materials, certificates, proofs and savings receipts. Observe is what the dashboard and your monitors read. Operate is for the person running the gateway: versions, switches, task pins and the task registry. Demo is the pages and the mock-only buttons, which answer 403 in live mode.
+**Reading this diagram.** Read it from the left, from who calls to what they call. Your application only needs the first group, Serve: the OpenAI-shaped routes and the three Ratchet routes for feedback, no-train registrations and erasing its own examples. Prove holds the signed evidence: bills of materials, certificates, proofs and savings receipts. Observe is what the dashboard and your monitors read. Operate is for the person running the gateway: versions, switches, task pins and the task registry. Pages are the web pages and the Scout routes.
 
 </figcaption>
 </figure>
@@ -200,17 +200,6 @@ The Method and Path columns link to the generated reference for that operation.
 | DELETE | [`/ratchet/admin/tasks/{name}/pin`](/api/http/operations/admin_unpin_ratchet_admin_tasks__name__pin_delete/) | Admin key | Remove a runtime pin. |
 | POST | [`/ratchet/admin/tick`](/api/http/operations/admin_tick_ratchet_admin_tick_post/) | Admin key | Run the release gate's tick now. |
 | GET | [`/ratchet/admin/audit-log`](/api/http/operations/admin_audit_log_ratchet_admin_audit_log_get/) | Admin key | The newest admin actions. |
-
-### Demo controls (mock only)
-
-| Method | Path | Who | What it is for |
-|---|---|---|---|
-| POST | [`/ratchet/demo/day`](/api/http/operations/demo_day_ratchet_demo_day_post/) | Mock mode only | Run a simulated day of traffic. |
-| POST | [`/ratchet/demo/break-next`](/api/http/operations/demo_break_next_ratchet_demo_break_next_post/) | Mock mode only | Corrupt the next trained adapter, to show a rollback. |
-| POST | [`/ratchet/demo/student-outage`](/api/http/operations/demo_student_outage_ratchet_demo_student_outage_post/) | Mock mode only | Take the student down, to show the breaker. |
-| GET | [`/ratchet/demo/sample-example`](/api/http/operations/demo_sample_example_ratchet_demo_sample_example_get/) | Mock mode only | A stored example, for the proof demo. |
-| POST | [`/ratchet/demo/teacher-drift`](/api/http/operations/demo_teacher_drift_ratchet_demo_teacher_drift_post/) | Mock mode only | Make the mock teacher drift, to show the watch. |
-| POST | [`/ratchet/demo/reset`](/api/http/operations/demo_reset_ratchet_demo_reset_post/) | Mock mode only | Reset the mock demo. |
 
 ### Scout
 

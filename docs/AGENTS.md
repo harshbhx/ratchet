@@ -1,11 +1,11 @@
 # AGENTS.md: `docs/`
 
-Index: [docs/README.md](README.md). Product docs (PRD, business, competitive analysis, roadmap, glossary) and technical docs (architecture, API, configuration, Scout, deployment, demo VM, runbook, threat model, testing, ADRs).
+Index: [docs/README.md](README.md). Product docs (PRD, business, competitive analysis, roadmap, glossary) and technical docs (architecture, API, configuration, Scout, deployment, the Nebius VM, runbook, threat model, testing, ADRs).
 
 Rules:
 
 - Docs must match the code. When you change behaviour, update the doc that describes it in the same commit (API.md for endpoints, CONFIGURATION.md for env vars, ARCHITECTURE.md for flow/states, RUNBOOK.md for operations, SCOUT.md for Scout's agents and event contract, DEPLOY_NEBIUS_VM.md for `deploy/vm/`).
-- Plain English, short sentences, no hype. Numbers need units and a source link or a "simulation"/"estimate" label.
+- Plain English, short sentences, no hype. Numbers need units and a source link or an "estimate" label.
 - Facts about third parties (prices, model IDs, competitor status, terms) carry a source link and an as-of date. Re-check before the Devpost submission.
 - Claim only what is true (NFR-70, `tests/test_docs_claims.py`). The customer owns a Nemotron adapter (LoRA on NVIDIA's open Nano base) and its signed training lineage, never "a model you own" or its weights (Nemotron 3 Nano stays under NVIDIA's Nemotron Open Model License). Savings are never promised below break-even. Of NVIDIA's six LLM-to-SLM steps, four run automatically; task clustering and model selection are manual. Word Nebius product facts as Nebius's docs word them (a stopped endpoint is not billed for compute or its own storage; a mounted bucket still is). Describe a competitor in its source's words. Name prior art instead of claiming uniqueness. When a feature lands, drop it from the README's "Not built yet" line in the same change. A fact taken from the research notes without a fresh check says "(research notes, <date>)"; a claim nobody can source is left out.
 - Live numbers come only from a published, non-smoke results file (`python -m ratchet.liverun report <run dir> --publish` writes `evidence/live/results.json` and `docs/LIVE_RESULTS.md`), each followed by its `<!-- claim:live.* -->` anchor from the placeholder map in `LIVE_RESULTS.md`. PRD statuses that wait on live evidence (NFR-1, FR-8.1, FR-8.2, FR-8.4, SM-1 to SM-5) move only in the commit that adds that file. Never commit a smoke run's numbers or a ledger.

@@ -11,7 +11,7 @@ import Compare from '../../../components/Compare.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 
-<Summary>Ratchet is for teams that pay frontier-model prices for narrow, repeated work. It moves that work to a small open model with an adapter they own, learns only from teachers whose license allows it, and ships each new model only if it passes a gate. Its savings are shown in simulation today, not on live traffic.</Summary>
+<Summary>Ratchet is for teams that pay frontier-model prices for narrow, repeated work. It moves that work to a small open model with an adapter they own, learns only from teachers whose license allows it, and ships each new model only if it passes a gate. Savings have not been measured on live traffic yet.</Summary>
 
 ## The problem
 
@@ -52,13 +52,7 @@ flowchart TB
 </figcaption>
 </figure>
 
-- **Cost falls as the student takes over.** Real savings depend on the traffic mix and on GPU utilization. The reference simulation (mock models, 2,000 support tickets a day, seed 7) shows the shape: once the student serves, and outside the days after a simulated product launch, its cost is about $0.15 to $0.16 per 1,000 requests, a saving of 85 to 87%.
-
-<StatRow cols={3} label="The reference simulation's cost on day 10">
-  <Stat value="$1.093" label="per 1,000 requests, all Ultra" tone="sim" note="What the teacher alone would have cost." />
-  <Stat value="$0.147" label="per 1,000 requests, Ratchet" tone="sim" note="Day 10, with the student serving." />
-  <Stat value="87%" label="saved on day 10" tone="sim" note="At unverified list prices." />
-</StatRow>
+- **Cost falls as the student takes over.** Real savings depend on the traffic mix and on GPU utilization. Once the student serves, the teacher is paid for only the requests it escalates; the [Cost and savings](/guides/cost-and-savings/) guide shows the arithmetic.
 
 - **You own the result.** A LoRA adapter on an open base model, plus a signed bill of materials listing the teacher and license of every training example.
 - **Releases are gated.** A new student needs at least 95% precision on held-out data and may fall no more than 2 points behind the live version, then passes shadow and canary stages. See [The release gate](/guides/release-gate/).
@@ -107,7 +101,7 @@ flowchart TB
 ## Honest limits
 
 <Aside type="caution" title="As of Oct 26, 2026">
-- **Not proven on live traffic.** Real teacher calls on Nebius Token Factory built the text-to-SQL data (Oct 22, 2026), and the public demo runs in live mode, but it has no student endpoint yet, so the teacher answers every request. Savings figures come from mock models and are labelled simulation. The measured adapters, two text-to-SQL rounds and one tool-calling round, were trained on a borrowed GPU ([Results](/guides/results/)).
+- **Not proven on live traffic.** Real teacher calls on Nebius Token Factory built the text-to-SQL data (Oct 22, 2026), and the live gateway runs in live mode, but it has no student endpoint yet, so the teacher answers every request, so there are no measured savings. The measured adapters, two text-to-SQL rounds and one tool-calling round, were trained on a borrowed GPU ([Results](/guides/results/)).
 - **Early stage.** There is no customer and no revenue.
 - **Savings depend on the traffic mix.** Per-token savings against the cheapest tiers of closed models are small. The large savings come from moving traffic off top-tier models, and only for tasks a small model can learn.
 - **A Token Factory terms question is open.** A question about its Terms of Service §5(f) was sent to Nebius support on Oct 19, 2026. This is not legal advice.
@@ -119,7 +113,7 @@ flowchart TB
   <PathCard title="Why it matters" href="/guides/why-it-matters/" icon="scale" tone="neutral" description="The value in depth, by audience." />
   <PathCard title="Cost and savings" href="/guides/cost-and-savings/" icon="coin" tone="neutral" description="Per token and by GPU-hours paid, with the break-even." />
   <PathCard title="Licenses" href="/guides/licenses/" icon="key" description="Why only open teachers, and what you own." />
-  <PathCard title="For judges" href="/guides/for-judges/" icon="start" tone="neutral" description="A ten-minute tour of the demo and the evidence." />
+  <PathCard title="For judges" href="/guides/for-judges/" icon="start" tone="neutral" description="A ten-minute tour of the live gateway and the evidence." />
 </PathGrid>
 
 Also: [What is Ratchet](/guides/what-is-ratchet/).

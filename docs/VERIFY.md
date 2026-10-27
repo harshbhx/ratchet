@@ -16,8 +16,8 @@ pip install -e ".[dev]"
 | The exam was frozen before any model answered it | `sha256sum evidence/text2sql-exam2/data/golden.jsonl` | nothing |
 | The adapters are the ones on Hugging Face | `sha256sum adapter_model.safetensors` ([below](#4-the-adapters-are-the-ones-on-hugging-face)) | a download |
 | The live run's numbers come from its records | `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` | nothing |
-| The live demo calls Token Factory | `curl` the live demo ([below](#5-the-live-demo-calls-token-factory)) | a network |
-| The loop works, with a bad release rolled back | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` | nothing |
+| The live gateway calls Token Factory | `curl` the live gateway ([below](#5-the-live-gateway-calls-token-factory)) | a network |
+| The loop and the rollback behave as tested, on mock models (not a live result) | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` | nothing |
 | The tool-calling scores (round 3) recompute from the saved answers | `python scripts/toolcall_results.py --check` ([below](#tool-calling-round-3)) | nothing |
 | A signed BOM verifies offline | `python -m ratchet.bom verify …` ([below](#7-a-signed-bill-of-materials-per-adapter)) | nothing |
 | The hosted Nano's thresholds follow from real Ultra labels ([evidence/hosted-nano](../evidence/hosted-nano/README.md)) | `python scripts/hosted_nano_calibration.py check` | nothing |
@@ -75,7 +75,7 @@ Download an adapter's `adapter_model.safetensors` from the [model page](https://
 
 The same values are in each evidence folder's `MANIFEST.json`. Round 2's first run is in [`evidence/text2sql-round2`](../evidence/text2sql-round2). The weights themselves are 40.5 MB each and are not in git.
 
-## 5. The live demo calls Token Factory
+## 5. The live gateway calls Token Factory
 
 ```bash
 curl -s https://live.ratchet.dualmindlab.tech/v1/chat/completions \
@@ -83,11 +83,11 @@ curl -s https://live.ratchet.dualmindlab.tech/v1/chat/completions \
   -d '{"model":"ratchet","messages":[{"role":"user","content":"In one sentence, what is a LoRA adapter?"}]}'
 ```
 
-The reply carries a `ratchet` block. Expect `served_by: "teacher"`, the model `nvidia/Nemotron-3-Ultra-550b-a55b`, a small `cost_usd` (a fraction of a cent) and a `request_id`. It is a real call, so please keep it to a few. No trained student is served in the live demo yet, so the teacher answers every request.
+The reply carries a `ratchet` block. Expect `served_by: "teacher"`, the model `nvidia/Nemotron-3-Ultra-550b-a55b`, a small `cost_usd` (a fraction of a cent) and a `request_id`. It is a real call, so please keep it to a few. No trained student is served in the live gateway yet, so the teacher answers every request.
 
 **The run on record:** `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` recomputes the client-side numbers of a recorded 20-request run from its 21 per-request records. Expected: `recomputed 11 client-side values and 1 rounds from 21 records`. It also prints a line that starts `not recomputable here (ledger snapshots or entered by hand)`; those values are listed, not checked. Three recorded live Scout runs are in [`evidence/scout`](../evidence/scout), and you can replay them [in your browser](https://huggingface.co/spaces/harshbhx/ratchet-scout).
 
-## 6. The loop works, and a bad release is rolled back
+## 6. The loop and the rollback, on mock models
 
 ```bash
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
@@ -95,11 +95,11 @@ make demo        # then open http://localhost:8000/dashboard
 make reference   # three pinned workloads must reproduce the v0.4.0 behaviour
 ```
 
-These run **mock models**. They show how the cascade, the release gate and the rollback behave, not real model quality, and every figure they print is a simulation.
+These run **mock models**. They show how the cascade, the release gate and the rollback behave, not real model quality, and every figure they print is a mock-mode run.
 
 ## 7. A signed bill of materials per adapter
 
-In the mock demo you can generate a key, sign an adapter's bill of materials and verify it offline:
+In the mock-mode gateway you can generate a key, sign an adapter's bill of materials and verify it offline:
 
 ```bash
 python -m ratchet.bom keygen                       # a signing key and its public key
@@ -112,7 +112,7 @@ A signed BOM is the operator's signed statement of the data and evaluation behin
 ## 8. The test suite and the requirements matrix
 
 ```bash
-make test                      # 1981 tests, no network, no GPU (Linux, macOS or WSL)
+make test                      # 1982 tests, no network, no GPU (Linux, macOS or WSL)
 python -m pytest -q            # the same suite without make
 python scripts/reqtrace.py --check
 ```
