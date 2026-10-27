@@ -1,5 +1,5 @@
 // @ts-check
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import react from '@astrojs/react';
@@ -43,11 +43,36 @@ const THEME_REVEAL = `document.addEventListener('click',function(e){var b=e.targ
 /** Chromium prerenders a same-site page once the pointer rests on its link, so the next page is ready on click. */
 const SPECULATION = JSON.stringify({ prerender: [{ where: { href_matches: '/*' }, eagerness: 'moderate' }] });
 
+/**
+ * Preload the one Inter file every page's text uses (the Latin subset, found by name in dist/_astro because its file name
+ * carries a hash), so the text is drawn in its own face at first paint instead of swapping in after the CSS is read.
+ * Other subsets (Cyrillic, Greek...) and JetBrains Mono load only when a page needs them (unicode-range).
+ */
+function preloadInter(dist) {
+  const astroDir = join(dist, '_astro');
+  const name = readdirSync(astroDir).find((f) => /^inter-latin-wght-normal\..+\.woff2$/.test(f));
+  if (!name) return;
+  const tag = `<link rel="preload" href="/_astro/${name}" as="font" type="font/woff2" crossorigin>`;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir)) {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (entry.endsWith('.html')) {
+        const html = readFileSync(path, 'utf8');
+        if (!html.includes('</head>') || html.includes(tag)) continue;
+        writeFileSync(path, html.replace('</head>', `${tag}</head>`));
+      }
+    }
+  };
+  walk(dist);
+}
+
 export default defineConfig({
   site: SITE_URL,
   trailingSlash: 'always',
-  // Other browsers fetch a page when its link is hovered (Chromium prerenders it, see SPECULATION).
-  prefetch: { prefetchAll: true, defaultStrategy: 'hover' },
+  // Only links that ask for it (the sidebar rows, data-astro-prefetch) are fetched on hover in browsers without
+  // speculation rules; Chromium prerenders any same-site link instead (see SPECULATION).
+  prefetch: { prefetchAll: false, defaultStrategy: 'hover' },
   integrations: [
     // Before Starlight, so ```mermaid blocks become diagrams instead of code.
     // autoTheme off: the base theme stays, and src/config/mermaid.mjs colours diagrams with the site's CSS variables.
@@ -64,6 +89,7 @@ export default defineConfig({
       hooks: {
         'astro:build:done': ({ dir, logger }) => {
           inlineDiagrams(fileURLToPath(dir), logger);
+          preloadInter(fileURLToPath(dir));
         },
       },
     },
@@ -109,9 +135,6 @@ export default defineConfig({
         { tag: 'script', content: A11Y_FIXES },
         { tag: 'script', content: THEME_REVEAL },
         { tag: 'script', attrs: { type: 'speculationrules' }, content: SPECULATION },
-        // Hold the first frame until the whole page is parsed (#drawer is the last element Lucode renders), so a page
-        // appears complete instead of top first. Browsers without render blocking ignore it.
-        { tag: 'link', attrs: { rel: 'expect', href: '#drawer', blocking: 'render' } },
       ],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       expressiveCode: {
