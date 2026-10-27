@@ -53,7 +53,7 @@ flowchart LR
 </figure>
 
 <Aside type="caution" title="Status as of Oct 26, 2026">
-Teacher calls to Nemotron 3 Ultra on Nebius Token Factory are real (they built the text-to-SQL data on Oct 22, 2026), and the adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU, outside Night School; the round-2 text-to-SQL recipe was also retrained once, by hand, on Nebius AI Cloud (27 Oct 2026). The full loop is complete and tested in simulation with mock models; the nightly training job, the demo VM kit and the endpoint script are written and tested offline, ready to run with `make nebius-plan` and `make nebius-up`, and the student was served once by hand on a Nebius endpoint for a speed test ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)); live mode runs on the public demo, where every request is a real Token Factory call. Every number on this site is simulation, an estimate, or read from the text-to-SQL and tool-calling results files, and says which.
+Teacher calls to Nemotron 3 Ultra on Nebius Token Factory are real (they built the text-to-SQL data on Oct 22, 2026), and the adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU, outside Night School; the round-2 text-to-SQL recipe was also retrained once, by hand, on Nebius AI Cloud (27 Oct 2026). The full loop is built and covered by unit tests with mock models, and has not run on live traffic; the nightly training job, the VM kit and the endpoint script are written and tested offline, ready to run with `make nebius-plan` and `make nebius-up`, and the student was served by hand, in two short sessions, on a Nebius endpoint for speed tests ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)); the live gateway at live.ratchet.dualmindlab.tech answers every request with a real Token Factory call. Every number on this site is an estimate or read from the text-to-SQL and tool-calling results files, and says which.
 </Aside>
 
 ## For everyone
@@ -86,22 +86,21 @@ Sometimes it will be, and Ratchet is built to keep that rare and visible:
 
 ### Does it work on real traffic yet?
 
-Not yet. As of Oct 26, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data), but the full loop has not served real traffic and the public demo has no student endpoint yet, so there are no live numbers. Live figures will come only from a published live-run results file. The measured results are the text-to-SQL and tool-calling adapters' exams, on [Results](/guides/results/); the only live run is a 20-request smoke run that measures no savings; everything else is simulation with mock models, which shows how the loop behaves, not how good a real model is. [Evidence](/guides/evidence/)
+Not yet. As of Oct 28, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data), but the full loop has not served real traffic and the live gateway has no student endpoint yet, so there are no live savings numbers. Live figures will come only from a published live-run results file. The measured results are the text-to-SQL and tool-calling adapters' exams, on [Results](/guides/results/); the loop's own numbers will come only from a published live run. [Evidence](/guides/evidence/)
 
 ### What does it cost?
 
-All of these are estimates or simulation, with their sources:
+All of these are estimates, with their sources:
 
-- **A Nebius demo VM, if you run one** (the public demo is on Cloudflare today): about $72.50 for 48 days (`cpu-e2`, prices as of Oct 20, 2026).
+- **A Nebius CPU VM, if you run one** (the live gateway is on Cloudflare today): about $72.50 for 48 days (`cpu-e2`, prices as of Oct 20, 2026).
 - **The teacher**: Ultra at $1 per million input tokens and $3 per million output tokens (list price, Oct 2026, unverified until the day-1 checks pass), roughly $1.30 per 1,000 teacher calls.
 - **The GPU endpoint**: about $32 for every full day it runs (an L40S at $1.35 a GPU-hour on [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; an estimate).
-- **In simulation** (mock models, seed 7, the reference run in `docs/TESTING.md`), day 10 cost $0.147 per 1,000 ticket requests against $1.093 if Ultra had answered all of them.
 
 [Cost and savings](/guides/cost-and-savings/), [Host it on Nebius](/guides/host-on-nebius/)
 
 ### When does self-hosting lose money?
 
-When too few requests reach the student. A GPU endpoint bills every hour it runs, whether requests arrive or not. Break-even is the GPU price per hour divided by the teacher spend each student answer avoids: with estimated prices ($1.35 a GPU-hour for an L40S, about $0.001 avoided per ticket-triage answer in simulation), that is about 1,350 student answers an hour, roughly 32,000 a day. At the demo's 1,500 requests a day, a 24/7 endpoint loses money, and Ratchet's own cost report says so and recommends the hosted fallback or scaling the endpoint to zero. [Cost and savings](/guides/cost-and-savings/)
+When too few requests reach the student. A GPU endpoint bills every hour it runs, whether requests arrive or not. Break-even is the GPU price per hour divided by the teacher spend each student answer avoids: with estimated prices ($1.35 a GPU-hour for an L40S, about $0.001 avoided per ticket-triage answer, from list prices), that is about 1,350 student answers an hour, roughly 32,000 a day. At a few thousand requests a day, a 24/7 endpoint loses money, and Ratchet's own cost report says so and recommends the hosted fallback or scaling the endpoint to zero. [Cost and savings](/guides/cost-and-savings/)
 
 ### What happens when the GPU endpoint is off?
 
@@ -117,13 +116,13 @@ A cascade router saves money on each call but learns nothing: every call stays r
 
 The story page at https://ratchet.dualmindlab.tech, then `/scout` (ask an example question and watch each call get answered by the student or the teacher), then `/dashboard`. [For judges](/guides/for-judges/)
 
-### Is the demo live or simulated?
+### Is the live gateway real?
 
-Mock mode is simulation, and the pages label it so. The hosted live demo runs in live mode and calls the real teacher on Token Factory. It has no GPU and no trained student yet, so the teacher answers every request (as of Oct 26, 2026). Once a version exists, student calls go to the hosted, untuned Nano 30B <Who as="fallback" /> and carry that badge. The story page's replay and savings figures are simulation. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
+Yes. The gateway at live.ratchet.dualmindlab.tech runs in live mode and calls the real teacher on Token Factory. It has no GPU and no trained student yet, so the teacher answers every request (as of Oct 28, 2026), apart from a random split that sends a share of eligible calls to the hosted Nano 30B <Who as="fallback" />, labelled as such. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Which numbers are real?
 
-The text-to-SQL results (the headline) and the smaller tool-calling results, both read from their results files on [Results](/guides/results/); the 20-request live smoke run measures cost only and no savings. None of the loop's numbers are live yet. Simulation numbers come from mock models and say "simulation" with their source; costs from the docs say "estimate" with their date. Live numbers will come only from a published, non-smoke live-run results file (`evidence/live/results.json`), which does not exist yet. [Evidence](/guides/evidence/)
+The text-to-SQL results (the headline) and the smaller tool-calling results, both read from their results files on [Results](/guides/results/); none of the loop's numbers are live yet. Costs from the docs say "estimate" with their date. Live numbers will come only from a published, non-smoke live-run results file (`evidence/live/results.json`), which does not exist yet. [Evidence](/guides/evidence/)
 
 ### Which NVIDIA models and Nebius services does it use?
 
@@ -135,18 +134,18 @@ The text-to-SQL results (the headline) and the smaller tool-calling results, bot
 | Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` with a LoRA adapter, vLLM on a Serverless Endpoint |
 | Night School | Serverless Jobs on an L40S, with TRL and PEFT |
 | Datasets and adapters | An Object Storage bucket mounted in the job and the endpoint |
-| Public demo host | Cloudflare Workers with Containers today; a Nebius CPU VM (`2vcpu-8gb`) is scripted and tested offline, ready to run with `make nebius-up` (`make nebius-plan` prints every step) |
+| Live gateway host | Cloudflare Workers with Containers today; a Nebius CPU VM (`2vcpu-8gb`) is scripted and tested offline, ready to run with `make nebius-up` (`make nebius-plan` prints every step) |
 | Scout web search | Tavily Search API (not NVIDIA or Nebius) |
 
 Token Factory listed no fine-tuning or LoRA serving for Nemotron when this design was chosen (research notes, Oct 19, 2026), and Nebius's [post on post-training in Token Factory](https://nebius.com/blog/posts/post-training-in-token-factory) names no Nemotron model to fine-tune (read Oct 26, 2026), so the student is trained and served on Nebius AI Cloud. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Where are the Token Factory and Tavily calls?
 
-In live mode, every teacher call goes to Token Factory: cold starts, escalations, audits, shadow arbitrations, and Scout's planner and writer, which are pinned to the teacher. Scout's searcher calls the Tavily Search API. Mock mode makes neither call. [Scout](/guides/scout/)
+In live mode, every teacher call goes to Token Factory: cold starts, escalations, audits, shadow arbitrations, and Scout's planner and writer, which are pinned to the teacher. Scout's searcher calls the Tavily Search API. [Scout](/guides/scout/)
 
 ### Can I check the claims myself?
 
-Yes, offline. `make test` runs the 1,934 tests with no network and no GPU; `make sim` reproduces the reference simulation exactly; `python -m ratchet.bom verify` checks an adapter's signed BOM and its `NOTICE.md`; `python -m ratchet.stats check` recomputes a certificate from its signed counts; `python -m ratchet.proof heldout` checks that no golden example was trained on; `python -m ratchet.receipt verify` checks a savings receipt. [Evidence](/guides/evidence/)
+Yes, offline. `make test` runs the 1,934 tests with no network and no GPU; `python -m ratchet.bom verify` checks an adapter's signed BOM and its `NOTICE.md`; `python -m ratchet.stats check` recomputes a certificate from its signed counts; `python -m ratchet.proof heldout` checks that no golden example was trained on; `python -m ratchet.receipt verify` checks a savings receipt. [Evidence](/guides/evidence/)
 
 ### Why does a Scout run say "search unavailable"?
 
@@ -200,7 +199,7 @@ Yes. Stored examples can be erased for good by client, end user, hash or text (`
 
 ### Which key do I need for which route?
 
-Four kinds of key exist. An API key (`RATCHET_API_KEYS`) calls `/v1/*`. A dashboard key (`RATCHET_DASHBOARD_KEYS`) reads stats, costs and other management data. An admin key (`RATCHET_ADMIN_KEYS`) also writes: versions, switches, tasks, erasure. Mock-only demo controls need no key and answer 403 in live mode. The [endpoint map](/api/endpoints/) lists every route with its level.
+Four kinds of key exist. An API key (`RATCHET_API_KEYS`) calls `/v1/*`. A dashboard key (`RATCHET_DASHBOARD_KEYS`) reads stats, costs and other management data. An admin key (`RATCHET_ADMIN_KEYS`) also writes: versions, switches, tasks, erasure. The [endpoint map](/api/endpoints/) lists every route with its level.
 
 ### How do I send feedback on an answer?
 
@@ -220,7 +219,7 @@ Three watchers, none of them a release signal on its own. The audits measure pre
 
 ### Why SQLite?
 
-Zero setup, easy backups, easy to inspect, and fast enough for one gateway process at demo scale. It runs in WAL mode so dashboard reads do not block writes. The price is one gateway process with one worker; a Postgres ledger is planned. [The ledger](/guides/ledger/)
+Zero setup, easy backups, easy to inspect, and fast enough for one gateway process at this scale. It runs in WAL mode so dashboard reads do not block writes. The price is one gateway process with one worker; a Postgres ledger is planned. [The ledger](/guides/ledger/)
 
 ### Why Nemotron?
 
@@ -254,14 +253,14 @@ No. Below break-even, the hosted fallback on Token Factory is cheaper: you pay p
 
 ### Is it ready for production?
 
-Not yet, and it says so. The public demo has no student endpoint yet, so the teacher answers every request; it runs as one gateway process; PII redaction is pattern-based, so names and street addresses are not caught; precision means agreement with the teacher, not ground truth; and Scout's reader is checked on its labels only, not on the free-text fact it extracts. The README's [limitations](https://github.com/harshbhx/ratchet#limitations) list is the full picture. [Security](/guides/security/)
+Not yet, and it says so. The live gateway has no student endpoint yet, so the teacher answers every request; it runs as one gateway process; PII redaction is pattern-based, so names and street addresses are not caught; precision means agreement with the teacher, not ground truth; and Scout's reader is checked on its labels only, not on the free-text fact it extracts. The README's [limitations](https://github.com/harshbhx/ratchet#limitations) list is the full picture. [Security](/guides/security/)
 
 ### Where does my data go?
 
-When you host it on Nebius, everything runs in your own project: the gateway and ledger on your VM, adapters in your bucket, teacher calls to Token Factory with your key. The teacher sees the original request; redaction happens before anything is stored as training data. Tavily is called only by the Scout demo. [Host it on Nebius](/guides/host-on-nebius/)
+When you host it on Nebius, everything runs in your own project: the gateway and ledger on your VM, adapters in your bucket, teacher calls to Token Factory with your key. The teacher sees the original request; redaction happens before anything is stored as training data. Tavily is called only by Scout. [Host it on Nebius](/guides/host-on-nebius/)
 
 ## Related
 
 - [Glossary](/guides/glossary/): every term in one line.
-- [Quickstart](/guides/quickstart/): run it locally in mock mode.
+- [Quickstart](/guides/quickstart/): run it locally against Token Factory.
 - [For judges](/guides/for-judges/): what to look at and how to check it.

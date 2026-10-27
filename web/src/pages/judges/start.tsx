@@ -175,7 +175,7 @@ export function WhatsReal() {
       lead={
         <>
           <p>
-            One file holds the status of each result and feature, with what it rests on and how to check it. The text-to-SQL data and adapter are real; the gateway calls Nebius Token Factory for real; the round-2 adapter was retrained once on Nebius AI Cloud (a Serverless Job on one L40S); the student was served once on a Nebius endpoint for a speed test (the live gateway is not connected to it); the nightly job is built and tested but has not run on live traffic. The web front end and the live gateway run on Cloudflare.
+            One file holds the status of each result and feature, with what it rests on and how to check it. The text-to-SQL data and adapter are real; every model call on the live site runs on Nebius Token Factory; the round-2 adapter was retrained once on Nebius AI Cloud (a Serverless Job on one L40S); the student was served by hand on a Nebius endpoint for speed tests (the live gateway is not connected to it); the nightly job is built and tested but has not run on live traffic.
           </p>
           {REAL.updated && <p className="text-[13.5px] text-muted">Updated {fmtDate(REAL.updated)}.</p>}
         </>

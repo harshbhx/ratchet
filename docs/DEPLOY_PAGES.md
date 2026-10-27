@@ -2,7 +2,7 @@
 
 Two Pages projects: `ratchet` (the story site, judges' page and dashboard, at ratchet.dualmindlab.tech) and `ratchet-docs` (the docs). The docs are also at docs.ratchet.dualmindlab.tech; the story site at ratchet.dualmindlab.tech.
 
-The two gateways are not on Pages: they are the Cloudflare Containers workers `deploy-cloudflare-live` (live.ratchet.dualmindlab.tech, live mode) and `deploy-cloudflare-demo` (demo.ratchet.dualmindlab.tech, mock mode), see [deploy/cloudflare-live/README.md](../deploy/cloudflare-live/README.md).
+The gateway is not on Pages: it is the Cloudflare Containers worker `deploy-cloudflare-live` (live.ratchet.dualmindlab.tech, live mode), see [deploy/cloudflare-live/README.md](../deploy/cloudflare-live/README.md).
 
 ## Previews are automatic, production is a button
 
@@ -20,7 +20,7 @@ The pages call their gateway on the same origin (`/ratchet/*`, `/scout/*`, `/v1/
 
 **The gateway is a Cloudflare setting, not code.** In the dashboard, Workers & Pages, the project `ratchet`, Settings, Variables and Secrets, add
 `GATEWAY_ORIGIN` (an `https://` address with no path, for example `https://live.ratchet.dualmindlab.tech`). Production and Preview have separate lists, so a preview can
-point at the simulation demo while production points at the live one. Saving it applies at once: no push, no deploy. Without it the live gateway is used (the whole site is one live surface); set it to `https://demo.ratchet.dualmindlab.tech` to send the dashboard and every other gateway-backed page back to the simulation, with no deploy; a value that
+point at another gateway while production points at the live one. Saving it applies at once: no push, no deploy. Without it the live gateway is used (the whole site is one live surface); a value that
 is not a plain https address is ignored, so a typo cannot take the site down.
 
 **Scout is separate.** The paths under `/scout/` (the Scout page's status, examples, stream, recordings and the judge code, whose signed `ratchet_judge` cookie passes through the proxy
@@ -29,4 +29,4 @@ calls under the live gateway's spend guard, and its label comes from `/scout/sta
 `/healthz` and `/readyz` follow `GATEWAY_ORIGIN`, which also defaults to the live gateway. The live ledger lives in the container's `/tmp`, so a restart empties it and the dashboard then shows its empty states; the mock-only `/ratchet/demo/*` controls answer 403 there and the pages hide them. Set `SCOUT_ORIGIN` separately to move Scout; an empty or invalid value
 falls back to the default. Like `GATEWAY_ORIGIN`, it applies at once.
 
-**When the live demo has slept.** The live container sleeps after 30 minutes without a request, and its first start takes about 20 seconds. The worker tries a reading request again up to three times (0.7, 1.5 and 3 seconds apart) when the gateway answers 502 or 504, drops the connection or says its container is not ready; it never repeats a `/v1/*` call, a Scout run or a demo action, so nothing is paid twice, and a normal answer passes through untouched. If the gateway is still not ready, the visitor gets `503` with `Retry-After: 5` and `{"warming_up": true}`; the web app then shows a banner under the header ("Waking up the live demo, about 20 seconds. This page will update by itself."), checks `/healthz` every 3 seconds for up to 90 seconds, fills the page in when it answers, and keeps Scout's Run button disabled until then.
+**When the live gateway has slept.** The live container sleeps after 30 minutes without a request, and its first start takes about 20 seconds. The worker tries a reading request again up to three times (0.7, 1.5 and 3 seconds apart) when the gateway answers 502 or 504, drops the connection or says its container is not ready; it never repeats a `/v1/*` call, a Scout run or a control action, so nothing is paid twice, and a normal answer passes through untouched. If the gateway is still not ready, the visitor gets `503` with `Retry-After: 5` and `{"warming_up": true}`; the web app then shows a banner under the header (the live gateway is waking up, about 20 seconds; the page updates by itself), checks `/healthz` every 3 seconds for up to 90 seconds, fills the page in when it answers, and keeps Scout's Run button disabled until then.

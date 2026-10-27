@@ -55,11 +55,11 @@ The break-even is the number of student answers per endpoint hour at which the G
 break-even = GPU price per hour / teacher spend avoided per student answer
 ```
 
-With estimated prices (an L40S at $1.35 a GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and about $0.001 of teacher spend avoided per ticket-triage answer in the simulation), that is about 1,350 student answers an hour, roughly 32,000 a day. All figures here are **estimates**, not measurements.
+With estimated prices (an L40S at $1.35 a GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and an assumed $0.001 of teacher spend avoided per ticket-triage answer), that is about 1,350 student answers an hour, roughly 32,000 a day. All figures here are **estimates**, not measurements.
 
 | Traffic | Student answers an hour, against break-even (about 1,350) | What Ratchet's report says |
 |---|---|---|
-| The demo, 1,500 requests a day | About 60: far below | A 24/7 endpoint loses money. Use the hosted fallback or stop the endpoint when idle |
+| A small gateway, 1,500 requests a day | About 60: far below | A 24/7 endpoint loses money. Use the hosted fallback or stop the endpoint when idle |
 | 10M requests a month | About 14,000: about ten times above | Self-hosting costs less than the teacher, but an untuned hosted Nano may cost less per answer. It then recommends the hosted fallback and says the comparison assumes the hosted model covers as many requests |
 | Very high volume | Over about 45,000 (estimate): above the hosted-fallback crossover too | Self-host |
 
@@ -91,12 +91,6 @@ flowchart TB
 
 </figcaption>
 </figure>
-
-<div class="rt-callout rt-callout--sim">
-
-**Simulation.** The reference simulation shows a 69% saving per token and a loss by GPU-hours at low volume, using mock models. Treat every figure as a demonstration of how the accounting works.
-
-</div>
 
 ## If you must know where your data went
 
@@ -189,6 +183,6 @@ flowchart TB
 
 <div class="rt-callout rt-callout--note">
 
-The loop is built and tested offline. Real teacher calls on Nebius Token Factory built the text-to-SQL data on Oct 22, 2026; since Oct 24, 2026 the gateway's own live mode runs on the public demo (live.ratchet.dualmindlab.tech), where every request is a real Token Factory call. The public demo has no student endpoint yet, so the teacher answers every request; the text-to-SQL and tool-calling adapters were trained on a borrowed GPU. Simulation figures use mock models and are labelled. Open question: Token Factory Terms of Service §5(f), asked of Nebius support on Oct 19, 2026. See [What is Ratchet](/guides/what-is-ratchet/) and [Results](/guides/results/).
+The loop is built and tested offline. Real teacher calls on Nebius Token Factory built the text-to-SQL data on Oct 22, 2026; since Oct 24, 2026 the gateway's own live mode runs at live.ratchet.dualmindlab.tech, where every request is a real Token Factory call. The live gateway has no student endpoint yet, so the teacher answers every request; the text-to-SQL and tool-calling adapters were trained on a borrowed GPU. Open question: Token Factory Terms of Service §5(f), asked of Nebius support on Oct 19, 2026. See [What is Ratchet](/guides/what-is-ratchet/) and [Results](/guides/results/).
 
 </div>

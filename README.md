@@ -13,8 +13,8 @@
   <a href="https://github.com/harshbhx/ratchet/actions/workflows/deploy-pages-production.yml"><img alt="Last deploy" src="https://img.shields.io/github/actions/workflow/status/harshbhx/ratchet/deploy-pages-production.yml?label=last%20deploy"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="https://huggingface.co/collections/harshbhx/ratchet"><img alt="Hugging Face collection" src="https://img.shields.io/badge/Hugging%20Face-collection-FFD21E"></a>
-  <a href="https://live.ratchet.dualmindlab.tech"><img alt="Live demo" src="https://img.shields.io/badge/live%20demo-Token%20Factory-1f6feb"></a>
-  <a href="https://video.ratchet.dualmindlab.tech/?from=readme"><img alt="Demo video, 2:59" src="https://img.shields.io/badge/demo%20video-2%3A59-475569"></a>
+  <a href="https://live.ratchet.dualmindlab.tech"><img alt="Live gateway" src="https://img.shields.io/badge/live-Token%20Factory-1f6feb"></a>
+  <a href="https://video.ratchet.dualmindlab.tech/?from=readme"><img alt="Video, 2:59" src="https://img.shields.io/badge/video-2%3A59-475569"></a>
   <a href="https://docs.ratchet.dualmindlab.tech"><img alt="Docs" src="https://img.shields.io/badge/docs-guides-64748b"></a>
   <a href="docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius"><img alt="Run on Nebius (scripted and tested offline, ready to run)" src="docs/img/run-on-nebius.svg"></a>
 </p>
@@ -25,7 +25,7 @@
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
   <a href="#results">Results</a> &nbsp;·&nbsp;
   <a href="#open-on-hugging-face">Hugging Face</a> &nbsp;·&nbsp;
-  <a href="#what-is-real-what-is-simulation-what-is-ready-to-run">What is real</a> &nbsp;·&nbsp;
+  <a href="#what-is-real-what-is-ready-to-run">What is real</a> &nbsp;·&nbsp;
   <a href="#where-it-runs-and-how-to-host-it-on-nebius">Nebius</a> &nbsp;·&nbsp;
   <a href="#feedback-on-nebius-and-nvidia">Feedback</a> &nbsp;·&nbsp;
   <a href="#use-it">Use it</a> &nbsp;·&nbsp;
@@ -36,21 +36,21 @@
 <p align="center">
   <picture>
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/demo-reel-poster.png">
-    <img src="docs/img/anim/ratchet-demo-reel.gif" alt="Demo reel, 15 seconds: 200 exam questions the model never saw, a recorded live Scout run (18 model calls, all answered by the teacher, 13.2 seconds, $0.0223), the 95% precision bar and the real exam numbers: text-to-SQL 12.8% untrained, 25.6% teacher, 39.0% adapter on exam 1." width="100%">
+    <img src="docs/img/anim/ratchet-demo-reel.gif" alt="Reel, 15 seconds: 200 exam questions the model never saw, a recorded live Scout run (18 model calls, all answered by the teacher, 13.2 seconds, $0.0223), the 95% precision bar and the real exam numbers: text-to-SQL 12.8% untrained, 25.6% teacher, 39.0% adapter on exam 1." width="100%">
   </picture>
-  <br><sub><b>Demo reel</b> (from the demo video). Exam numbers are measured; the Scout run is a recorded live run. <a href="https://video.ratchet.dualmindlab.tech/?from=readme">Watch the full demo video (2:59)</a></sub>
+  <br><sub><b>Reel</b> (from the video). Exam numbers are measured; the Scout run is a recorded live run. <a href="https://video.ratchet.dualmindlab.tech/?from=readme">Watch the full video (2:59)</a></sub>
 </p>
 
 <p align="center">
-  <img src="docs/img/anim/readme-stats.gif" alt="At a glance: text-to-SQL 12.8% to 39.0% on an unseen exam and tool calling 62.7% to 90.7% on an unseen exam (both measured, strict scoring); 2 adapters, 6 datasets and 2 demos on Hugging Face; a free live demo with no sign-up." width="100%">
+  <img src="docs/img/anim/readme-stats.gif" alt="At a glance: text-to-SQL 12.8% to 39.0% on an unseen exam and tool calling 62.7% to 90.7% on an unseen exam (both measured, strict scoring); 2 adapters, 6 datasets and 2 Spaces on Hugging Face; a free live gateway with no sign-up." width="100%">
 </p>
 
 ## In 30 seconds
 
-- **Built on NVIDIA Nemotron and Nebius.** The teacher runs on Nebius Token Factory, and the round-2 adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job). The web front end and the live demo run on Cloudflare.
+- **Built on NVIDIA Nemotron and Nebius:** every model call on the live site runs on Nebius Token Factory, the adapter was [retrained on Nebius AI Cloud](evidence/text2sql-round2-nebius), and the student was served from a Nebius Serverless Endpoint [in a measured test](evidence/student-endpoint-nebius) (the live site is not connected to it).
 - **What it is.** A drop-in OpenAI base URL. A small Nemotron 3 Nano 4B student answers each request first. When it is unsure, the request goes to Nemotron 3 Ultra on Nebius Token Factory, and the answer is logged with the teacher's name and license. Closed models (GPT, Claude, Gemini) are refused as teachers in code, because their terms forbid training competing models.
 - **What is measured.** Real adapters on real models, strict scoring, exams the adapters never saw: text-to-SQL goes from 12.8% (untrained) to 39.0% on exam 1 and from 12.5% to 33.0% on exam 2, for about $17 on record. Every score recomputes from the saved answers ([Check it yourself](docs/VERIFY.md)).
-- **What is not claimed.** The nightly loop is shown in simulation (mock models); the nightly job and the VM kit are tested offline and ready to run, and have not run. The original adapters were trained by hand on a borrowed GPU; the round-2 recipe was retrained once by hand on Nebius AI Cloud (a Serverless Job, 27 Oct 2026). The student was served once, by hand, on a Nebius Serverless Endpoint for a speed test (one spot L40S, 27 Oct 2026, [evidence](evidence/student-endpoint-nebius/README.md)); the endpoint was deleted afterwards and the public live demo is not connected to it. At a 95% precision bar the student still answers almost nothing, so in practice the teacher answers all live traffic. Details in [What is real](#what-is-real-what-is-simulation-what-is-ready-to-run) and [Limitations](#limitations).
+- **What is not claimed.** The nightly loop (Night School) is built and unit-tested on mock models and has not run on live traffic; the nightly job and the VM kit are tested offline, ready to run. The original adapters were trained by hand on a borrowed GPU; the round-2 recipe was retrained once by hand on Nebius AI Cloud (a Serverless Job, 27 Oct 2026). The student was served by hand, in two short sessions, on a Nebius Serverless Endpoint for speed tests (one spot L40S, 27 to 28 Oct 2026, [evidence](evidence/student-endpoint-nebius/README.md)); the endpoint was deleted afterwards and the live site is not connected to it. At a 95% precision bar the student still answers almost nothing, so in practice the teacher answers all live traffic. Details in [What is real](#what-is-real-what-is-ready-to-run) and [Limitations](#limitations).
 
 <p align="center">
   <img src="docs/img/sql-results-16x9.png" alt="Two bar charts of text-to-SQL accuracy under strict scoring; on exam 1 (172 questions) the untrained Nano 4B scores 12.8%, Nemotron 3 Ultra 25.6% and the adapter 39.0%, and on exam 2 (200 questions, new industries) 12.5%, 15.0% and 33.0%." width="100%">
@@ -61,19 +61,17 @@
 
 Judges get the access code for Scout runs on the Devpost page (it is not in this repository).
 
-| | What it is | Real or simulation |
+| | What it is | Status |
 |---|---|---|
 | [For judges](https://ratchet.dualmindlab.tech/judges) | Everything a judge needs on one page, with the checks to run. The main site (story, dashboard, judges) reads the live gateway; its ledger starts empty and resets on restart | Real |
-| [Live demo](https://live.ratchet.dualmindlab.tech) | Send a request, read the `ratchet` block in the reply. Real Token Factory calls under spend limits; the teacher answers every request for now | Real |
-| [Scout](https://live.ratchet.dualmindlab.tech/scout) | A multi-agent research demo with real web searches; every model call is tagged with who answered it | Real |
-| [Simulation](https://demo.ratchet.dualmindlab.tech) | Mock models: run days, break a deploy, watch the rollback | Simulation |
+| [Live gateway](https://live.ratchet.dualmindlab.tech) | Send a request, read the `ratchet` block in the reply. Real Token Factory calls under spend limits; the teacher answers every request for now | Real |
+| [Scout](https://live.ratchet.dualmindlab.tech/scout) | A multi-agent research tool with real web searches; every model call is tagged with who answered it | Real |
 | [Docs](https://docs.ratchet.dualmindlab.tech) | Guides, API, configuration, runbook, threat model | Documentation |
 | [Hugging Face collection](https://huggingface.co/collections/harshbhx/ratchet) | The adapters, the synthetic training data, the exams with every saved answer | Real |
 | [Exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) | Browse the tool-calling exam answers question by question | Real |
-| [Your machine](#use-it) | `make demo`: no keys, no GPU | Simulation |
 
 <p align="center">
-  <img src="docs/img/try-it-16x9.png" alt="Try it in 90 seconds, four links in this order: the judges' page, a real request on the live demo, Scout with real searches, and the simulation. The live demo is free, with no sign-up." width="100%">
+  <img src="docs/img/try-it-16x9.png" alt="Try it in 90 seconds, three links in this order: the judges' page, a real request on the live gateway, and Scout with real searches. The live gateway is free, with no sign-up." width="100%">
 </p>
 
 <details>
@@ -89,7 +87,7 @@ Type the code from the Devpost page into the box on the Scout page.
 
 ## How it works
 
-Change one line, your base URL. The designed flow (the loop is shown in simulation and in scripts; see [What is real](#what-is-real-what-is-simulation-what-is-ready-to-run)):
+Change one line, your base URL. The designed flow (Night School and the release gates are built and tested with mock models and have not run on live traffic; see [What is real](#what-is-real-what-is-ready-to-run)):
 
 1. **Student first.** NVIDIA Nemotron 3 Nano 4B with a LoRA adapter **you own**, served by vLLM on a Nebius Serverless Endpoint, answers each request. Its confidence comes from token logprobs and self-consistency.
 2. **Teacher on doubt.** If the student is not confident enough, the request goes to **NVIDIA Nemotron 3 Ultra on Nebius Token Factory**, and its answer is served.
@@ -109,7 +107,7 @@ Your bill falls as your adapter takes over, and Ratchet tells you when a GPU wou
 
 ## Results
 
-All of this is **measured** on real models, 22 to 24 Oct 2026, not the simulation. Scoring is strict, and both exams were kept out of training. The headline is text-to-SQL; tool calling is a second result.
+All of this is **measured** on real models, 22 to 24 Oct 2026, not estimated. Scoring is strict, and both exams were kept out of training. The headline is text-to-SQL; tool calling is a second result.
 
 **Text-to-SQL (the headline).** A Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra, scores 2.6 to 3.0 times the untrained model on two exams. The teacher wrote one exam; a different model wrote the other (Claude Sonnet 5.5, for evaluation only; no Claude output was used for training). Teaching it cost about $17 on record: $12.16 of teacher answers plus $4.80 of GPU time for the training job, run on a borrowed GPU (estimates, not invoices; see [what it cost](docs/VERIFY.md#what-it-cost)). The round 2 adapter scores 39.0% on exam 1 (172 questions) and 33.0% on exam 2 (200 questions), against 12.8% and 12.5% untrained and 25.6% and 15.0% for the teacher, which loses points mostly on extra columns the strict scorer rejects. At a 95% precision bar the gate lets the adapter answer 1 of 86 measurement questions on exam 1 and none of the 100 on exam 2, so in practice all traffic still goes to the teacher.
 
@@ -141,7 +139,7 @@ Every score recomputes from the saved answers: [Check it yourself](docs/VERIFY.m
 
 ## Open on Hugging Face
 
-Two adapters, six datasets and two demos, all public: the adapters, the synthetic training data, the exams with every saved answer, the recorded Scout runs and two viewers.
+Two adapters, six datasets and two Spaces, all public: the adapters, the synthetic training data, the exams with every saved answer, the recorded Scout runs and two viewers.
 
 <p align="center">
   <a href="https://huggingface.co/collections/harshbhx/ratchet"><img alt="Open the collection on Hugging Face" src="https://img.shields.io/badge/Open%20the%20collection-Hugging%20Face-FFD21E?style=for-the-badge"></a>
@@ -158,8 +156,8 @@ Two adapters, six datasets and two demos, all public: the adapters, the syntheti
       <br><sub><i>Datasets: 6 repos, training data, exams and recorded runs</i></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://huggingface.co/harshbhx/spaces"><img src="docs/img/hf/hf-demos.png" alt="Demos: 2 Spaces, the exam explorer and the Scout viewer" width="100%"></a>
-      <br><sub><i>Demos: 2 Spaces</i></sub>
+      <a href="https://huggingface.co/harshbhx/spaces"><img src="docs/img/hf/hf-demos.png" alt="Spaces: 2, the exam explorer and the Scout viewer" width="100%"></a>
+      <br><sub><i>Spaces: 2</i></sub>
     </td>
   </tr>
 </table>
@@ -169,24 +167,24 @@ Two adapters, six datasets and two demos, all public: the adapters, the syntheti
 
 - Models: [text-to-SQL adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) (39.0% and 33.0% on two unseen exams), [tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall) (90.7% on the hard exam, 80.3% on BFCL)
 - Datasets: [text-to-SQL training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) (4,322 synthetic rows labelled by Nemotron 3 Ultra), [text-to-SQL exams](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams) (with every saved answer), [tool-calling training data](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-train), [hard exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard), [BFCL exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl), [recorded Scout runs](https://huggingface.co/datasets/harshbhx/ratchet-scout-runs)
-- Demos: [exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) (browse the tool-calling answers question by question), [Scout viewer](https://huggingface.co/spaces/harshbhx/ratchet-scout) (replays recorded runs)
+- Spaces: [exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) (browse the tool-calling answers question by question), [Scout viewer](https://huggingface.co/spaces/harshbhx/ratchet-scout) (replays recorded runs)
 
 </details>
 
-## What is real, what is simulation, what is ready to run
+## What is real, what is ready to run
 
 | Status | What |
 |---|---|
-| **Real** | The code (Apache-2.0) and its offline test suite; the live demo and Scout, calling Nemotron 3 Ultra on Token Factory under spend limits; a 20-request live smoke run ([`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23), about $0.01) and three recorded Scout runs ([`evidence/scout`](evidence/scout)); the adapters, data and exams on Hugging Face |
+| **Real** | The code (Apache-2.0) and its offline test suite; the live gateway and Scout, calling Nemotron 3 Ultra on Token Factory under spend limits; a 20-request live smoke run ([`evidence/live-smoke-2026-10-23`](evidence/live-smoke-2026-10-23), about $0.01) and three recorded Scout runs ([`evidence/scout`](evidence/scout)); the adapters, data and exams on Hugging Face |
 | **Measured** | The text-to-SQL and tool-calling scores above, on real models; the original adapters were trained on a borrowed GPU, on synthetic data. The Nebius retraining scored 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance) |
-| **Simulation** | The nightly loop, the release gate, rollbacks and every savings number from `sim/`: mock models, labelled Simulation wherever they appear. The public demo has no student endpoint yet, so the teacher answers every request |
+| **Built and tested, not run live** | Night School, the release gate and rollbacks: unit-tested with mock models, with one training run done by hand on Nebius AI Cloud (below). The live gateway has no student endpoint yet, so the teacher answers every request |
 | **Real, on Nebius AI Cloud (27 Oct 2026)** | The round-2 text-to-SQL recipe (same 4,322 examples and settings: 4-bit QLoRA, rank 16, 2 epochs) retrained by hand as a Nebius Serverless Job on one preemptible (spot) L40S, with checkpoints in a Nebius Object Storage bucket and resume after spot interruptions; Mamba kernels built for the L40S (sm_89); training loss 0.346 to 0.088; adapter SHA-256 `68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5`; training took 28.6 minutes of GPU time (58.7 minutes wall clock across two spot interruptions); the whole Nebius effort, failed and interrupted attempts included, used 2.73 GPU-hours, about $2.16 at list prices (the Nebius bill decides). Evidence: [`evidence/text2sql-round2-nebius`](evidence/text2sql-round2-nebius) |
-| **Real, on Nebius AI Cloud: the student served for speed tests (27 to 28 Oct 2026)** | The student (the published round-2 text-to-SQL adapter and the tool-calling adapter, loaded at runtime into vLLM v0.18.0 on Nemotron 3 Nano 4B) served by hand, in two short sessions, on a Nebius Serverless Endpoint on one preemptible (spot) L40S: cold start about 7.2 minutes from create to ready; with 16 requests at once the median answer took 1.6 s (SQL adapter) and 1.2 s (tool-calling adapter); about $0.67 of GPU time across both sessions (the Nebius bill decides). Speed only, no accuracy scored. A second session on 27 to 28 Oct 2026 measured a restart (stop, then start): about 7.1 minutes to the first answer, against 7.6 minutes for a cold start in the same session (pulling the image dominates both, and the adapters are loaded again after every restart); after it, 4 requests at once gave a median of 1.26 s (SQL adapter) and 1.08 s (tool-calling adapter). The endpoint was deleted afterwards. **The public live demo is not connected to it: the teacher answers every live request.** Evidence: [`evidence/student-endpoint-nebius`](evidence/student-endpoint-nebius/README.md) |
-| **Scripted, ready to run** | The nightly loop's Serverless Job, the CPU VM, and the endpoint script itself: written and tested offline against a fake `nebius` CLI, ready to run with `make nebius-plan` and `make nebius-up`. Connecting the live demo to a student endpoint has not been done |
+| **Real, on Nebius AI Cloud: the student served for speed tests (27 to 28 Oct 2026)** | The student (the published round-2 text-to-SQL adapter and the tool-calling adapter, loaded at runtime into vLLM v0.18.0 on Nemotron 3 Nano 4B) served by hand, in two short sessions, on a Nebius Serverless Endpoint on one preemptible (spot) L40S: cold start about 7.2 minutes from create to ready; with 16 requests at once the median answer took 1.6 s (SQL adapter) and 1.2 s (tool-calling adapter); about $0.67 of GPU time across both sessions (the Nebius bill decides). Speed only, no accuracy scored. A second session on 27 to 28 Oct 2026 measured a restart (stop, then start): about 7.1 minutes to the first answer, against 7.6 minutes for a cold start in the same session (pulling the image dominates both, and the adapters are loaded again after every restart); after it, 4 requests at once gave a median of 1.26 s (SQL adapter) and 1.08 s (tool-calling adapter). The endpoint was deleted afterwards. **The live site is not connected to it: the teacher answers every live request.** Evidence: [`evidence/student-endpoint-nebius`](evidence/student-endpoint-nebius/README.md) |
+| **Scripted, ready to run** | The nightly loop's Serverless Job, the CPU VM, and the endpoint script itself: written and tested offline against a fake `nebius` CLI, ready to run with `make nebius-plan` and `make nebius-up`. Connecting the live gateway to a student endpoint has not been done |
 
 ## Where it runs and how to host it on Nebius
 
-The gateway does no inference, so it runs anywhere a container does. Only training and the student endpoint need a GPU. Today the public demos and the website run on Cloudflare Workers with Containers, the teacher runs on Nebius Token Factory, and the round-2 adapter was retrained once on Nebius AI Cloud (a Serverless Job on one L40S).
+The gateway does no inference, so it runs anywhere a container does. Only training and the student endpoint need a GPU. Today the live gateway and the website run on Cloudflare Workers with Containers, the teacher runs on Nebius Token Factory, and the round-2 adapter was retrained once on Nebius AI Cloud (a Serverless Job on one L40S).
 
 <p align="center">
   <picture>
@@ -202,7 +200,7 @@ RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-up YES=1   # a CPU VM with t
 RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1 make nebius-down YES=1 # stops the endpoint, deletes the VM
 ```
 
-Apart from the two hand-run steps above (the training job and the endpoint speed test), scripted and tested offline against a fake CLI; **ready to run** with `make nebius-plan` and `make nebius-up`. Costs (estimates), flags and what each step does: [Where everything runs](docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius), [Deployment on Nebius](docs/DEPLOYMENT.md) and [Demo VM on Nebius](docs/DEPLOY_NEBIUS_VM.md). Other hosts: any container host (`make docker`), Cloudflare (`deploy/cloudflare-live`, `deploy/cloudflare`; running) and a static Hugging Face Space that replays recorded Scout runs ([Space](https://huggingface.co/spaces/harshbhx/ratchet-scout)).
+Apart from the two hand-run steps above (the training job and the endpoint speed test), scripted and tested offline against a fake CLI; **ready to run** with `make nebius-plan` and `make nebius-up`. Costs (estimates), flags and what each step does: [Where everything runs](docs/WHERE_IT_RUNS.md#one-command-to-host-it-all-on-nebius), [Deployment on Nebius](docs/DEPLOYMENT.md) and [VM on Nebius](docs/DEPLOY_NEBIUS_VM.md). Other hosts: any container host (`make docker`), Cloudflare (`deploy/cloudflare-live`; running) and a static Hugging Face Space that replays recorded Scout runs ([Space](https://huggingface.co/spaces/harshbhx/ratchet-scout)).
 
 ## Feedback on Nebius and NVIDIA
 
@@ -240,28 +238,27 @@ On the Nebius side, Token Factory's [post-training model list](https://docs.toke
 
 ## Use it
 
-You need Python 3.10 or newer (text-to-SQL fixture tasks need 3.11; the Docker image uses 3.12). Nothing below needs a key or a GPU.
+You need Python 3.10 or newer (text-to-SQL fixture tasks need 3.11; the Docker image uses 3.12). Installing and running the tests needs no key and no GPU.
 
 ```bash
 git clone https://github.com/harshbhx/ratchet.git && cd ratchet
 make install                            # pip install -e ".[dev]"
-make demo                               # mock gateway with a trained student: http://localhost:8000
+make test                               # the tests: no network, no GPU
 ```
 
 **Windows, or no `make`.** The same steps in PowerShell:
 
 ```powershell
 python -m pip install -e ".[dev]"
-$env:RATCHET_MOCK_WARMUP_DAYS="4"; python -m uvicorn ratchet.gateway:app --port 8000
 python -m pytest -q   # the tests; tests/test_watch.py needs a Unix host and skips itself
 ```
 
-Open <http://localhost:8000> (the story), `/scout` and `/dashboard`; everything there is simulation. Point any OpenAI SDK at the gateway by changing the base URL, and name the task in a header:
+To run your own gateway, use live mode (below). Then point any OpenAI SDK at it by changing the base URL, and name the task in a header:
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="<one of your RATCHET_API_KEYS>")
 r = client.chat.completions.create(
     model="ratchet",
     messages=[{"role": "user", "content": "My order never arrived"}],
@@ -270,15 +267,12 @@ r = client.chat.completions.create(
 print(r.ratchet)  # served_by, confidence, cost_usd, all_teacher_cost_usd, usage_breakdown ...
 ```
 
-This message gets a mock teacher's answer (`served_by: teacher`), because the mock student only knows the simulation's synthetic tickets. To see the student answer, open `/dashboard` and run a day.
-
 <details>
 <summary>More commands</summary>
 
 | I want to | Run |
 |---|---|
-| Run Scout as an outside client | `python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1` |
-| See the loop with a bad deploy rolled back | `python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3` |
+| Run Scout as an outside client | `python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1` (against a gateway in live mode) |
 | Recompute the text-to-SQL scores | `python scripts/text2sql/exam_numbers.py --check` |
 | Recompute the tool-calling scores | `python scripts/toolcall_results.py --check` |
 | Run the tests (no network, no GPU) | `make test` |
@@ -311,7 +305,7 @@ flowchart LR
 - **Privacy.** PII is redacted before anything is stored (pattern-based: names and street addresses are not caught yet), storage opt-outs and erasure exist, and API keys and end-user identifiers are never stored. See [Features in depth](docs/FEATURES.md) and the [threat model](docs/THREAT_MODEL.md).
 - **License provenance.** Every example records its teacher and license when it is captured. Each trained adapter gets a bill of materials signed with Ed25519, which anyone with the public key can check offline (`python -m ratchet.bom verify`), and a `NOTICE.md` that travels with the weights.
 - **Economics.** The cost report counts savings by GPU-hours actually paid and says so when a GPU endpoint would cost more than it saves.
-- **Scout.** [Scout](docs/SCOUT.md) is a multi-agent research demo on the same gateway: its many narrow triage and reader calls are distilled, and its planner and writer calls are pinned to the teacher and never stored as training data.
+- **Scout.** [Scout](docs/SCOUT.md) is a multi-agent research tool on the same gateway: its many narrow triage and reader calls are distilled, and its planner and writer calls are pinned to the teacher and never stored as training data.
 - **Go deeper.** [Check it yourself](docs/VERIFY.md) · [Features in depth](docs/FEATURES.md) · [Live mode](docs/LIVE_MODE.md) · [Documentation index](docs/README.md).
 
 ### How it uses NVIDIA and Nebius
@@ -324,10 +318,10 @@ flowchart LR
 | Student | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` + LoRA on a **Nebius Serverless Endpoint** (vLLM) | Small enough for one GPU; the adapter is the part you own |
 | Night School | **Nebius Serverless Jobs** (L40S) with TRL + PEFT; one job has run by hand (27 Oct 2026) | Billed per second while a job runs ([Serverless overview](https://docs.nebius.com/serverless/overview), read Oct 26, 2026) |
 | Dataset / adapters | **Nebius Object Storage** bucket mounted in jobs and endpoints | |
-| Designed demo host (today: Cloudflare Workers with Containers) | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | The gateway does no inference |
-| Scout web search | Tavily Search API (not NVIDIA or Nebius) | Search tool for the Scout demo only |
+| Designed gateway host (today: Cloudflare Workers with Containers) | **Nebius AI Cloud** CPU VM (`2vcpu-8gb`) | The gateway does no inference |
+| Scout web search | Tavily Search API (not NVIDIA or Nebius) | Search tool for Scout only |
 
-Rows 4 to 7 (the student endpoint, Night School, the object storage and the CPU VM) are the design: the scripts are written and tested offline, ready to run with `make nebius-plan`, except that one Serverless Job with a bucket ran by hand on 27 Oct 2026 (the round-2 retraining) and the student was served once by hand on an endpoint for a speed test the same day ([evidence](evidence/student-endpoint-nebius/README.md)). Today the public demos run on Cloudflare Workers with Containers, and the adapters in [Real results](#results) were trained on a borrowed GPU. Token Factory's [post-training model list](https://docs.tokenfactory.nebius.com/post-training/models.md) names no Nemotron model (read Oct 26, 2026), and serving custom weights on a dedicated endpoint is "currently in beta and available on request" ([docs](https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights.md), read Oct 21, 2026), so the designed home of the student is Nebius AI Cloud.
+Rows 4 to 7 (the student endpoint, Night School, the object storage and the CPU VM) are the design: the scripts are written and tested offline, ready to run with `make nebius-plan`, except that one Serverless Job with a bucket ran by hand on 27 Oct 2026 (the round-2 retraining) and the student was served by hand, in two short sessions, on an endpoint for speed tests on 27 to 28 Oct 2026 ([evidence](evidence/student-endpoint-nebius/README.md)). Today the live gateway runs on Cloudflare Workers with Containers, and the adapters in [Real results](#results) were trained on a borrowed GPU. Token Factory's [post-training model list](https://docs.tokenfactory.nebius.com/post-training/models.md) names no Nemotron model (read Oct 26, 2026), and serving custom weights on a dedicated endpoint is "currently in beta and available on request" ([docs](https://docs.tokenfactory.nebius.com/ai-models-inference/dedicated-endpoints/custom-weights.md), read Oct 21, 2026), so the designed home of the student is Nebius AI Cloud.
 
 ## Why "license-clean"
 
@@ -347,7 +341,7 @@ In its own words, OpenMDW-1.1 "does not impose any restrictions or obligations w
 | Statistical release gate | Nothing ships | Your own evaluation | Held-out certificate, shadow, canary and automatic rollback |
 | Reports when it loses money | Per-token savings only | No | Savings by GPU-hours paid, the break-even volume and a recommendation |
 
-Cells describe the pages we read on 21 Oct 2026 ([sources](docs/COMPETITIVE_ANALYSIS.md)); "Not stated" and "Not recorded" mean we found no statement, not that the feature is absent. The Ratchet column describes the design, shown in simulation and in the scripts (see [Status](#what-is-real-what-is-simulation-what-is-ready-to-run)).
+Cells describe the pages we read on 21 Oct 2026 ([sources](docs/COMPETITIVE_ANALYSIS.md)); "Not stated" and "Not recorded" mean we found no statement, not that the feature is absent. The Ratchet column describes the design, built and tested with mock models and in the scripts (see [Status](#what-is-real-what-is-ready-to-run)).
 
 The YC Summer 2026 teams Understudy and Experiential Labs, as cited in the [competitive analysis](docs/COMPETITIVE_ANALYSIS.md) (not re-checked here), sit between the columns: both say the customer owns the model, and neither page we found documents shadow, canary and automatic rollback.
 
@@ -362,7 +356,7 @@ What breaks first:
 - **Scout's reader is checked on two labels.** page-read's precision covers its `answers_question` and `fact_type` fields only; the free-text `key_fact` the writer cites is not checked.
 - **A signed BOM is the operator's signed statement** of the data and evaluation behind an adapter. It shows that nothing changed after signing, not that the weights were trained on that data.
 - **One gateway process.** The ledger is one SQLite file behind one lock; a Postgres ledger for several workers is planned ([roadmap](docs/ROADMAP.md)).
-- **Simulation numbers come from mock models.** They show how the loop behaves, not real model quality. As of Oct 27, 2026, the original adapters were trained on a borrowed GPU, the round-2 recipe was retrained once on a Nebius Serverless Job, and the public demo has no student endpoint yet, so the teacher answers every request; the student was served once by hand on a Nebius Serverless Endpoint for a speed test ([evidence](evidence/student-endpoint-nebius/README.md)), and the endpoint was deleted afterwards. Token Factory calls (the teacher) are real.
+- **The nightly loop has not run on live traffic.** It is built and unit-tested with mock models, which show how the loop behaves, not real model quality. As of Oct 27, 2026, the original adapters were trained on a borrowed GPU, the round-2 recipe was retrained once on a Nebius Serverless Job, and the live gateway has no student endpoint yet, so the teacher answers every request; the student was served by hand, in two short sessions, on a Nebius Serverless Endpoint for speed tests ([evidence](evidence/student-endpoint-nebius/README.md)), and the endpoint was deleted afterwards. Token Factory calls (the teacher) are real.
 - **Token Factory's Terms of Service §5(f)** ("competing service") is broad. We asked Nebius support about it in writing on Oct 19, 2026; until the answer is final, treat the question as open. Not legal advice.
 
 ## NVIDIA lineage
@@ -378,7 +372,7 @@ NVIDIA Research's paper "Small Language Models are the Future of Agentic AI" ([a
 | S2 "Data curation and filtering" | PII redaction before storage; only complete teacher answers that are valid under the task's spec are kept | Yes |
 | S3 "Task clustering" | Not clustered: the caller names each request's task (`X-Ratchet-Task` or `metadata.ratchet_task`) and the operator may give a task a typed field spec in the task registry; statistics are kept per task | No: manual, tasks are named, not clustered |
 | S4 "SLM selection" | One base, Nemotron 3 Nano 4B, chosen by hand for size, license and serving cost; Ratchet does not compare bases | No: manual, one base model |
-| S5 "Specialized SLM fine-tuning" | A LoRA fine-tune each night, from teacher answers only: it runs nightly in the simulation; one Nebius Serverless Job has run by hand (27 Oct 2026); the nightly job is scripted and tested offline, ready to run | Yes |
+| S5 "Specialized SLM fine-tuning" | A LoRA fine-tune each night, from teacher answers only: one Nebius Serverless Job has run by hand (27 Oct 2026); the nightly job is scripted and tested offline, ready to run, and has not run on live traffic | Yes |
 | S6 "Iteration and refinement" | Night School every night, gated by a held-out golden set (with an exact precision certificate in each signed BOM), shadow, canary and automatic rollback | Yes |
 
 NVIDIA's [Data Flywheel Blueprint](https://developer.nvidia.com/blog/build-efficient-ai-agents-through-model-distillation-with-nvidias-data-flywheel-blueprint) (blog Jun 11, 2025) also distils production traffic into smaller models, but its README says "Promotion to production—as well as any deeper evaluation or dataset curation—remains a human decision" and "Think of the Flywheel as a flashlight, not an autopilot" ([repo](https://github.com/NVIDIA-AI-Blueprints/data-flywheel), marked deprecated in Apr 2026; read Oct 21, 2026). Ratchet makes the promotion decision itself, with statistics on held-out rows and audited traffic, and writes each decision and its numbers to the release log.
@@ -412,7 +406,7 @@ The git history starts on Oct 19, 2026; every change since then is a dated commi
 - `docs/REQUIREMENTS.md`: the requirements matrix (`python scripts/reqtrace.py`).
 - `tests/fixtures/sim_reference_seed7.json` and `tests/fixtures/reference.json`: the pinned reference runs (`python scripts/regen_sim_reference.py`, `python scripts/reference_check.py --write`).
 - `web/package-lock.json`: npm's lock file.
-- `docs/img/*.jpg`: screenshots of the pages in mock mode (simulation).
+- `docs/img/*.jpg`: screenshots of the pages.
 
 </details>
 
@@ -426,11 +420,11 @@ The git history starts on Oct 19, 2026; every change since then is a dated commi
 | `ratchet/gateway.py`, `ratchet/router.py` | The OpenAI-compatible API and the cascade: pinned tasks, audits, shadow arbitration, cost accounting |
 | `ratchet/release.py`, `ratchet/stats.py`, `ratchet/certificate.py` | Golden gate, shadow, canary, rollback; the exact statistics and certificates behind them |
 | `ratchet/ledger.py`, `ratchet/licenses.py`, `ratchet/redact.py`, `ratchet/bom.py` | The provenance ledger, the teacher license registry (closed teachers refused), redaction, the signed BOM |
-| `ratchet/nightschool/`, `ratchet/live.py` | Dataset build, LoRA training (TRL + PEFT), golden eval, nightly orchestration (runs in the simulation; on Nebius scripted and tested offline, ready to run) |
+| `ratchet/nightschool/`, `ratchet/live.py` | Dataset build, LoRA training (TRL + PEFT), golden eval, nightly orchestration (unit-tested with mock models; on Nebius scripted and tested offline, ready to run) |
 | `ratchet/scout/` | Scout: agents, prompts, search, budget guard, CLI |
 | `web/`, `ratchet/web/dist/` | The React app (story, Scout, dashboard) and its committed build |
-| `sim/` | Synthetic tickets and mock models for demos, tests and the simulation |
-| `deploy/` | Nebius Serverless Job and Endpoint scripts, the demo VM kit, Cloudflare Workers |
+| `sim/` | Synthetic tickets and mock models for the tests |
+| `deploy/` | Nebius Serverless Job and Endpoint scripts, the Nebius VM kit, Cloudflare Workers |
 | `evidence/`, `scripts/` | Saved answers, manifests and results behind every measured number, and the scripts that recompute them |
 | `docs/`, `docs-site/` | The documentation and its site |
 
@@ -442,8 +436,8 @@ Start at [docs/README.md](docs/README.md). Highlights:
 
 - [PRD](docs/PRD.md): problem, users, requirements, metrics, release plan
 - [Architecture](docs/ARCHITECTURE.md), [API](docs/API.md), [Configuration](docs/CONFIGURATION.md), [Scout](docs/SCOUT.md)
-- [Where everything runs](docs/WHERE_IT_RUNS.md), [Deployment on Nebius](docs/DEPLOYMENT.md), [Demo VM on Nebius](docs/DEPLOY_NEBIUS_VM.md), [Runbook](docs/RUNBOOK.md), [Threat model](docs/THREAT_MODEL.md)
-- [Testing and simulation](docs/TESTING.md), [Architecture decisions](docs/adr/README.md)
+- [Where everything runs](docs/WHERE_IT_RUNS.md), [Deployment on Nebius](docs/DEPLOYMENT.md), [VM on Nebius](docs/DEPLOY_NEBIUS_VM.md), [Runbook](docs/RUNBOOK.md), [Threat model](docs/THREAT_MODEL.md)
+- [Testing](docs/TESTING.md), [Architecture decisions](docs/adr/README.md)
 - [Business](docs/BUSINESS.md), [Competitive analysis](docs/COMPETITIVE_ANALYSIS.md), [Roadmap](docs/ROADMAP.md)
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md). Working with Claude? Read [AGENTS.md](AGENTS.md). Security reports: [SECURITY.md](SECURITY.md).

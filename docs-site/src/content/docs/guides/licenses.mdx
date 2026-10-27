@@ -34,7 +34,7 @@ The apprentice's own schooling came from NVIDIA, under NVIDIA's license. The not
 
 <Steps>
 
-1. **The registry is built at startup.** `ratchet/licenses.py` holds the built-in teachers (`BUILTIN`, read-only). If `RATCHET_TEACHER_LICENSES` names a file, its entries are checked and merged into a copy, published as `licenses.REGISTRY`. A bad file stops startup with every error listed. This runs at every entry point: the gateway, the simulator, `python -m ratchet.live` and `python -m ratchet.admin`.
+1. **The registry is built at startup.** `ratchet/licenses.py` holds the built-in teachers (`BUILTIN`, read-only). If `RATCHET_TEACHER_LICENSES` names a file, its entries are checked and merged into a copy, published as `licenses.REGISTRY`. A bad file stops startup with every error listed. This runs at every entry point: the gateway, `python -m ratchet.live` and `python -m ratchet.admin`.
 
 2. **Every model that writes or judges answers must be distillable.** The startup check runs `licenses.require_distillable` on the teacher (`RATCHET_TEACHER_MODEL`), the judge (`RATCHET_JUDGE_MODEL`) and the fallback teacher (`RATCHET_TEACHER_FALLBACK_MODEL`, when set). An unknown model, or one in a closed family, raises `LicenseError` and the gateway does not start.
 
@@ -138,7 +138,7 @@ The built-in entries in `ratchet/licenses.py`:
 | `nvidia/nemotron-3-super-120b-a12b` | Judge (default) | NVIDIA Nemotron Open Model License | Commercial use and derivative works allowed; NVIDIA claims no ownership of outputs |
 | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Hosted fallback student | NVIDIA Nemotron Open Model License | As above |
 | `nvidia/Nemotron-3_5-Lightning` | Listed, not used by default | OpenMDW-1.1 | Verify on the model card |
-| `mock-teacher` | The simulator only | mock (simulation only) | |
+| `mock-teacher` | Tests and mock mode only | mock (tests only) | |
 
 `CLOSED` maps name prefixes of closed model families to the terms that forbid distillation. Every OpenAI family (`gpt`, `o1`, `o3`, `o4`) carries the Business Terms §3.3(e) note, so a refusal can quote it. For a model that is not in the registry, `lookup` reads the last part of the id after `/`, in lower case, and returns the closed terms when it starts with one of those prefixes. `require_distillable` then refuses it with the license name and the clause, and refuses any other unknown model as unknown. Matching on names is a heuristic, not legal review.
 

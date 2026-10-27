@@ -18,8 +18,8 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 |---|---|
 | [PRD.md](PRD.md) | Product requirements: problem, users, goals, scope, requirements, success metrics |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components, request path, nightly loop, data model, version state machine, confidence math, cost accounting |
-| [FEATURES.md](FEATURES.md) | The longer explanations: the reference simulation, economics, the safety rules, certificates, proofs of what an adapter was trained on, ledger replay, savings receipts, privacy |
-| [SCOUT.md](SCOUT.md) | Scout, the multi-agent research demo: agents, routes, event contract, budget guard, mock research world |
+| [FEATURES.md](FEATURES.md) | The longer explanations: economics, the safety rules, certificates, proofs of what an adapter was trained on, ledger replay, savings receipts, privacy |
+| [SCOUT.md](SCOUT.md) | Scout, the multi-agent research tool: agents, routes, event contract, budget guard, mock research world |
 | [GLOSSARY.md](GLOSSARY.md) | Terms: teacher, student, cascade, golden set, canary, coverage, precision… |
 | [adr/](adr/README.md) | Architecture decision records: one file per decision, with context, the decision, consequences and alternatives |
 
@@ -27,7 +27,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 | Doc | What it covers |
 |---|---|
-| [API.md](API.md) | Every HTTP endpoint (pages, OpenAI API with keys and streaming, stats, adapter BOMs, redaction preview, demo controls, Scout) with schemas, errors, and curl and SDK examples |
+| [API.md](API.md) | Every HTTP endpoint (pages, OpenAI API with keys and streaming, stats, adapter BOMs, redaction preview, mock-mode controls, Scout) with schemas, errors, and curl and SDK examples |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every environment variable (incl. privacy and security), prices, release policy, tasks (distillable and pinned), licenses |
 
 ## Run and operate it
@@ -35,7 +35,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | Doc | What it covers |
 |---|---|
 | [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md) | Where every part runs today (laptop, Cloudflare, Token Factory) and where it is designed to run on Nebius, and the one command that hosts it all there (scripted and tested offline, ready to run) |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Local mock mode and live mode on Nebius step by step, cost estimates, keeping the demo alive |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Local mock mode and live mode on Nebius step by step, cost estimates, keeping the live gateway up |
 | [LIVE_MODE.md](LIVE_MODE.md) | Running against real Token Factory, the student endpoint and nightly jobs, measuring a live run |
 | [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | An alternative host: the Nebius CPU VM kit (scripted and tested offline). Setup, mock to live, costs, monitoring, backups, security, teardown |
 | [RUNBOOK.md](RUNBOOK.md) | Daily checks, event meanings, manual rollback and promotion, incident playbooks, backups |
@@ -46,7 +46,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 | Doc or folder | What it covers |
 |---|---|
 | [VERIFY.md](VERIFY.md) | Check it yourself: one command per claim, the output to expect, and what none of it proves |
-| [TESTING.md](TESTING.md) | Test suite, contract tests, live-path tests (live mode, CLIs and deploy scripts run offline), the traceability check, simulation method and assumptions, bugs found and fixed, seed robustness |
+| [TESTING.md](TESTING.md) | Test suite, contract tests, live-path tests (live mode, CLIs and deploy scripts run offline), the traceability check, the test method and assumptions, bugs found and fixed, seed robustness |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Generated traceability matrix: every PRD requirement and invariant with its code, tests and how it is verified (`make trace`) |
 | [../evidence/text2sql-round1](../evidence/text2sql-round1), [round2](../evidence/text2sql-round2), [exam2](../evidence/text2sql-exam2) | The measured text-to-SQL results: data, exams, every answer, scores and the scripts that recompute them |
 | [../evidence/toolcall](../evidence/toolcall) | The measured tool-calling results (round 3): both exams, every saved answer, the exams' own scorers, `results.json` and the drafts rendered from it; `python scripts/toolcall_results.py --check` recomputes it all |
@@ -63,7 +63,7 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 ## Images
 
-Screenshots from the simulation (mock models): `img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel).
+Screenshots of the pages: `img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg` and `img/trust.jpg` (the dashboard's Trust and privacy panel).
 
 Charts and diagrams:
 
@@ -71,9 +71,9 @@ Charts and diagrams:
 - `img/toolcall-results.svg`: the tool-calling chart, drawn by `scripts/toolcall_results_svg.py` from `evidence/toolcall/results.json` (`--check` compares only); `img/toolcall-results-16x9.png` is the still the README links.
 - `img/architecture.svg` and its PNGs (`architecture-light.png`, `architecture-dark.png`, and `architecture-devpost-1200x800.png` for Devpost): the architecture diagram, drawn by `scripts/render_architecture.py`.
 - `img/where-it-runs.svg` and its PNGs (`where-it-runs-light.png`, `where-it-runs-dark.png`): the map of where everything runs, drawn in the same style by the same script.
-- `img/try-it-16x9.png`: the README's "try it" card (four links in order). `img/run-on-nebius.svg`: the README's text-only "Run on Nebius" badge. `img/demo-reel-poster.png`: the demo reel's still, shown instead of the animation when motion is reduced. `img/social-preview.png`: the repository's share image. `img/hf/`: the Hugging Face models, datasets and demos pages, linked from the README.
+- `img/try-it-16x9.png`: the README's "try it" card (three links in order). `img/run-on-nebius.svg`: the README's text-only "Run on Nebius" badge. `img/demo-reel-poster.png`: the reel's still, shown instead of the animation when motion is reduced. `img/social-preview.png`: the repository's share image. `img/hf/`: the Hugging Face models, datasets and Spaces pages, linked from the README.
 
-Animations in `img/anim/`: `readme-banner.gif`, `readme-stats.gif` and `readme-footer.gif` are the README's banner, at-a-glance strip and footer; `ratchet-demo-reel.gif` is the demo reel; `ratchet-how-it-works-light.gif` is the animated walkthrough the README links under the architecture diagram; `tool-calling-results.gif` is the animated tool-calling chart; `judge-box-howto.gif` shows the Scout page's judge box (README and [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md)).
+Animations in `img/anim/`: `readme-banner.gif`, `readme-stats.gif` and `readme-footer.gif` are the README's banner, at-a-glance strip and footer; `ratchet-demo-reel.gif` is the reel; `ratchet-how-it-works-light.gif` is the animated walkthrough the README links under the architecture diagram; `tool-calling-results.gif` is the animated tool-calling chart; `judge-box-howto.gif` shows the Scout page's judge box (README and [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md)).
 
 ## Repo-level files
 

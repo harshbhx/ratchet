@@ -1,6 +1,6 @@
 ---
 title: The big picture
-description: Every Ratchet component, where it runs, how the pieces connect, mock mode against live mode, and the three loops that run at different speeds.
+description: Every Ratchet component, where it runs, how the pieces connect, the live runtime, and the three loops that run at different speeds.
 ---
 
 import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
@@ -121,7 +121,7 @@ flowchart TB
 | Component | What it does | Where it runs | Code |
 |---|---|---|---|
 | Your app | Sends OpenAI-style chat requests, with a task name | Anywhere | Any OpenAI SDK |
-| Gateway | OpenAI-compatible API, admission checks, pages, Scout endpoints, the release gate's tick | One process, one uvicorn worker. The public demo runs on Cloudflare Workers with Containers; the Nebius VM kit (`2vcpu-8gb`) is scripted and tested offline, ready to run | [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) (`Runtime`) |
+| Gateway | OpenAI-compatible API, admission checks, pages, Scout endpoints, the release gate's tick | One process, one uvicorn worker. The live gateway runs on Cloudflare Workers with Containers; the Nebius VM kit (`2vcpu-8gb`) is scripted and tested offline, ready to run | [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) (`Runtime`) |
 | Cascade (router) | Student first, confidence, teacher on escalation, audits, shadow, cost | Inside the gateway | [`ratchet/router.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/router.py) (`Ratchet.handle`) |
 | Student <Who as="student" /> | `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` with the LoRA adapter you own, served by vLLM with runtime LoRA loading | A Nebius Serverless Endpoint (L40S by default) | [`deploy/student_endpoint.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/student_endpoint.sh) |
 | Teacher <Who as="teacher" /> | `nvidia/Nemotron-3-Ultra-550b-a55b` answers escalations, cold starts, pinned tasks, audits and arbitrations | Nebius Token Factory | `RATCHET_TEACHER_MODEL` |
@@ -132,8 +132,8 @@ flowchart TB
 | Bucket | Training rows, adapters, bills of materials | Nebius Object Storage, mounted at `/data` in the job and the endpoint | `RATCHET_BUCKET_ID`, `RATCHET_SYNC_CMD` |
 | Release gate | Golden gate, shadow, canary 10%, 50%, 100%, rollback | Inside the gateway (and the cron tick) | [`ratchet/release.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/release.py) (`ReleaseGate`) |
 | Web app | `/` (the story), `/scout`, `/dashboard`; no-build pages at `/lite*` | Served by the gateway from `ratchet/web/dist` | [`web/`](https://github.com/harshbhx/ratchet/tree/main/web) |
-| Scout | A multi-agent research demo whose calls go through the cascade | Inside the gateway; Tavily for web search in live mode | [`ratchet/scout/`](https://github.com/harshbhx/ratchet/tree/main/ratchet/scout) |
-| Caddy | Automatic HTTPS, security headers, an optional token guard on `/v1/*`, `/ratchet/demo/*` and `/ratchet/admin/*` | Next to the gateway in the Nebius VM kit (Docker Compose) | [`deploy/vm/Caddyfile`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/Caddyfile) |
+| Scout | A multi-agent research app whose calls go through the cascade | Inside the gateway; Tavily for web search | [`ratchet/scout/`](https://github.com/harshbhx/ratchet/tree/main/ratchet/scout) |
+| Caddy | Automatic HTTPS, security headers, an optional token guard on `/v1/*` and `/ratchet/admin/*` | Next to the gateway in the Nebius VM kit (Docker Compose) | [`deploy/vm/Caddyfile`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/Caddyfile) |
 
 Token Factory listed no fine-tuning or LoRA serving for Nemotron when this design was chosen (research notes, Oct 19, 2026), and Nebius's [post on post-training in Token Factory](https://nebius.com/blog/posts/post-training-in-token-factory) names no Nemotron model to fine-tune (read Oct 26, 2026), so the student is trained and served on Nebius AI Cloud. The gateway itself does no inference, which is why a 2-vCPU machine is enough.
 
@@ -154,7 +154,7 @@ Token Factory listed no fine-tuning or LoRA serving for Nemotron when this desig
 </Steps>
 
 <Aside type="caution" title="The GPU steps are scripted and ready to run">
-As of Oct 27, 2026, the teacher runs on Nebius Token Factory and the round-2 recipe was retrained once by hand as a Nebius Serverless Job (one L40S). Steps 2 and 6 to 8 (the student endpoint and the nightly training job) are scripted and tested against mock models and fake HTTP transports, ready to run with `make nebius-plan` and `make nebius-up`; the student was served once, by hand, on a Nebius endpoint for a speed test ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), but the public demo is not connected to an endpoint, so the teacher answers every request. The `nebius ai` commands in `deploy/` follow the CLI reference. Live mode itself runs on the public demo, where every request is a real Token Factory call. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
+As of Oct 27, 2026, the teacher runs on Nebius Token Factory and the round-2 recipe was retrained once by hand as a Nebius Serverless Job (one L40S). Steps 2 and 6 to 8 (the student endpoint and the nightly training job) are scripted and tested against mock models and fake HTTP transports, ready to run with `make nebius-plan` and `make nebius-up`; the student was served by hand, in two short sessions, on a Nebius endpoint for speed tests ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), but the live gateway is not connected to an endpoint, so the teacher answers every request. The `nebius ai` commands in `deploy/` follow the CLI reference. Live mode itself runs on the live gateway, where every request is a real Token Factory call. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
 </Aside>
 
 ### What a request leaves behind
@@ -190,27 +190,22 @@ flowchart TB
 </figcaption>
 </figure>
 
-### Mock mode and live mode
+### The live runtime
 
-`RATCHET_MODE` picks one of two runtimes, built in `Runtime.reset` in `ratchet/gateway.py`:
+`RATCHET_MODE=live` builds the runtime in `Runtime.reset` in `ratchet/gateway.py`:
 
 <figure class="rt-diagram">
 
 ```mermaid
 flowchart TB
-  mode{{"RATCHET_MODE"}}
-  mode -->|"mock, the default"| m1[("In-memory ledger<br/>gone on restart")]
-  m1 --> m2["Mock teacher and students<br/>from sim/, no network"]
-  m2 --> m3["Demo controls on<br/>simulated search"]
-  mode -->|live| l1[("SQLite file<br/>at RATCHET_DB")]
+  l1[("SQLite file<br/>at RATCHET_DB")]
   l1 --> l2["Teacher on<br/>Token Factory"]
   l2 --> sb{{"RATCHET_STUDENT_BASE<br/>set?"}}
   sb -->|yes| l3["Your adapter on<br/>your vLLM endpoint"]
   sb -->|no| l4["Hosted fallback<br/>Nano 30B, untuned"]
 
-  class mode,sb gate
-  class m1,l1 store
-  class m2,m3 neutral
+  class sb gate
+  class l1 store
   class l2 teacher
   class l3 student
   class l4 outline
@@ -218,23 +213,22 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** One setting picks the runtime when the gateway starts (`Runtime.reset`). The left branch needs no network and no keys, and every number it shows is simulation. The right branch keeps a real ledger file and calls the teacher on Token Factory. Its student is your adapter on your own vLLM endpoint when `RATCHET_STUDENT_BASE` is set, and otherwise the untuned Nano 30B on Token Factory, drawn dashed because it is a stand-in, not the adapter you own.
+**Reading this diagram.** The runtime keeps a real ledger file and calls the teacher on Token Factory. Its student is your adapter on your own vLLM endpoint when `RATCHET_STUDENT_BASE` is set, and otherwise the untuned Nano 30B on Token Factory, drawn dashed because it is a stand-in, not the adapter you own.
 
 </figcaption>
 </figure>
 
-| | Mock mode | Live mode |
-|---|---|---|
-| Ledger | `:memory:`, gone on restart | SQLite file at `RATCHET_DB`, day 1 starts at the first request |
-| Teacher and student | Mock models from `sim/` (deterministic, no network) | Token Factory teacher; vLLM endpoint, or the hosted fallback when `RATCHET_STUDENT_BASE` is empty |
-| Night School | `MockFleet` trains and scores in memory; a simulated day runs from the dashboard (`POST /ratchet/demo/day`) or at startup (`RATCHET_MOCK_WARMUP_DAYS`) | `python -m ratchet.live night` from cron, with a real training job |
-| Audit rate | At least 0.10 | `RATCHET_AUDIT_RATE`, default 0.05 |
-| Canary audits needed per stage | 15 (unless `RATCHET_MIN_AUDITS` is set) | 20 (`ReleasePolicy.min_audits`) |
-| Gate tick from requests | After every request | At most once every 5 s (`RATCHET_TICK_INTERVAL_S`) |
-| Audits and shadow | Run before the response (0 sidecar workers) | Run after the response on 4 sidecar workers (`RATCHET_SIDECAR_WORKERS`) |
-| API keys | Optional | Required (`RATCHET_API_KEYS`), unless `RATCHET_ALLOW_UNAUTHENTICATED=1` with a guard in front |
-| Scout search | Simulated results | Tavily when `TAVILY_API_KEY` is set |
-| Numbers it shows | **Simulation** | Live traffic |
+| | Live mode |
+|---|---|
+| Ledger | SQLite file at `RATCHET_DB`, day 1 starts at the first request |
+| Teacher and student | Token Factory teacher; vLLM endpoint, or the hosted fallback when `RATCHET_STUDENT_BASE` is empty |
+| Night School | `python -m ratchet.live night` from cron, with a real training job (built and tested with mock models; not yet run on live traffic) |
+| Audit rate | `RATCHET_AUDIT_RATE`, default 0.05 |
+| Canary audits needed per stage | 20 (`ReleasePolicy.min_audits`) |
+| Gate tick from requests | At most once every 5 s (`RATCHET_TICK_INTERVAL_S`) |
+| Audits and shadow | Run after the response on 4 sidecar workers (`RATCHET_SIDECAR_WORKERS`) |
+| API keys | Required (`RATCHET_API_KEYS`), unless `RATCHET_ALLOW_UNAUTHENTICATED=1` with a guard in front |
+| Scout search | Tavily when `TAVILY_API_KEY` is set |
 
 With no `RATCHET_STUDENT_BASE`, a trained version's student calls go to the untuned hosted Nano 30B, held to the global threshold `RATCHET_CONFIDENCE_THRESHOLD` (0.80) instead of the version's calibrated one. Those answers are still reported as `served_by: student`; the response's `model` field names the model that wrote them, and the pages label them "Nano 30B · hosted", not as your adapter.
 
@@ -274,7 +268,7 @@ The loops share only the ledger. The gate reads what requests wrote, and Night S
 
 ## For engineers
 
-**`Runtime` wires it all.** [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) `Runtime.__init__` checks the whole configuration first (`config.check`, every error in one `ConfigError`), then `Runtime.reset` builds the ledger, the teacher provider, the student resolver (in live mode: the endpoint and `v.adapter_uri`, or the hosted fallback model), the `Ratchet` cascade and the `ReleaseGate`. A mock reset (`POST /ratchet/demo/reset`) rebuilds everything.
+**`Runtime` wires it all.** [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) `Runtime.__init__` checks the whole configuration first (`config.check`, every error in one `ConfigError`), then `Runtime.reset` builds the ledger, the teacher provider, the student resolver (in live mode: the endpoint and `v.adapter_uri`, or the hosted fallback model), the `Ratchet` cascade and the `ReleaseGate`. 
 
 **Settings that shape the picture** (defaults from [`ratchet/config.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/config.py); all of them in the [configuration reference](/reference/configuration/)):
 
@@ -311,7 +305,6 @@ The ledger is not in the bucket. With the default WAL journal it must stay on th
 **Commands:**
 
 ```bash
-make demo                                    # mock gateway with a 4-day warm-up on :8000 (simulation)
 bash deploy/student_endpoint.sh create       # once; DRY_RUN=1 first. Later: start, stop, status
 python -m ratchet.live night                 # Night School (cron)
 python -m ratchet.live tick                  # the release gate (cron, every 5 minutes)
@@ -320,7 +313,7 @@ python -m ratchet.config check               # the startup config check: exit 0,
 DRY_RUN=1 bash deploy/vm/create_vm.sh        # the Nebius VM kit, commands printed only
 ```
 
-**Endpoints the pages use:** `GET /ratchet/stats`, `GET /ratchet/cost`, `GET /ratchet/tasks`, the Scout endpoints under `/scout/*`, and, in mock mode only, `/ratchet/demo/*`. See the [API reference](/reference/api/).
+**Endpoints the pages use:** `GET /ratchet/stats`, `GET /ratchet/cost`, `GET /ratchet/tasks`, the Scout endpoints under `/scout/*`. See the [API reference](/reference/api/).
 
 ## Common questions
 
@@ -330,7 +323,7 @@ It never runs a model. It sends the student's samples to the vLLM endpoint and t
 
 ### Why one SQLite file and one process?
 
-At demo scale (thousands to tens of thousands of requests a day) one file needs no setup, is easy to back up and inspect, and is fast enough. The price is one gateway process: run one uvicorn worker. A Postgres ledger for several workers is planned.
+At this scale (thousands to tens of thousands of requests a day) one file needs no setup, is easy to back up and inspect, and is fast enough. The price is one gateway process: run one uvicorn worker. A Postgres ledger for several workers is planned.
 
 ### What happens when the GPU endpoint is stopped?
 
@@ -342,11 +335,11 @@ Token Factory listed no fine-tuning or LoRA serving for Nemotron when this desig
 
 ### What does running it cost?
 
-Estimates only. The Nebius VM kit, if you host the demo on it: about $72.50 for Oct 29 to Dec 15, 2026, before live usage (prices as of Oct 20, 2026, [VM kit guide](/reference/deploy-nebius-vm/)). The student endpoint: about $32 per full day if left on, and a training run about $0.70 to $1.35 a night, at about $1.35 per L40S GPU-hour ([Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; [deployment guide](/reference/deployment/#4-cost-estimates)). See [Cost and savings](/guides/cost-and-savings/).
+Estimates only. The Nebius VM kit, if you host the gateway on it: about $72.50 for Oct 29 to Dec 15, 2026, before live usage (prices as of Oct 20, 2026, [VM kit guide](/reference/deploy-nebius-vm/)). The student endpoint: about $32 per full day if left on, and a training run about $0.70 to $1.35 a night, at about $1.35 per L40S GPU-hour ([Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; [deployment guide](/reference/deployment/#4-cost-estimates)). See [Cost and savings](/guides/cost-and-savings/).
 
 ### What runs on Nebius today?
 
-The teacher: it runs on Nebius Token Factory, and the public demo calls it for real. As of Oct 26, 2026 the GPU side (the student endpoint and the training job) is scripted and covered by offline tests with fake transports, ready to run with `make nebius-plan` and `make nebius-up` after the day-1 checks. The original text-to-SQL and tool-calling adapters were trained on a borrowed GPU; the round-2 recipe was retrained once by hand on a Nebius Serverless Job on 27 Oct 2026, and the student was served once by hand on an endpoint for a speed test the same day ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+The teacher: it runs on Nebius Token Factory, and the live gateway calls it for real. As of Oct 28, 2026 the GPU side (the student endpoint and the training job) is scripted and covered by offline tests with fake transports, ready to run with `make nebius-plan` and `make nebius-up` after the day-1 checks. The original text-to-SQL and tool-calling adapters were trained on a borrowed GPU; the round-2 recipe was retrained once by hand on a Nebius Serverless Job on 27 Oct 2026, and the student was served by hand, in two short sessions, on an endpoint for speed tests on 27 to 28 Oct 2026 ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
 
 ## Related
 

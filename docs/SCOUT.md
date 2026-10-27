@@ -1,6 +1,6 @@
-# Scout: the multi-agent research demo
+# Scout: the multi-agent research tool
 
-Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two of its agents make many narrow, repetitive calls. Ratchet learns those calls and moves them from Nemotron 3 Ultra to the student. The other two agents make open-ended calls, which stay on Ultra. In the simulation the student takes over most of the narrow calls. On the live demo no trained student is served yet, so every call is answered by Ultra; the three recorded live runs in `evidence/scout` show Scout working end to end, not savings.
+Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two of its agents make many narrow, repetitive calls. Ratchet learns those calls and moves them from Nemotron 3 Ultra to the student. The other two agents make open-ended calls, which stay on Ultra. In the mock-mode gateway the student takes over most of the narrow calls. On the live gateway no trained student is served yet, so every call is answered by Ultra; the three recorded live runs in `evidence/scout` show Scout working end to end, not savings.
 
 It exists to show Ratchet on real agent traffic: the kind of narrow call that, NVIDIA Research estimates, could go to small models, in the three open agent systems it studied (about 40%, 60% and 70% of their LLM queries; [arXiv 2506.02153](https://arxiv.org/abs/2506.02153), v3, Sep 22, 2026).
 
@@ -20,8 +20,8 @@ It exists to show Ratchet on real agent traffic: the kind of narrow call that, N
 
 ## Modes
 
-- **mock** (no keys): the searcher returns simulated results from `sim/research.py`, and the mock teacher and students answer. Only the example questions work (`GET /scout/examples`). The UI must show a "Simulated search results" label in this mode.
-- **live**: Tavily (`TAVILY_API_KEY`) plus the real Ratchet cascade (Token Factory teacher, vLLM student or hosted fallback). A budget guard protects the public demo.
+- **mock** (no keys): the searcher returns mock results from `sim/research.py`, and the mock teacher and students answer. Only the example questions work (`GET /scout/examples`). The UI must show a "Mock search results" label in this mode.
+- **live**: Tavily (`TAVILY_API_KEY`) plus the real Ratchet cascade (Token Factory teacher, vLLM student or hosted fallback). A budget guard protects the public live gateway.
 
 ## HTTP endpoints
 
@@ -78,7 +78,7 @@ Request and response details for each endpoint are in [API.md](API.md#scout-endp
 - Steps for parallel agents may arrive in any order. Use `detail.id` to match a triage step and its reader step to a search result.
 - An `error` event ends the stream. `/scout/stream` always answers HTTP 200 and reports problems as an `error` event, because browsers' `EventSource` cannot read status codes. `/scout/run` uses HTTP codes instead: 400 (empty question, a question over 300 characters, or a non-example question in mock mode), 429 (rate limit, daily run cap or budget), 503 (live mode without `TAVILY_API_KEY`), 502 (a model call failed during the run).
 - Every step keeps exactly the top-level keys above; new fields go inside `detail`.
-- A call the live demo's split sent to the hosted Nano at random (`RATCHET_DEMO_SPLIT`, [ADR 0147](adr/0147-demo-split.md)) has `detail.route = "demo_split"`, and `totals.demo_split_calls` counts them; the page labels such a call "Demo split" (picked at random, not by the confidence gate). Absent otherwise.
+- A call the live gateway's split sent to the hosted Nano at random (`RATCHET_DEMO_SPLIT`, [ADR 0147](adr/0147-demo-split.md)) has `detail.route = "demo_split"`, and `totals.demo_split_calls` counts them; the page labels such a call "Random split" (picked at random, not by the confidence gate). Absent otherwise.
 
 ### When search is unavailable (v0.5)
 
@@ -114,14 +114,14 @@ In mock mode the tooltips start with "Simulation: a mock model plays". When a st
 | `RATCHET_SCOUT_RUNS_PER_HOUR` | `6` | Runs per client IP per rolling hour |
 | `RATCHET_SCOUT_MAX_RUNS_PER_DAY` | `30` | Runs per UTC day, all clients together. When reached, Scout returns 429. This caps Tavily credits: each run makes about 3 searches (1 credit each), so 30 runs use at most about 90 credits a day |
 | `RATCHET_SCOUT_MAX_RESULTS` | `4` | Tavily results per query |
-| `RATCHET_TRUST_PROXY` | `0` | `1` = take the client IP from the first `X-Forwarded-For` entry. Use it only behind a proxy that overwrites that header. The demo VM does not need it: uvicorn runs there with `--proxy-headers`, which already gives the gateway the real client IP from Caddy |
+| `RATCHET_TRUST_PROXY` | `0` | `1` = take the client IP from the first `X-Forwarded-For` entry. Use it only behind a proxy that overwrites that header. The VM does not need it: uvicorn runs there with `--proxy-headers`, which already gives the gateway the real client IP from Caddy |
 
 How spend is counted:
 
 - Spend is added **per step**, from each step's `cost_usd` (which includes audit and shadow calls Ratchet made for it). A run that fails halfway still counts what its finished steps cost.
 - A run that is admitted counts against the hourly and daily run limits even if it fails.
 - The budget is checked when a run starts, not during it. A run that starts just under the cap can finish over it, so the real daily maximum is the cap plus the runs in progress at that moment (a few cents each).
-- In live mode the counters are kept in the ledger and restored at startup, so a restart, `update.sh` or a crash does not reset them (v0.5). This holds where the ledger is on a volume (the Nebius VM kit). On the Cloudflare Containers demo the ledger is on the container's disk and a restart (after 30 idle minutes) resets the counters; the low defaults in `deploy/cloudflare-live/src/index.ts` and the Token Factory balance are the limit there. Each admitted run writes a `scout_run` row to the `spend` table: `usd` stays 0 (the model calls are already in `requests.cost_usd`), and `detail` holds `{"judge", "llm_usd", "status"}`, updated after each model call and when the run ends (`done`, `error`, `search_unavailable`). A row still `admitted` (a process killed mid-run) counts its last recorded cost. Rows hold no IP, question, URL, error message or code. Counters reset at 00:00 UTC; a run counts against the day it started.
+- In live mode the counters are kept in the ledger and restored at startup, so a restart, `update.sh` or a crash does not reset them (v0.5). This holds where the ledger is on a volume (the Nebius VM kit). On the Cloudflare Containers live gateway the ledger is on the container's disk and a restart (after 30 idle minutes) resets the counters; the low defaults in `deploy/cloudflare-live/src/index.ts` and the Token Factory balance are the limit there. Each admitted run writes a `scout_run` row to the `spend` table: `usd` stays 0 (the model calls are already in `requests.cost_usd`), and `detail` holds `{"judge", "llm_usd", "status"}`, updated after each model call and when the run ends (`done`, `error`, `search_unavailable`). A row still `admitted` (a process killed mid-run) counts its last recorded cost. Rows hold no IP, question, URL, error message or code. Counters reset at 00:00 UTC; a run counts against the day it started.
 - The per-IP windows stay in memory, so no IP is stored; they reset on restart. On the first restart after upgrading, runs from earlier that day have no rows and are not counted, once.
 
 Mock mode has no budget and no daily run cap, writes no spend rows, but the per-IP rate limit applies, at 10x the live rate.
@@ -146,25 +146,25 @@ The free Tavily plan gives 1,000 API credits a month; a basic search costs 1 cre
 - Credits never refuse a run: a public run whose allowance is used up runs without search, labelled (above). The run and USD caps bound the cost.
 - The meter restores the cycle's rows at startup. Reconcile it with the Tavily dashboard weekly ([RUNBOOK.md](RUNBOOK.md)).
 
-Mock-mode demo settings:
+Mock mode settings:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RATCHET_MOCK_WARMUP_DAYS` | `0` | Simulated days of `mixed` traffic, each followed by a night, run at startup (and on demo reset) so the demo opens with a trained student. `4` takes about 2 s and leaves a live student that answers about 80–90% of Scout's LLM calls (simulation, mock models: 14–18 of 17–20 calls per example question, 72–86% cheaper than all-Ultra) |
+| `RATCHET_MOCK_WARMUP_DAYS` | `0` | Mock days of `mixed` traffic, each followed by a night, run at startup (and on a mock-mode reset) so the mock-mode gateway opens with a trained student. `4` takes about 2 s and leaves a live student that answers about 80–90% of Scout's LLM calls (mock-mode run, mock models: 14–18 of 17–20 calls per example question, 72–86% cheaper than all-Ultra) |
 | `RATCHET_MOCK_WARMUP_REQUESTS` | `1500` | Requests per warm-up day |
-| `RATCHET_MOCK_PACE` | `0.25` | `/scout/stream` waits this share of each call's simulated latency (Ultra 2.4 s → 0.6 s), so agents visibly work. `0` = no waiting |
+| `RATCHET_MOCK_PACE` | `0.25` | `/scout/stream` waits this share of each call's mock latency (Ultra 2.4 s → 0.6 s), so agents visibly work. `0` = no waiting |
 
 ## Mock research world (`sim/research.py`)
 
 - 8 example questions about well-established ML concepts (LoRA, knowledge distillation, model cascades, the Wilson score interval, vLLM PagedAttention, Mamba state-space models, self-consistency, model collapse). The facts are from the original papers.
-- Each question has 3 planned queries and a pool of 72 simulated results: 12 result templates (`r-*`) × 6 variants. The templates cover relevant papers, docs and blogs, off-topic news, near-miss forum posts, and SEO listicles. Each template has fixed labels for `source-triage` and `page-read`.
+- Each question has 3 planned queries and a pool of 72 mock results: 12 result templates (`r-*`) × 6 variants. The templates cover relevant papers, docs and blogs, off-topic news, near-miss forum posts, and SEO listicles. Each template has fixed labels for `source-triage` and `page-read`.
 - Result URLs use `example.org`, so nothing pretends to be a real page.
 - `ResearchStream` produces triage and read requests for the simulator and `POST /ratchet/demo/day?workload=research|mixed`. Users phrase each question 4 ways. Questions 7 and 8 (self-consistency, model collapse) appear only from the drift day, as 20% of traffic.
 - The simulator and the agents build messages with the same functions in `ratchet/scout/prompts.py`, so the mock teacher and students can look up each request by its exact user text.
 
 ## Recorded runs
 
-When the budget guard refuses a run (INV-11) or a live call fails, a judge can still watch a real run: one the operator recorded on the live demo, played back at its real pace and labelled "Recorded live run" with its date (a mock-mode recording is "Recorded simulation"). Playback makes no model or search call, takes no budget and cannot be used up ([ADR 0140](adr/0140-recorded-scout-run.md)).
+When the budget guard refuses a run (INV-11) or a live call fails, a judge can still watch a real run: one the operator recorded on the live gateway, played back at its real pace and labelled "Recorded live run" with its date (a mock-mode recording is "Recorded mock-mode run"). Playback makes no model or search call, takes no budget and cannot be used up ([ADR 0140](adr/0140-recorded-scout-run.md)).
 
 ```bash
 python -m ratchet.scout record "What is LoRA fine-tuning?" --base-url https://demo.example [--judge-code C] [--out evidence/scout] [--allow-mock]
@@ -178,4 +178,4 @@ It reads `GET /scout/stream` and writes `<out>/<UTC time>-<slug>.json` (schema `
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1
 ```
 
-Runs Scout as an outside client: each agent call goes to the gateway's `/v1/chat/completions` with an `X-Ratchet-Task` header. Flags: `--base-url` (default `http://localhost:8000/v1`), `--api-key` (default `$RATCHET_API_KEY` or `unused`), `--max-results` (default 4). Search runs locally: Tavily when `TAVILY_API_KEY` is set, otherwise simulated results, which only cover the example questions and only make sense against a mock-mode gateway. These calls do not pass through the budget guard or the credit meter; they are plain `/v1` traffic. The command exits 0 when the run finishes and 1 when a model call fails (the error, such as a 401 for a wrong key, goes to stderr). A failed search prints `<query> -> search unavailable (<reason>)` and a warning on stderr, and the run still finishes with exit code 0.
+Runs Scout as an outside client: each agent call goes to the gateway's `/v1/chat/completions` with an `X-Ratchet-Task` header. Flags: `--base-url` (default `http://localhost:8000/v1`), `--api-key` (default `$RATCHET_API_KEY` or `unused`), `--max-results` (default 4). Search runs locally: Tavily when `TAVILY_API_KEY` is set, otherwise mock results, which only cover the example questions and only make sense against a mock-mode gateway. These calls do not pass through the budget guard or the credit meter; they are plain `/v1` traffic. The command exits 0 when the run finishes and 1 when a model call fails (the error, such as a 401 for a wrong key, goes to stderr). A failed search prints `<query> -> search unavailable (<reason>)` and a warning on stderr, and the run still finishes with exit code 0.

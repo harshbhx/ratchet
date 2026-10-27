@@ -6,13 +6,13 @@ As of Oct 26, 2026. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM I
 
 - Gateway, cascade, provenance ledger, Night School, release gate, dashboard, simulator.
 - 34 tests passing.
-- Simulation shows the full loop: cold start, promotion, drift recovery, automatic rollback.
+- The full loop (cold start, promotion, drift recovery, automatic rollback) is covered by tests with mock models; it has not run on live traffic.
 - Market research and stress test written.
 - Token Factory ToS 5(f) question emailed to tokenfactory-support@nebius.com.
 
-## Milestone 0.5: v0.2 demo layer (done, Oct 20)
+## Milestone 0.5: v0.2 Scout and pages (done, Oct 20)
 
-- **Scout**, a multi-agent research demo ([SCOUT.md](SCOUT.md)): five agents whose calls all go through Ratchet. Triage and reader calls are distilled; planner and writer calls are pinned to the teacher. Tavily search in live mode, a mock research world in mock mode. Budget guard for the public demo.
+- **Scout**, a multi-agent research tool ([SCOUT.md](SCOUT.md)): five agents whose calls all go through Ratchet. Triage and reader calls are distilled; planner and writer calls are pinned to the teacher. Tavily search in live mode, a mock research world in mock mode. Budget guard for the public gateway.
 - **Pinned tasks** in the task registry: always the teacher, never training data.
 - **Landing page** (`/`), Scout page (`/scout`), dashboard moved to `/dashboard` with a **By task** table and a traffic selector.
 - Simulator workloads: `tickets`, `research`, `mixed`. Mock warm-up at startup.
@@ -32,11 +32,11 @@ As of Oct 26, 2026. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM I
 
 ## Milestone 0.9: v0.5 backend completeness (done: v0.5.0 released and tagged Oct 25, 2026)
 
-Built package by package. Every item gets offline tests and an adversarial review, and the reference simulation numbers must not change: since the evidence foundations, three workloads (tickets, mixed, research) must reproduce v0.4.0 exactly (`make reference`; per-task calibration, on by default, is switched off for them, [ADR 0040](adr/0040-per-task-calibration.md)). The UI was added for the v0.5 features where noted (FR-7.20 to FR-7.24, FR-7.40).
+Built package by package. Every item gets offline tests and an adversarial review, and the pinned reference-run numbers must not change: since the evidence foundations, three workloads (tickets, mixed, research) must reproduce v0.4.0 exactly (`make reference`; per-task calibration, on by default, is switched off for them, [ADR 0040](adr/0040-per-task-calibration.md)). The UI was added for the v0.5 features where noted (FR-7.20 to FR-7.24, FR-7.40).
 
 | Package | Scope |
 |---|---|
-| A. Verification foundation | Requirements traceability matrix generated from the PRD and checked in CI; tests for every invariant and release-gate rule; a pinned reference simulation; contract tests for the gateway, stats and licensing; offline tests for live-mode entry points |
+| A. Verification foundation | Requirements traceability matrix generated from the PRD and checked in CI; tests for every invariant and release-gate rule; a pinned reference run; contract tests for the gateway, stats and licensing; offline tests for live-mode entry points |
 | B. Request contract and resilience | Strict validation with OpenAI-style errors; teacher retries with backoff and Retry-After; a student circuit breaker; optional teacher calls that never break a served answer; answer hygiene; generation parameters and token caps; full OpenAI response parity; a degraded mode when the teacher is down |
 | C. Task model and use cases | Per-field comparators; task registry and per-task thresholds; structured outputs (JSON schema) as tasks; tool-call pass-through and opt-in tool-call distillation; risk-aware routing; free-text and SQL tasks; mock workloads and a use-case catalog; adjacent OpenAI endpoints; real teacher streaming |
 | D. Operations, security, performance | Hot-path performance; authorization for management endpoints; request IDs, metrics and a failures table; per-key spend and rate limits; an admin API with an audit trail; config validation and readiness; Night School leases and alert webhooks; idempotency; quality checks off the request path |
@@ -45,7 +45,7 @@ Built package by package. Every item gets offline tests and an adversarial revie
 
 ## Milestone 1: hackathon submission (Oct 19–29, 2026)
 
-> Stage One of judging is pass/fail on the submission requirements, and one of them is a runtime call to Token Factory. Mock mode makes none, so the public demo must run in live mode during judging (Dec 1–15).
+> Stage One of judging is pass/fail on the submission requirements, and one of them is a runtime call to Token Factory. Mock mode makes none, so the public gateway must run in live mode during judging (Dec 1–15).
 
 | Dates | Work | Exit criteria | Status (Oct 26, 2026) |
 |---|---|---|---|
@@ -53,15 +53,15 @@ Built package by package. Every item gets offline tests and an adversarial revie
 | Oct 21–22 | Live cascade: gateway in live mode against Token Factory teacher and the student endpoint | Real requests served by both paths; ledger shows real costs | Live gateway against Token Factory: done (smoke run of 20 requests, `evidence/live-smoke-2026-10-23`); no student endpoint |
 | Oct 23–24 | Live Night School: dataset → Serverless Job → hot-load adapter → golden eval → release gate | At least one version trained and evaluated live | Scripted and tested offline, ready to run. Adapters were trained on a borrowed GPU (`evidence/text2sql-*`, `evidence/toolcall`) |
 | Oct 25 | Live traffic run: synthetic tickets through the real teacher for several "nights" (`make live-run`, [RUNBOOK](RUNBOOK.md#live-measurement-run)) | At least 3 versions; real cost and precision numbers | Not done |
-| Oct 26–27 | Public demo on Cloudflare Containers (the Nebius VM kit, [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md), is the alternative): live at `live.ratchet.dualmindlab.tech` (**live mode** is required for Stage One) with live Scout, Tavily and the budget guard and the Token Factory fallback student, and the simulation at `demo.ratchet.dualmindlab.tech` (`sim.<domain>` on the VM kit) | Both hosts load logged-out over HTTPS and the live strip shows a Token Factory call; `/`, `/scout`, `/dashboard` load; live Token Factory and Tavily calls succeed; stays up when the student endpoint is stopped; credits cover the demo until Dec 15 | Demo is on Cloudflare Containers (live.ratchet.dualmindlab.tech, demo.ratchet.dualmindlab.tech); the Nebius VM kit is the alternative |
-| Oct 28 | Video recorded | Video under 3 minutes on YouTube (public) | Done (Oct 26, 2026): [the demo video](https://video.ratchet.dualmindlab.tech/?from=docs), 2:59, public on YouTube |
+| Oct 26–27 | Public gateway on Cloudflare Containers (the Nebius VM kit, [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md), is the alternative): live at `live.ratchet.dualmindlab.tech` (**live mode** is required for Stage One) with live Scout, Tavily and the budget guard and the Token Factory fallback student | The host loads logged-out over HTTPS and the live strip shows a Token Factory call; `/`, `/scout`, `/dashboard` load; live Token Factory and Tavily calls succeed; stays up when the student endpoint is stopped; credits cover the gateway until Dec 15 | The gateway is on Cloudflare Containers (live.ratchet.dualmindlab.tech); the Nebius VM kit is the alternative |
+| Oct 28 | Video recorded | Video under 3 minutes on YouTube (public) | Done (Oct 26, 2026): [the video](https://video.ratchet.dualmindlab.tech/?from=docs), 2:59, public on YouTube |
 | Oct 28 | README with live numbers and a feedback section | The README shows the measured live run's numbers and has a section of feedback on the Nebius and NVIDIA tools used | Feedback section: done (Oct 26, 2026), [Feedback on Nebius and NVIDIA](../README.md#feedback-on-nebius-and-nvidia). Live numbers: not done, no measured live run to report (Oct 25 row); the README cites the 20-request smoke run and the recorded Scout runs only |
 | Oct 29 | Submit on Devpost | Every checklist item ticked | Not done |
-| Dec 1–15 | Judging | Demo URL live the whole window (the host must run Oct 29 – Dec 15) | Not done |
+| Dec 1–15 | Judging | Live URL up the whole window (the host must run Oct 29 – Dec 15) | Not done |
 
 ## Milestone 2: hardening (Nov–Dec 2026)
 
-Called "v0.2 hardening" in earlier drafts. Version numbers went to the demo layer (v0.2), the web app (v0.3) and the first hardening items (v0.4, done above), so what is left targets v0.5.
+Called "v0.2 hardening" in earlier drafts. Version numbers went to Scout and the pages (v0.2), the web app (v0.3) and the first hardening items (v0.4, done above), so what is left targets v0.5.
 
 | Item | Why | Status |
 |---|---|---|
