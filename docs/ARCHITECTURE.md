@@ -10,60 +10,42 @@ Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.m
 
 ![Architecture: your app calls the gateway, a small student model answers first, a teacher answers when the student is unsure, answers are logged in a provenance ledger, Night School trains a new adapter from the ledger, and release gates decide whether it becomes the student.](img/architecture.svg)
 
-The picture shows the design. The diagram below names the files and services.
+The picture shows the design. The two diagrams below name the files and services: the request path, then the nightly loop.
 
 ```mermaid
 flowchart TB
-  app(["Your app"])
+  app(["Your app"]) ==>|"/v1/chat/completions"| gw["Gateway · ratchet/gateway.py<br/>router.py · ReleaseGate.tick in release.py<br/>pages: / · /scout · /dashboard<br/>Scout agents, Tavily search when live"]
+  gw ==>|"teacher calls"| tf["Nebius Token Factory<br/>Teacher: nvidia/Nemotron-3-Ultra-550b-a55b<br/>Judge: nvidia/nemotron-3-super-120b-a12b<br/>Fallback student: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"]
+  gw -->|"student calls<br/>model = adapter name"| endpoint["Nebius Serverless Endpoint · vLLM<br/>nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16<br/>+ LoRA adapters · scripted, ready to run"]
+  gw ---> ledger[("SQLite ledger · ratchet/ledger.py<br/>requests · examples · versions · events")]
 
-  subgraph tf["Nebius Token Factory"]
-    direction LR
-    teacher["Teacher<br/>nvidia/Nemotron-3-Ultra-550b-a55b"]
-    judge["Judge, free-text eval<br/>nvidia/nemotron-3-super-120b-a12b"]
-    fallback["Fallback student<br/>nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"]
-  end
-
-  subgraph gw["Gateway · ratchet/gateway.py"]
-    direction LR
-    router["Ratchet router<br/>router.py"]
-    gate{{"ReleaseGate.tick<br/>release.py"}}
-    pages["Pages<br/>/ · /scout · /dashboard"]
-    scout["Scout agents<br/>scout/"]
-  end
-
-  ledger[("SQLite ledger · ratchet/ledger.py<br/>requests · examples · versions · events")]
-  tavily["Tavily Search API<br/>live Scout only"]
-
-  subgraph cloud["Nebius AI Cloud · scripted and tested offline, ready to run"]
-    direction LR
-    endpoint["Serverless Endpoint<br/>vLLM + nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16<br/>LoRA adapters loaded at runtime"]
-    job["Serverless Job, nightly<br/>ratchet.nightschool.train · TRL + PEFT"]
-    bucket[("Object Storage at /data<br/>night/train.jsonl · adapters/VERSION/")]
-  end
-
-  driver["Night School driver, cron<br/>python -m ratchet.live night | tick"]
-
-  app ==>|"/v1/chat/completions"| router
-  router ==>|"OpenAI-compatible HTTPS"| teacher
-  router -->|"OpenAI-compatible HTTPS<br/>model = adapter name"| endpoint
-  router --> ledger
-  scout -.-> tavily
-  driver --> job
-  job --> bucket
-  bucket -.->|"runtime LoRA load"| endpoint
-
-  class teacher,judge,fallback teacher
+  class tf teacher
   class endpoint student
+  class ledger store
+  classDef student stroke-width:1.5px
+  classDef teacher stroke-width:1.5px
+  classDef store stroke-width:1.25px
+  classDef pending stroke-width:1.5px,stroke-dasharray:5 4
+  classDef outline stroke-width:1.25px,stroke-dasharray:4 3
+```
+
+The nightly side, on Nebius AI Cloud (scripted and tested offline, ready to run with `make nebius-plan`):
+
+```mermaid
+flowchart TB
+  driver["Night School driver, cron<br/>python -m ratchet.live night | tick"] --> job
+  subgraph cloud["Nebius AI Cloud · scripted, ready to run"]
+    job["Serverless Job, nightly<br/>ratchet.nightschool.train · TRL + PEFT"] --> bucket[("Object Storage at /data<br/>night/train.jsonl · adapters/VERSION/")]
+    bucket -.->|"runtime LoRA load"| endpoint["Serverless Endpoint<br/>the student"]
+  end
+
   class job pending
-  class ledger,bucket store
-  class gate gate
-  class tavily outline
-  class tf teacherZone
+  class bucket store
+  class endpoint student
   class cloud pendingZone
   classDef student stroke-width:1.5px
   classDef teacher stroke-width:1.5px
   classDef store stroke-width:1.25px
-  classDef gate stroke-width:1.5px
   classDef pending stroke-width:1.5px,stroke-dasharray:5 4
   classDef outline stroke-width:1.25px,stroke-dasharray:4 3
 ```
