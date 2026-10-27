@@ -428,3 +428,23 @@ def test_not_built_yet_matches_the_prd():
     for bullet in re.findall(r"^- \*\*Not built yet:\*\*.*$", prior, re.M):
         assert re.search(r"\bFR-\d+\.\d+\b", bullet), "a not-built item names its PRD row"
         assert _stale_not_built(bullet, prd) == [], f"the PRD marks these Done: {_stale_not_built(bullet, prd)}"
+
+
+NEBIUS_OVERCLAIMS = (
+    "hosted on nebius end to end",
+    "the demo runs on nebius",
+    "served on nebius",
+    "not on nebius",
+    "outside nebius",
+)
+
+
+@pytest.mark.req("NFR-70")
+def test_nebius_claims_stay_within_what_ran():
+    """Training ran once on Nebius (27 Oct 2026); serving there, hosting the site or demo there and endorsements are not claimed."""
+    for rel in ("README.md", "docs/WHERE_IT_RUNS.md", "web/src/data/real.json"):
+        text = _read(rel).lower()
+        for phrase in NEBIUS_OVERCLAIMS:
+            assert phrase not in text, (rel, phrase)
+    assert "borrowed gpu" in _read("README.md").lower()
+    assert "Nebius AI Cloud" in _read("README.md") and "L40S" in _read("README.md")

@@ -41,8 +41,8 @@ const ROLES: Role[] = [
   },
   {
     role: "Night School",
-    service: "Nebius Serverless Jobs (L40S) with Unsloth (scripted, ready to run)",
-    why: "Fine-tunes a new adapter each night. A job is billed only while it runs. So far the adapters were trained by hand on a borrowed GPU.",
+    service: "Nebius Serverless Jobs (L40S) with Unsloth (one hand-run job on 27 Oct 2026; the nightly job is scripted, ready to run)",
+    why: "Fine-tunes a new adapter each night. A job is billed only while it runs. The round-2 adapter was retrained once by hand on a Nebius L40S (27 Oct 2026); the original adapters were trained on a borrowed GPU.",
     badge: <RealBadge status="not-run" />,
   },
   {
@@ -82,8 +82,8 @@ const ROLES: Role[] = [
         >
           its docs<span className="sr-only"> (opens in a new tab)</span>
         </a>
-        , read 26 Oct 2026), so the student is designed to be trained and served on Nebius AI Cloud. Those scripts are tested offline and ready to
-        run with make nebius-plan. The adapters so far were trained on a borrowed GPU.
+        , read 26 Oct 2026), so the student is designed to be trained and served on Nebius AI Cloud. The round-2 adapter was retrained once on Nebius AI Cloud by hand (27 Oct 2026); the student endpoint is tested offline and ready to
+        run with make nebius-plan. The original adapters were trained on a borrowed GPU.
       </>
     ),
     why: "",
@@ -99,7 +99,7 @@ export function Stack() {
           title="Built on Nebius and NVIDIA."
           lead={
             <Lead>
-              Open Nemotron models for every model role. The teacher runs on Nebius Token Factory today; the student endpoint and Night School jobs are scripted for Nebius and ready to run. The gateway itself does no inference, so it fits on a
+              Open Nemotron models for every model role. The teacher runs on Nebius Token Factory, and the round-2 adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job). The student endpoint is scripted and ready to run. The web front end and the live demo run on Cloudflare. The gateway itself does no inference, so it fits on a
               small CPU machine.
             </Lead>
           }
