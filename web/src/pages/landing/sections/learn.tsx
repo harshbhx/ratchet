@@ -8,6 +8,7 @@ import { useInterval } from "@/lib/hooks";
 import { SIM_DAYS, SIM_SOURCE, SIM_TOTAL, type SimDay } from "@/lib/sim";
 import { cn, fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { Chapter, ChapterHead, EASE, Lead, Reveal, SimBadge } from "../shared";
+import { RealCurve } from "./real-curve";
 
 const LAST = SIM_DAYS.length;
 // recharts is the largest library on the page; the chart is far below the fold, so it loads after the hero paints.
@@ -96,13 +97,22 @@ export function Learn() {
           title="Watch it learn."
           lead={
             <Lead>
-              Ten days of support tickets in the reference simulation, played once as you arrive. Drag to any day: cold start, a first student, a
-              bad release caught, a product launch that brings new questions, and a student that learns them overnight.
+              The real curve first: the same small model, untrained, after one round of teacher labels and after two, on two exams it never
+              saw. Then, labelled Simulation, ten days of traffic with the parts no real run has measured yet: a bad release caught, a product
+              launch, a student that learns the new questions overnight.
             </Lead>
           }
         />
 
         <Reveal className="mt-12">
+          <RealCurve />
+        </Reveal>
+
+        <Reveal className="mt-14">
+          <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <SimBadge>Simulation · reference run</SimBadge>
+            <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">Ten days of traffic, with a bad release and a launch</h3>
+          </div>
           <div ref={cardRef} className="overflow-hidden rounded-[24px] border border-line bg-surface shadow-card">
             {/* scrubber */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-line px-4 py-3.5 sm:flex-nowrap sm:px-6">

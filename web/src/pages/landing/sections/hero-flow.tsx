@@ -1,13 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Pause, Play } from "lucide-react";
-import { SIM_DAYS } from "@/lib/sim";
+import examsText from "@/data/exams.json?raw";
+import { Badge } from "@/components/ui/badge";
+import { RealBadge } from "@/components/ui/real-badge";
+import { parseExams } from "@/lib/exams-model";
+import { LEARN_STAGES, labellingTotal, stageRate } from "@/lib/real-story-model";
 import { cn, fmtPct, fmtUsd } from "@/lib/utils";
 import { WHO_TEXT } from "@/lib/who-model";
-import { EASE, SimBadge, ratchetPath, useElementWidth, useOnScreen } from "../shared";
+import { fmtSmallUsd } from "../bill-model";
+import { EASE, ratchetPath, useElementWidth, useOnScreen } from "../shared";
+import { COSTS } from "./real-numbers";
 
-const NIGHTS = SIM_DAYS.length;
-const NIGHT_MS = 2600;
+// The loop's three rounds are the real ones: untrained, round 1, round 2. `share` is exam 1's exact-match rate and `spent`
+// the teacher's labelling bill so far, both read from the repo's data files (exams.json, real-costs.json), never typed here.
+const EXAMS_DATA = parseExams(examsText);
+const STAGES = LEARN_STAGES.map((s, i) => ({
+  day: i + 1,
+  name: s.short,
+  share: stageRate(EXAMS_DATA, "exam1", s.id),
+  spent: i === 0 ? 0 : i === 1 ? COSTS.labelling.round1.usd : labellingTotal(COSTS),
+}));
+const NIGHTS = STAGES.length;
+const NIGHT_MS = 3400;
 const HOLD_MS = 4200;
 const SPAWN_MS = 150;
 const POOL = 48;
@@ -43,7 +58,7 @@ function geometry(W: number) {
 /**
  * The hero's one ambient loop: requests flow from your app into the Ratchet gateway and are
  * answered by Nano (with your adapter) or Ultra (rented). Each "night" the wheel clicks one tooth forward and the
- * share routed to Nano follows the reference simulation (SIM_DAYS).
+ * share routed to Nano follows the measured exam 1 score of each round (STAGES), for show.
  */
 export function HeroFlow() {
   const reduce = useReducedMotion() ?? false;
@@ -102,10 +117,10 @@ export function HeroFlow() {
 
     const els = dotRefs.current;
     if (reduce) {
-      // Static end state: a calm spread along each path, 98% to Nano.
+      // Static end state: a calm spread along each path, about the round 2 share (39%) to Nano.
       const statics: [number, Route][] = [
-        [0.12, "nano"], [0.32, "nano"], [0.52, "nano"], [0.72, "nano"], [0.9, "nano"],
-        [1.12, "nano"], [1.3, "nano"], [1.5, "nano"], [1.7, "nano"], [1.42, "ultra"],
+        [0.12, "ultra"], [0.32, "nano"], [0.52, "ultra"], [0.72, "nano"], [0.9, "ultra"],
+        [1.12, "ultra"], [1.3, "nano"], [1.5, "ultra"], [1.7, "nano"], [1.42, "ultra"],
       ];
       els.forEach((el) => el && (el.style.opacity = "0"));
       statics.forEach(([f, route], i) => {
@@ -151,7 +166,7 @@ export function HeroFlow() {
           lastSpawn = clock;
           const free = dots.findIndex((d) => d === null);
           if (free >= 0) {
-            acc += SIM_DAYS[nightIdx].student;
+            acc += STAGES[nightIdx].share;
             let route: Route = "ultra";
             if (acc >= 1) {
               route = "nano";
@@ -195,16 +210,17 @@ export function HeroFlow() {
     if (running) wakeRef.current?.();
   }, [running]);
 
-  const day = SIM_DAYS[night - 1];
-  const share = day.student;
-  const label = `Animated illustration, simulation: requests flow from your app through the Ratchet gateway to Nano (with the adapter you own) or Ultra (rented). Over ${NIGHTS} nights the share answered by Nano rises from ${fmtPct(SIM_DAYS[0].student)} to ${fmtPct(SIM_DAYS[NIGHTS - 1].student)}, and the cost per 1,000 requests falls from ${fmtUsd(SIM_DAYS[0].costPer1k, 3)} to ${fmtUsd(SIM_DAYS[NIGHTS - 1].costPer1k, 3)}.`;
+  const day = STAGES[night - 1];
+  const share = day.share;
+  const label = `Animated illustration with measured numbers: requests flow from your app through the Ratchet gateway to Nano (with the adapter you own) or Ultra (rented). Over ${NIGHTS} rounds the share of exam 1 questions the Nano answers exactly right rises from ${fmtPct(STAGES[0].share, 1)} untrained to ${fmtPct(STAGES[NIGHTS - 1].share, 1)} with the round 2 adapter, for ${fmtUsd(STAGES[NIGHTS - 1].spent, 2)} of teacher labels in all. The dots' split follows that score and is for show.`;
 
   return (
     <div ref={cardRef} className="relative overflow-hidden rounded-[22px] border border-line bg-surface/90 shadow-card backdrop-blur-sm">
       <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5 sm:px-5">
         <div className="flex min-w-0 items-center gap-2">
-          <SimBadge />
-          <span className="truncate text-[12.5px] text-muted">Ten nights of support tickets</span>
+          <RealBadge status="measured" />
+          <Badge tone="outline">Illustration</Badge>
+          <span className="truncate text-[12.5px] text-muted">Three rounds, exam 1 (172 questions)</span>
         </div>
         {!reduce && (
           <button
@@ -368,7 +384,7 @@ export function HeroFlow() {
       {/* counters */}
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-x-5 gap-y-2 border-t border-line bg-surface-2/60 px-4 py-3.5 sm:gap-x-8 sm:px-5 sm:py-4">
         <div>
-          <div className="text-[11.5px] text-muted">Night</div>
+          <div className="text-[11.5px] text-muted">Round</div>
           <div className="mt-1 flex items-baseline gap-1 font-mono text-[22px] font-medium leading-none tracking-[-0.02em] text-ink tabular sm:text-[26px]">
             <span className="relative inline-flex h-[1.05em] w-[1.25em] overflow-hidden">
               <AnimatePresence initial={false} mode="popLayout">
@@ -380,14 +396,14 @@ export function HeroFlow() {
                   transition={{ duration: 0.45, ease: EASE }}
                   className="absolute inset-0"
                 >
-                  {String(night).padStart(2, "0")}
+                  {night}
                 </motion.span>
               </AnimatePresence>
             </span>
             <span className="text-[13px] text-muted">/{NIGHTS}</span>
           </div>
           <div className="mt-2 flex gap-[3px]" aria-hidden>
-            {SIM_DAYS.map((d) => (
+            {STAGES.map((d) => (
               <span
                 key={d.day}
                 className={cn("h-2 w-[5px] rounded-[1.5px] transition-colors duration-300", d.day <= night ? "bg-ink" : "bg-line-strong")}
@@ -398,23 +414,23 @@ export function HeroFlow() {
         </div>
         <div className="min-w-0">
           <div className="flex items-baseline justify-between gap-2 text-[11.5px] text-muted">
-            <span className="truncate"><span className="min-[420px]:hidden">By Nano</span><span className="hidden min-[420px]:inline">Answered by Nano</span></span>
+            <span className="truncate"><span className="min-[420px]:hidden">Exact on exam 1</span><span className="hidden min-[420px]:inline">Exam 1, answered exactly right</span></span>
             <span className="font-mono text-[13px] font-medium text-ink tabular">{fmtPct(share)}</span>
           </div>
           <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-rented/70" aria-hidden>
             <div className="h-full rounded-full bg-owned transition-[width] duration-700 ease-out" style={{ width: `${share * 100}%` }} />
           </div>
           <div className="mt-1.5 flex justify-between text-[11px] text-muted">
-            <span>your adapter</span>
-            <span>rented</span>
+            <span>exact match</span>
+            <span>the rest</span>
           </div>
         </div>
         <div className="text-right">
-          <div className="text-[11.5px] text-muted">Cost / 1k requests</div>
+          <div className="text-[11.5px] text-muted">Teacher labels paid</div>
           <div className="mt-1 font-mono text-[22px] font-medium leading-none tracking-[-0.02em] text-ink tabular sm:text-[26px]">
-            {fmtUsd(day.costPer1k, 3)}
+            {fmtUsd(day.spent, 2)}
           </div>
-          <div className="mt-2 text-[11px] text-muted tabular">all-Ultra {fmtUsd(day.baselinePer1k, 3)}</div>
+          <div className="mt-2 text-[11px] text-muted tabular">per call Nano {fmtSmallUsd(COSTS.per_call.nano_triage)} · Ultra {fmtSmallUsd(COSTS.per_call.ultra_triage)}</div>
         </div>
       </div>
     </div>

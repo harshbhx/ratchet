@@ -179,7 +179,7 @@ export function Hero() {
               <HeroFlow />
             </TiltCard>
             <p className="mt-3 px-1 text-[12px] leading-relaxed text-muted">
-              Simulation, mock models, seed 7: how the loop behaves, not real model quality.
+              Measured: exam 1 scores of the untrained Nano 4B and its round 1 and round 2 adapters, and Ultra's labelling bill. The dots and the split between them are an illustration.
             </p>
           </motion.div>
           <motion.ul

@@ -29,6 +29,7 @@ import {
   type MeterMark,
 } from "../bill-model";
 import { Chapter, ChapterHead, EASE, ExtLink, LINKS, Lead, Reveal } from "../shared";
+import { PrecisionFact, RealCostTiles } from "./real-numbers";
 
 const REC_ICON: Record<string, LucideIcon> = {
   self_host: ServerCog,
@@ -478,6 +479,17 @@ export function HonestBill({ stats }: { stats: Stats | null }) {
         />
 
         <Reveal className="mt-12">
+          <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">The real bill so far</h3>
+          <p className="mb-4 mt-1 max-w-[70ch] text-[13px] leading-relaxed text-muted">
+            Measured: what the teacher's labels cost for each round and what one call costs at list prices. Live: the demo's own savings
+            counter. Break-even and GPU-hours have no real run behind them yet, so they follow, labelled Simulation.
+          </p>
+          <RealCostTiles stats={stats} />
+          <PrecisionFact className="mt-4" />
+        </Reveal>
+
+        <Reveal className="mt-14">
+          <h3 className="mb-4 text-[15px] font-semibold tracking-[-0.01em] text-ink">Break-even and GPU-hours</h3>
           <div className="overflow-hidden rounded-[24px] border border-line bg-surface shadow-card">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-line px-4 py-3.5 sm:px-6">
               <div className="flex flex-wrap items-center gap-2">

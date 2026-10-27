@@ -1,16 +1,15 @@
 import { useRef } from "react";
 import { motion, useInView } from "motion/react";
-import { Compare } from "@/components/fx/compare";
 import { GlowOrbs } from "@/components/fx/glow-orbs";
 import { Highlight } from "@/components/fx/highlight";
 import { SpotlightCard } from "@/components/fx/spotlight-card";
 import { Container } from "@/components/ui/section";
 import { Badge } from "@/components/ui/badge";
-import { SIM_DAYS, SIM_SOURCE } from "@/lib/sim";
-import { cn, fmtPct, fmtUsd } from "@/lib/utils";
+import type { Stats } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { EASE } from "@/lib/motion";
-import { WHO_TEXT } from "@/lib/who-model";
-import { Chapter, ChapterHead, ExtLink, LINKS, Lead, Reveal, SimBadge } from "../shared";
+import { Chapter, ChapterHead, ExtLink, LINKS, Lead, Reveal } from "../shared";
+import { COSTS, RealCostTiles } from "./real-numbers";
 
 type Shape = "ticket-triage" | "source-triage" | "page-read" | "research-plan" | "research-write";
 const NARROW: Shape[] = ["ticket-triage", "source-triage", "page-read"];
@@ -92,82 +91,28 @@ function CallGrid() {
   );
 }
 
-/**
- * One side of the slider: the same day of tickets, billed one way. The two panels share a layout, with the all-Ultra
- * bill's text on the left and the Ratchet bill's on the right, so the handle reveals one without covering the other.
- */
-function Bill({ title, who, tone, costPer1k, student, note }: { title: string; who: string; tone: "rented" | "owned"; costPer1k: number; student: number; note: string }) {
-  const owned = tone === "owned";
-  return (
-    <div className={cn("flex h-[320px] flex-col justify-between p-5 pt-12 sm:p-7 sm:pt-12", owned ? "items-end bg-surface text-right" : "bg-bg-sunken")}>
-      <div className={cn("max-w-[60%]", owned && "flex flex-col items-end")}>
-        <p className="font-mono text-[11.5px] uppercase tracking-[0.12em] text-muted">{title}</p>
-        <p className={cn("mt-2 text-[40px] font-semibold leading-none tracking-[-0.04em] tabular sm:text-[52px]", owned ? "text-owned-ink" : "text-rented-ink")}>
-          {fmtUsd(costPer1k, 3)}
-        </p>
-        <p className="mt-1.5 text-[13px] text-muted">per 1,000 requests</p>
-      </div>
-      <div className="w-full">
-        <div className={cn("flex items-center justify-between text-[12.5px] text-ink-2", owned && "flex-row-reverse")}>
-          <span>{who}</span>
-          <span className="font-mono tabular">{fmtPct(owned ? student : 1 - student)}</span>
-        </div>
-        <div className={cn("mt-2 flex h-2.5 overflow-hidden rounded-full bg-rented", owned && "justify-end")} aria-hidden>
-          <span className="h-full rounded-full bg-owned" style={{ width: `${(owned ? student : 0) * 100}%` }} />
-        </div>
-        {/* The handle starts at 58%: each caption stays on its own side of it, so neither is cut mid-word at first sight. */}
-        <p className={cn("mt-2.5 text-pretty text-[12px] leading-relaxed text-muted", owned ? "ml-auto max-w-[36%]" : "max-w-[50%]")}>{note}</p>
-      </div>
-    </div>
-  );
-}
-
-function TwoBills() {
-  const first = SIM_DAYS[0];
-  const last = SIM_DAYS[SIM_DAYS.length - 1];
+function RealBill({ stats }: { stats: Stats | null }) {
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">The same 2,000 tickets, two bills</h3>
-          <p className="mt-1 text-[13px] text-muted">Drag the handle. Left: every request answered by Ultra. Right: day {last.day} of the reference simulation.</p>
-        </div>
-        <SimBadge>Simulation · reference run</SimBadge>
+      <div className="mb-4">
+        <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">What the rent cost, in real dollars</h3>
+        <p className="mt-1 max-w-[70ch] text-[13px] leading-relaxed text-muted">
+          Ultra labelled the training questions at ${COSTS.labelling.ultra_usd_per_m_tokens.input.toFixed(2)} per million tokens in and $
+          {COSTS.labelling.ultra_usd_per_m_tokens.output.toFixed(2)} out. Those labels are the rent that bought the adapter. A call the
+          hosted Nano answers costs a fraction of one to Ultra.
+        </p>
       </div>
-      <Compare
-        ariaLabel="How much of the card shows the all-Ultra bill versus the Ratchet bill"
-        beforeLabel="All-Ultra"
-        afterLabel={`With Ratchet · day ${last.day}`}
-        initial={58}
-        before={
-          <Bill
-            title="All-Ultra"
-            who={WHO_TEXT.rented}
-            tone="rented"
-            costPer1k={first.baselinePer1k}
-            student={0}
-            note="Every request is billed per token by the teacher. The bill grows with every user."
-          />
-        }
-        after={
-          <Bill
-            title={`With Ratchet, day ${last.day}`}
-            who={WHO_TEXT.owned}
-            tone="owned"
-            costPer1k={last.costPer1k}
-            student={last.student}
-            note={`${fmtPct(last.student)} answered by the adapter you own; ${fmtPct(last.escalated)} still go to the teacher. ${fmtPct(last.saved)} saved that day.`}
-          />
-        }
-      />
+      <RealCostTiles stats={stats} />
       <p className="mt-3 text-[12px] leading-relaxed text-muted">
-        {SIM_SOURCE} Priced per token at unverified list prices; the honest bill below prices the same traffic by GPU-hours too.
+        Measured: the labelling bills are the teacher's logged tokens at list price (estimates, not invoices), and the per-call prices are
+        list prices from the hosted-Nano calibration run. Live: the demo's own counter, refreshed with the page's stats. The ten-day
+        simulation is further down, labelled Simulation.
       </p>
     </div>
   );
 }
 
-export function Rent() {
+export function Rent({ stats }: { stats: Stats | null }) {
   return (
     <Chapter id="rent">
       <GlowOrbs tones={["rented"]} className="[mask-image:linear-gradient(to_bottom,black,transparent_85%)]" />
@@ -228,7 +173,7 @@ export function Rent() {
           </Reveal>
         </div>
         <Reveal className="mt-14 sm:mt-16">
-          <TwoBills />
+          <RealBill stats={stats} />
         </Reveal>
       </Container>
     </Chapter>

@@ -1,0 +1,16 @@
+{
+  "labelling": {
+    "round1": { "usd": 2.8701, "calls": 273, "rows": 821, "source": "evidence/text2sql-round1/data/teacher_manifest.json" },
+    "round2": { "usd": 9.1845, "calls": 914, "rows_total": 4322, "source": "evidence/text2sql-round2/data/teacher_manifest_round2.json" },
+    "ultra_usd_per_m_tokens": { "input": 1.0, "output": 3.0 }
+  },
+  "per_call": {
+    "note": "Scout calls at list prices, 26 Oct 2026",
+    "ultra_triage": 0.00081,
+    "ultra_reader": 0.00215,
+    "nano_triage": 0.000044,
+    "nano_reader": 0.000055,
+    "source": "evidence/hosted-nano/README.md"
+  },
+  "precision_bar": { "answered": 1, "of": 86, "target_pct": 95, "source": "evidence/text2sql-round2/README.md" }
+}
