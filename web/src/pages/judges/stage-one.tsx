@@ -1,7 +1,8 @@
 import { ArrowUpRight, ChevronRight } from "lucide-react";
+import { Link } from "react-router";
 import { RealBadge } from "@/components/ui/real-badge";
 import { REAL_STATUSES, STATUS_TEXT, type RealStatus } from "@/lib/real-model";
-import { LIVE_URL } from "@/lib/utils";
+import { LIVE_PATH } from "@/lib/utils";
 import { JUDGES_VIDEO, REAL } from "./real";
 
 /** One hackathon requirement, the status its evidence earns today and where to check it. */
@@ -35,7 +36,7 @@ export const STAGE_ONE: StageOneItem[] = [
     requirement: "A live gateway that calls Token Factory",
     status: "real",
     evidence: "Deployed on Cloudflare Containers, in live mode, with spending caps. A request to it is answered by Nemotron 3 Ultra on Token Factory. No trained student is served yet, so the teacher answers every request.",
-    link: { label: "Open the live gateway", href: LIVE_URL },
+    link: { label: "Open the live gateway", href: LIVE_PATH },
   },
   {
     id: "runtime-call",
@@ -102,10 +103,17 @@ export function StageOneCard({ onChapter }: { onChapter: (id: string) => void })
                 {it.link && " "}
                 {it.link &&
                   ("href" in it.link ? (
-                    <a href={it.link.href} target="_blank" rel="noopener noreferrer" className={linkClass}>
-                      {it.link.label}
-                      <ArrowUpRight className="size-3 shrink-0 self-center text-muted" aria-hidden />
-                    </a>
+                    it.link.href.startsWith("/") ? (
+                      <Link to={it.link.href} className={linkClass}>
+                        {it.link.label}
+                        <ChevronRight className="size-3 shrink-0 self-center text-muted" aria-hidden />
+                      </Link>
+                    ) : (
+                      <a href={it.link.href} target="_blank" rel="noopener noreferrer" className={linkClass}>
+                        {it.link.label}
+                        <ArrowUpRight className="size-3 shrink-0 self-center text-muted" aria-hidden />
+                      </a>
+                    )
                   ) : (
                     <button type="button" onClick={() => onChapter((it.link as { chapter: string }).chapter)} className={linkClass}>
                       {it.link.label}

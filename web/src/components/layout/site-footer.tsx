@@ -1,34 +1,43 @@
+import { useRef, type PointerEvent } from "react";
 import { Link } from "react-router";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, BookOpen, Film } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import type { Stats } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { videoHref } from "@/lib/real-model";
+import { cn, DOCS_URL, HF_COLLECTION, REPO_URL } from "@/lib/utils";
+import { REAL } from "@/pages/judges/real";
 import { FOOTER_COLUMNS, HF_MODEL, REACT_BITS_PERMISSION, type NavItem } from "./nav-model";
-import { REPO_URL } from "@/lib/utils";
 import { ThemeToggle } from "./site-header";
 import { useWaking } from "@/lib/waking-store";
 import { FOOTER_WAKING, isWaking } from "@/lib/waking-model";
 
+/** The site's own tagline (the story's title): the footer reuses it, it does not coin a new one. */
+const TAGLINE = "Own the adapter your traffic trains";
+/** The approved headline wording, as the story's first screen prints it. */
+const BUILT_ON = "Built on NVIDIA Nemotron and Nebius";
+
+const LINK =
+  "group/link -mx-2 inline-flex max-w-full items-center gap-1 rounded-md px-2 py-1 text-[14px] text-muted transition-[color,background-color] duration-150 hover:bg-ink/[0.05] hover:text-ink";
+
 function FooterLink({ item }: { item: NavItem }) {
-  const cls = "group inline-flex max-w-full items-center gap-1 rounded-md text-[14px] text-muted transition-colors hover:text-ink";
   if (item.kind === "route") {
     return (
-      <Link to={item.href} className={cls}>
+      <Link to={item.href} className={LINK}>
         {item.label}
       </Link>
     );
   }
   if (item.kind === "section") {
     return (
-      <a href={item.href} className={cls}>
+      <a href={item.href} className={LINK}>
         {item.label}
       </a>
     );
   }
   return (
-    <a href={item.href} target="_blank" rel="noopener noreferrer" className={cls}>
+    <a href={item.href} target="_blank" rel="noopener noreferrer" className={LINK}>
       {item.label}
-      <ArrowUpRight aria-hidden className="size-3 shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />
+      <ArrowUpRight aria-hidden className="size-3 shrink-0 opacity-0 transition-opacity group-hover/link:opacity-70 group-focus-visible/link:opacity-70" />
       <span className="sr-only"> (opens in a new tab)</span>
     </a>
   );
@@ -56,14 +65,57 @@ function GatewayStatus({ stats, error }: { stats: Stats | null; error: string | 
   );
 }
 
-const CTA = "inline-flex h-10 items-center gap-1.5 rounded-lg px-4 text-[14px] font-medium transition-colors";
+function GithubMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={cn("size-4", className)} fill="currentColor">
+      <path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.17 1.18a10.9 10.9 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z" />
+    </svg>
+  );
+}
+
+function HfMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={cn("size-4", className)} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8.5 13.5c.8 1.4 2 2 3.5 2s2.7-.6 3.5-2" />
+      <circle cx="9" cy="9.8" r=".6" fill="currentColor" />
+      <circle cx="15" cy="9.8" r=".6" fill="currentColor" />
+    </svg>
+  );
+}
+
+const ICON =
+  "inline-flex size-10 items-center justify-center rounded-full border border-line bg-surface/70 text-ink-2 transition-[color,background-color,border-color] hover:border-line-strong hover:bg-surface-2 hover:text-ink";
+const CTA = "inline-flex h-10 items-center gap-1.5 rounded-full px-4 text-[14px] font-medium transition-colors";
 const UL = "underline decoration-line-strong underline-offset-2 hover:text-ink";
 
 export function SiteFooter({ stats, error }: { stats: Stats | null; error: string | null }) {
+  const root = useRef<HTMLElement | null>(null);
+  const video = videoHref(REAL.links, "site");
+  // The spotlight follows the pointer through two CSS variables; nothing re-renders, and touch and keyboard users see it at rest.
+  const move = (e: PointerEvent<HTMLElement>) => {
+    const el = root.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${e.clientX - r.left}px`);
+    el.style.setProperty("--my", `${e.clientY - r.top}px`);
+  };
+
   return (
-    <footer className="border-t border-line bg-bg-sunken/60">
+    <footer ref={root} onPointerMove={move} className="group/footer relative isolate mt-12 overflow-hidden border-t border-line bg-bg-sunken/60">
+      {/* Background: the engineering grid fading out downward, a resting glow, and a spotlight that follows the pointer. */}
+      <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 -z-10 opacity-60 [mask-image:linear-gradient(to_bottom,black,transparent_85%)]" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-40 left-1/2 -z-10 h-80 w-[60rem] max-w-[140vw] -translate-x-1/2 rounded-full opacity-70 blur-3xl [background:radial-gradient(closest-side,color-mix(in_srgb,var(--owned)_16%,transparent),transparent)]"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-500 group-hover/footer:opacity-100 motion-reduce:hidden [background:radial-gradient(420px_circle_at_var(--mx,50%)_var(--my,0%),color-mix(in_srgb,var(--rented)_11%,transparent),transparent_70%)]"
+      />
+
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-        <div className="relative mt-12 overflow-hidden rounded-2xl border border-line bg-surface p-6 shadow-card sm:p-8">
+        <div className="relative mt-12 overflow-hidden rounded-3xl border border-line bg-surface/90 p-6 shadow-card sm:p-8">
           <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-50 [mask-image:linear-gradient(to_left,black,transparent_65%)]" />
           <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="max-w-xl">
@@ -73,30 +125,25 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
               </p>
             </div>
             <div className="flex flex-wrap gap-2.5">
-              <Link to="/judges" className={cn(CTA, "bg-ink text-bg hover:opacity-90")}>
+              <Link to="/judges" className={cn(CTA, "bg-ink text-bg hover:bg-ink-2")}>
                 See the results
               </Link>
               <a href={HF_MODEL} target="_blank" rel="noopener noreferrer" className={cn(CTA, "border border-line-strong bg-surface text-ink hover:bg-surface-2")}>
                 Adapter on Hugging Face <ArrowUpRight aria-hidden className="size-3.5" />
                 <span className="sr-only"> (opens in a new tab)</span>
               </a>
-              <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className={cn(CTA, "border border-line-strong bg-surface text-ink hover:bg-surface-2")}>
-                Source on GitHub <ArrowUpRight aria-hidden className="size-3.5" />
-                <span className="sr-only"> (opens in a new tab)</span>
-              </a>
             </div>
           </div>
         </div>
 
-        <div className="grid gap-12 py-12 sm:py-14 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,3fr)] xl:gap-14">
+        <div className="grid gap-12 py-12 sm:py-16 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,2.6fr)] lg:gap-16">
           <div className="max-w-sm">
             <Link to="/" aria-label="Ratchet home" className="inline-flex items-center rounded-lg">
               <Logo />
             </Link>
-            <p className="mt-4 text-pretty text-[14.5px] leading-relaxed text-ink-2">
-              An open-source gateway that moves work from a large rented model to a small one with our LoRA adapter, and checks each release before it serves.
-            </p>
-            <p className="mt-3 text-[13px] leading-relaxed text-muted">
+            <p className="mt-5 text-balance text-[22px] font-semibold leading-snug tracking-[-0.025em] text-ink">{TAGLINE}</p>
+            <p className="mt-3 inline-flex max-w-full items-center rounded-full border border-line bg-surface/80 px-3 py-1 text-[12.5px] font-medium text-ink-2">{BUILT_ON}</p>
+            <p className="mt-4 text-pretty text-[13px] leading-relaxed text-muted">
               {stats?.mode === "mock"
                 ? "This gateway runs mock models, so its numbers are not measured. Exam results are labelled Measured. "
                 : "Numbers from the gateway are its own traffic and exam results are labelled Measured. "}
@@ -105,12 +152,28 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
             <div className="mt-4">
               <GatewayStatus stats={stats} error={error} />
             </div>
+            <div className="mt-6 flex items-center gap-2">
+              <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className={ICON} aria-label="GitHub (opens in a new tab)">
+                <GithubMark />
+              </a>
+              <a href={HF_COLLECTION} target="_blank" rel="noopener noreferrer" className={ICON} aria-label="Hugging Face collection (opens in a new tab)">
+                <HfMark />
+              </a>
+              <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className={ICON} aria-label="Documentation (opens in a new tab)">
+                <BookOpen className="size-4" aria-hidden />
+              </a>
+              {video && (
+                <a href={video} target="_blank" rel="noopener noreferrer" className={ICON} aria-label="Watch the video (opens in a new tab)">
+                  <Film className="size-4" aria-hidden />
+                </a>
+              )}
+            </div>
           </div>
-          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 lg:grid-cols-5">
+          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-4">
             {FOOTER_COLUMNS.map((col) => (
               <div key={col.title}>
-                <h2 className="text-[13px] font-semibold text-ink">{col.title}</h2>
-                <ul className="mt-4 space-y-3">
+                <h2 className="font-mono text-[12px] uppercase tracking-[0.14em] text-muted">{col.title}</h2>
+                <ul className="mt-4 space-y-1.5">
                   {col.items.map((item) => (
                     <li key={item.href + item.label}>
                       <FooterLink item={item} />
@@ -126,7 +189,8 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
           <div className="max-w-2xl space-y-1.5 text-[12.5px] leading-relaxed text-muted">
             <p>© {new Date().getFullYear()} Harsh Bhanushali · DualMind Labs. Code under Apache-2.0; model weights and data keep their own licenses.</p>
             <p>
-              Built for the Nebius x NVIDIA Global AI Hackathon; not an official product of either company. The documentation site uses adapted{" "}
+              Built for the Nebius x NVIDIA Global AI Hackathon; not an official product of either company, and not affiliated with or endorsed by NVIDIA or Nebius. The
+              documentation site uses adapted{" "}
               <a href="https://reactbits.dev" target="_blank" rel="noopener noreferrer" className={UL}>
                 React Bits
               </a>{" "}
@@ -139,6 +203,19 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
           </div>
           <ThemeToggle className="-my-1 shrink-0 self-start border border-line" />
         </div>
+      </div>
+
+      {/* A very large wordmark, cropped by the footer's edge and faded out: decoration only. */}
+      <div aria-hidden className="pointer-events-none relative select-none overflow-hidden">
+        <p className="mx-auto -mb-[0.2em] max-w-6xl px-4 text-center text-[24vw] font-semibold leading-[0.85] tracking-[-0.06em] text-transparent sm:px-6 lg:px-8 lg:text-[15rem]"
+          style={{
+            backgroundImage: "linear-gradient(to bottom, color-mix(in srgb, var(--ink) 13%, transparent), transparent 80%)",
+            WebkitBackgroundClip: "text",
+            backgroundClip: "text",
+          }}
+        >
+          Ratchet
+        </p>
       </div>
     </footer>
   );

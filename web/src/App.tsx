@@ -9,6 +9,7 @@ const Landing = lazy(() => import("@/pages/landing"));
 const Scout = lazy(() => import("@/pages/scout"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const Judges = lazy(() => import("@/pages/judges"));
+const Live = lazy(() => import("@/pages/live"));
 
 function Loading() {
   return <div className="min-h-[60vh]" aria-busy="true" />;
@@ -34,6 +35,7 @@ export default function App() {
             <Route path="scout" element={<Scout />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="judges" element={<Judges />} />
+            <Route path="live" element={<Live />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>

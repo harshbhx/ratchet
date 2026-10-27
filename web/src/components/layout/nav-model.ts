@@ -2,7 +2,7 @@
 // list it, one line in FOOTER_COLUMNS); the header's pill, the phone menu and the footer render from these lists.
 // No JSX here, so a test can import it.
 import type { ChapterId } from "@/pages/landing/shared";
-import { DOCS_URL, REPO_URL } from "@/lib/utils";
+import { DOCS_URL, HF_COLLECTION, LIVE_PATH, REPO_URL } from "@/lib/utils";
 
 /** `section`: an anchor on the story page; `route`: a page of this app; `external`: another site, opened in a new tab. */
 export type NavKind = "section" | "route" | "external";
@@ -53,45 +53,41 @@ export const FOOTER_COLUMNS: readonly { title: string; items: readonly NavItem[]
     title: "Product",
     items: [
       { label: "Story", href: "/", kind: "route" },
+      { label: "Live gateway", href: LIVE_PATH, kind: "route" },
       { label: "Scout", href: "/scout", kind: "route" },
       { label: "Dashboard", href: "/dashboard", kind: "route" },
       { label: "For judges", href: "/judges", kind: "route" },
     ],
   },
   {
-    title: "Real results",
+    title: "Docs",
+    items: [
+      { label: "Documentation", href: docs(""), kind: "external" },
+      { label: "Quickstart", href: docs("guides/quickstart/"), kind: "external" },
+      { label: "FAQ", href: docs("guides/faq/"), kind: "external" },
+      { label: "API reference", href: docs("api/endpoints/"), kind: "external" },
+      { label: "Security", href: docs("guides/security/"), kind: "external" },
+    ],
+  },
+  {
+    title: "Evidence",
     items: [
       { label: "Exam scores", href: "/judges#exams", kind: "route" },
       { label: "Trained adapter", href: HF_MODEL, kind: "external" },
       { label: "Training data", href: HF_TRAIN, kind: "external" },
       { label: "Exams and answers", href: HF_EXAMS, kind: "external" },
       { label: "Tool-calling adapter", href: HF_TOOL_MODEL, kind: "external" },
+      { label: "Check it yourself", href: docs("reference/verify/"), kind: "external" },
     ],
   },
   {
-    title: "Learn",
-    items: [
-      { label: "Docs", href: docs(""), kind: "external" },
-      { label: "Quickstart", href: docs("guides/quickstart/"), kind: "external" },
-      { label: "FAQ", href: docs("guides/faq/"), kind: "external" },
-      { label: "API reference", href: docs("api/endpoints/"), kind: "external" },
-    ],
-  },
-  {
-    title: "Open source",
+    title: "Project",
     items: [
       { label: "GitHub", href: repo(""), kind: "external" },
+      { label: "Hugging Face collection", href: HF_COLLECTION as `https://${string}`, kind: "external" },
       { label: "License (Apache-2.0)", href: repo("/blob/main/LICENSE"), kind: "external" },
+      { label: "Licenses of models and data", href: docs("guides/licenses/"), kind: "external" },
       { label: "Issues", href: repo("/issues"), kind: "external" },
-    ],
-  },
-  {
-    title: "Trust",
-    items: [
-      { label: "Security", href: docs("guides/security/"), kind: "external" },
-      { label: "Licenses", href: docs("guides/licenses/"), kind: "external" },
-      { label: "Evidence", href: docs("guides/evidence/"), kind: "external" },
-      { label: "Check it yourself", href: docs("reference/verify/"), kind: "external" },
     ],
   },
 ];

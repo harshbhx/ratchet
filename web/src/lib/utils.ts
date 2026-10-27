@@ -48,4 +48,8 @@ export function safeHref(url: string | undefined): string | undefined {
 
 export const REPO_URL = "https://github.com/harshbhx/ratchet";
 export const DOCS_URL = "https://docs.ratchet.dualmindlab.tech/";
+/** The live gateway's own address: the API base URL in curl and SDK snippets (it ends in /v1). Links a visitor clicks use LIVE_PATH. */
 export const LIVE_URL = "https://live.ratchet.dualmindlab.tech";
+/** The in-site page where a visitor tries the live gateway: same tab, same header and footer, requests through this site's proxy. */
+export const LIVE_PATH = "/live";
+export const HF_COLLECTION = "https://huggingface.co/collections/harshbhx/ratchet-6addf0f0812c5fbf8fa1b65d";

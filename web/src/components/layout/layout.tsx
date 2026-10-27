@@ -5,9 +5,12 @@ import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
 import { WakingBanner } from "./waking-banner";
 import { useStats } from "@/lib/hooks";
+import { isWaking } from "@/lib/waking-model";
+import { useWaking } from "@/lib/waking-store";
 
 const TITLES: Record<string, string> = {
   "/": "Ratchet: own the adapter your traffic trains",
+  "/live": "Live gateway · Ratchet",
   "/scout": "Scout · Ratchet",
   "/dashboard": "Dashboard · Ratchet",
 };
@@ -79,6 +82,8 @@ export function Layout() {
   // One stats call per page load for the footer's status line, not live numbers.
   const { stats, error } = useStats(0);
   const reduce = useReducedMotion();
+  const waking = isWaking(useWaking());
+  const gateway = waking ? "waking" : stats ? "up" : error ? "down" : "unknown";
   useEffect(() => {
     document.title = TITLES[pathname] ?? "Ratchet";
     if (!hash) {
@@ -89,7 +94,7 @@ export function Layout() {
   }, [pathname, hash]);
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-ink">
-      <SiteHeader />
+      <SiteHeader gateway={gateway} />
       <WakingBanner />
       <main id="main" className="flex-1">
         {/* A page fades in on a route change. Opacity only: a transform here would break the dashboard's sticky jump bar. */}

@@ -6,7 +6,7 @@ import { TextGenerate } from "@/components/fx/text-generate";
 import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container } from "@/components/ui/section";
-import { DOCS_URL, LIVE_URL, REPO_URL } from "@/lib/utils";
+import { DOCS_URL, LIVE_PATH, REPO_URL } from "@/lib/utils";
 import { LogoMark } from "@/components/ui/logo";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
 
@@ -97,9 +97,9 @@ export function OpenSource() {
                 Run Scout and watch each call get routed. Then open the dashboard to see the gateway's own traffic, costs and releases.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
-                <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="lg">
-                  Try the live gateway <ArrowUpRight aria-hidden />
-                </ButtonA>
+                <ButtonLink to={LIVE_PATH} size="lg">
+                  Try the live gateway <ArrowRight aria-hidden />
+                </ButtonLink>
                 <MovingBorderLink to="/scout">
                   Try Scout live <ArrowRight aria-hidden />
                 </MovingBorderLink>

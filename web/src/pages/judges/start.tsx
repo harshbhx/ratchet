@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { ArrowDown, ArrowUpRight, Hourglass } from "lucide-react";
 import { RealBadge } from "@/components/ui/real-badge";
 import { fmtDate, REAL_STATUSES, STATUS_TEXT, statusCounts, type RealEntry, type RealStatus } from "@/lib/real-model";
@@ -113,7 +114,15 @@ function CheckCell({ e }: { e: RealEntry }) {
     <div className="min-w-0 space-y-1.5">
       <p className="text-[13px] leading-snug text-ink-2">{e.check.label}</p>
       {e.check.command && <Command cmd={e.check.command} label={e.claim} wrap />}
-      {e.check.href && (
+      {e.check.href?.startsWith("/") && (
+        <Link
+          to={e.check.href}
+          className="inline-flex items-center gap-1 font-mono text-[12px] text-owned-ink underline decoration-owned/30 underline-offset-2 hover:decoration-owned [overflow-wrap:anywhere]"
+        >
+          {e.check.href}
+        </Link>
+      )}
+      {e.check.href && !e.check.href.startsWith("/") && (
         <a
           href={e.check.href}
           target="_blank"

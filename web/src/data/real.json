@@ -189,7 +189,7 @@
       "evidence": "On 24 Oct 2026 the gateway was deployed in live mode on Cloudflare Containers. A request to it is answered by Nemotron 3 Ultra on Nebius Token Factory under daily spend and rate limits, and an admin key is refused. The main site's dashboard and every other gateway-backed page read this gateway; its ledger lives in the container's /tmp, so a restart empties it. No trained student is served in it yet, so the teacher answers every request.",
       "check": {
         "label": "Open it and send a request: the reply carries a ratchet block with who answered",
-        "href": "https://live.ratchet.dualmindlab.tech"
+        "href": "/live"
       },
       "paths": [
         "deploy/cloudflare-live/src/index.ts",
