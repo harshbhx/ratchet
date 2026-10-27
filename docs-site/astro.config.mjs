@@ -194,7 +194,7 @@ export default defineConfig({
             { label: 'Story site', link: 'https://ratchet.dualmindlab.tech' },
           ],
           footerText:
-            'Ratchet is open source under Apache-2.0 ([GitHub](https://github.com/harshbhx/ratchet)). The reference pages are built from the repository’s `docs/` folder, and the guides are written for this site. Built with [Starlight](https://starlight.astro.build), the [Lucode](https://github.com/lucas-labs/lucode-starlight-theme) theme and [React Bits](https://reactbits.dev) components (MIT + Commons Clause, kept in `docs-site/src/components/rb/`).',
+            'Ratchet is open source under Apache-2.0 ([GitHub](https://github.com/harshbhx/ratchet)). The reference pages are built from the repository’s `docs/` folder, and the guides are written for this site. Built with [Starlight](https://starlight.astro.build), the [Lucode](https://github.com/lucas-labs/lucode-starlight-theme) theme and [React Bits](https://reactbits.dev) components (MIT + Commons Clause, kept in `docs-site/src/components/rb/`). Icons are from [Lucide](https://lucide.dev) (ISC).',
         }),
         starlightOpenAPI([
           {

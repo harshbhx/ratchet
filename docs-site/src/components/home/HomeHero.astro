@@ -1,9 +1,11 @@
 ---
 /**
- * The docs home's first screen: a compact, documentation-style header. A short title, one line on what Ratchet is, a
- * search call-out that opens Starlight's own search, and the three primary links. A quiet dot grid sits behind it
- * (CSS only, no motion). The main website carries the marketing hero; this page is for finding things.
+ * The docs home's first screen. Left: the title, one line on what Ratchet is, a search call-out that opens Starlight's own
+ * search, three primary links and a meta row. Right: a code window with the first request (curl, Python, Node) and the
+ * `ratchet` block of the answer. The window's lines appear once, and only when motion is allowed. The background is a dot
+ * grid with a radial fade and a soft glow (CSS only). Every fact on it comes from the Quickstart and the repository.
  */
+import { readFileSync } from 'node:fs';
 import RtIcon from '../RtIcon.astro';
 
 interface Props {
@@ -14,37 +16,96 @@ interface Props {
 
 const { title, tagline, actions } = Astro.props;
 const variant = (v: string) => (v === 'outline' ? 'outline' : v === 'ghost' || v === 'minimal' ? 'ghost' : 'primary');
+
+// The version is the repository's (pyproject.toml), read at build time.
+let version = '';
+try {
+  const toml = readFileSync(new URL('../../../../pyproject.toml', import.meta.url), 'utf8');
+  version = toml.match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? '';
+} catch {
+  version = '';
+}
+const META = [version ? `Version ${version}` : '', 'Apache-2.0', 'Built on NVIDIA Nemotron and Nebius'].filter(Boolean);
 ---
 
 <section class="rt-dhero rt-ui" aria-labelledby="_top">
   <div class="rt-dhero__bg" aria-hidden="true"></div>
   <div class="rt-dhero__inner">
-    <p class="rt-dhero__eyebrow">Documentation</p>
-    <h1 id="_top" class="rt-dhero__title">{title}</h1>
-    {tagline && <p class="rt-dhero__lead" set:html={tagline} />}
+    <div class="rt-dhero__copy">
+      <p class="rt-dhero__eyebrow"><RtIcon name="book" size={14} /> Documentation</p>
+      <h1 id="_top" class="rt-dhero__title">{title}</h1>
+      {tagline && <p class="rt-dhero__lead" set:html={tagline} />}
 
-    <button type="button" class="rt-dhero__search" data-rt-open-search hidden>
-      <RtIcon name="search" size={18} />
-      <span class="rt-dhero__search-label">Search the docs</span>
-      <kbd class="rt-dhero__kbd" aria-hidden="true"><span data-rt-mod>Ctrl</span> K</kbd>
-    </button>
+      <button type="button" class="rt-dhero__search" data-rt-open-search hidden>
+        <RtIcon name="search" size={18} />
+        <span class="rt-dhero__search-label">Search the docs</span>
+        <kbd class="rt-dhero__kbd" aria-hidden="true"><span data-rt-mod>Ctrl</span> K</kbd>
+      </button>
 
-    {
-      actions.length > 0 && (
-        <div class="rt-dhero__actions">
-          {actions.map((a, i) => (
-            <a class={`rt-button rt-button--${variant(a.variant)}`} href={a.link}>
-              {a.text}
-              {i === 0 && (
-                <svg class="rt-button__arrow" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              )}
-            </a>
-          ))}
+      {
+        actions.length > 0 && (
+          <div class="rt-dhero__actions">
+            {actions.map((a, i) => (
+              <a class={`rt-button rt-button--${variant(a.variant)}`} href={a.link}>
+                {a.text}
+                {i === 0 && <RtIcon name="start" size={16} class="rt-button__arrow" />}
+              </a>
+            ))}
+          </div>
+        )
+      }
+
+      <ul class="rt-dhero__meta" aria-label="About this release">
+        {META.map((m) => <li>{m}</li>)}
+      </ul>
+    </div>
+
+    <div class="rt-dhero__win" role="group" aria-label="First request and the ratchet block in the answer">
+      <div class="rt-dhero__beam" aria-hidden="true"></div>
+      <div class="rt-win">
+        <div class="rt-win__bar">
+          <span class="rt-win__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div class="rt-win__tabs" role="tablist" aria-label="Language">
+            <button type="button" role="tab" id="rt-tab-curl" aria-selected="true" aria-controls="rt-pane-curl">curl</button>
+            <button type="button" role="tab" id="rt-tab-py" aria-selected="false" aria-controls="rt-pane-py" tabindex="-1">Python</button>
+            <button type="button" role="tab" id="rt-tab-node" aria-selected="false" aria-controls="rt-pane-node" tabindex="-1">Node</button>
+          </div>
+          <span class="rt-win__host">localhost:8000</span>
         </div>
-      )
-    }
+
+        <div class="rt-win__panes">
+          <pre class="rt-win__pane" role="tabpanel" id="rt-pane-curl" aria-labelledby="rt-tab-curl" tabindex="0"><code is:raw><span class="l"><span class="f">curl</span> -s http://localhost:8000/v1/chat/completions \</span>
+<span class="l">  -H <span class="s">'authorization: Bearer your-local-api-key-here'</span> \</span>
+<span class="l">  -H <span class="s">'X-Ratchet-Task: ticket-triage'</span> \</span>
+<span class="l">  -d <span class="s">'{"model":"ratchet","messages":[</span></span>
+<span class="l"><span class="s">     {"role":"user","content":"I was charged twice this month."}]}'</span></span></code></pre>
+          <pre class="rt-win__pane" role="tabpanel" id="rt-pane-py" aria-labelledby="rt-tab-py" tabindex="0" hidden><code is:raw><span class="l"><span class="k">from</span> openai <span class="k">import</span> OpenAI</span>
+<span class="l"></span>
+<span class="l">client = <span class="f">OpenAI</span>(base_url=<span class="s">"http://localhost:8000/v1"</span>,</span>
+<span class="l">                api_key=<span class="s">"your-local-api-key-here"</span>)</span>
+<span class="l">resp = client.chat.completions.<span class="f">create</span>(</span>
+<span class="l">    model=<span class="s">"ratchet"</span>,</span>
+<span class="l">    messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"I was charged twice."</span>}],</span>
+<span class="l">    extra_headers={<span class="s">"X-Ratchet-Task"</span>: <span class="s">"ticket-triage"</span>})</span></code></pre>
+          <pre class="rt-win__pane" role="tabpanel" id="rt-pane-node" aria-labelledby="rt-tab-node" tabindex="0" hidden><code is:raw><span class="l"><span class="k">import</span> OpenAI <span class="k">from</span> <span class="s">"openai"</span>;</span>
+<span class="l"><span class="k">const</span> client = <span class="k">new</span> <span class="f">OpenAI</span>({</span>
+<span class="l">  baseURL: <span class="s">"http://localhost:8000/v1"</span>, apiKey: <span class="s">"your-local-api-key-here"</span> });</span>
+<span class="l"><span class="k">const</span> r = <span class="k">await</span> client.chat.completions.<span class="f">create</span>(</span>
+<span class="l">  { model: <span class="s">"ratchet"</span>, messages: [{ role: <span class="s">"user"</span>, content: <span class="s">"I was charged twice."</span> }] },</span>
+<span class="l">  { headers: { <span class="s">"X-Ratchet-Task"</span>: <span class="s">"ticket-triage"</span> } });</span></code></pre>
+        </div>
+
+        <div class="rt-win__out">
+          <p class="rt-win__label"><RtIcon name="terminal" size={13} /> Answer (trimmed): the <code>ratchet</code> block</p>
+          <pre class="rt-win__resp" tabindex="0"><code is:raw><span class="l r1">{ <span class="c">"choices"</span>: [ <span class="d">&hellip;</span> ],</span>
+<span class="l r2">  <span class="c">"ratchet"</span>: {</span>
+<span class="l r3">    <span class="c">"served_by"</span>: <span class="s">"teacher"</span>,  <span class="m">// "student" once one is serving</span></span>
+<span class="l r4">    <span class="c">"student_version"</span>: <span class="k">null</span>,</span>
+<span class="l r5">    <span class="c">"confidence"</span>, <span class="c">"escalated"</span>, <span class="c">"cost_usd"</span> <span class="d">&hellip;</span></span>
+<span class="l r6">  } }</span></code></pre>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -58,7 +119,7 @@ const variant = (v: string) => (v === 'outline' ? 'outline' : v === 'ghost' || v
     if (mod) mod.textContent = mac ? '⌘' : 'Ctrl';
     button.hidden = false;
     button.addEventListener('click', () => {
-      const trigger = document.querySelector<HTMLElement>('site-search button, button[data-open-modal]');
+      const trigger = document.querySelector<HTMLElement>('site-search button[data-open-modal], button[data-open-modal]');
       if (trigger) {
         trigger.click();
         return;
@@ -66,6 +127,28 @@ const variant = (v: string) => (v === 'outline' ? 'outline' : v === 'ghost' || v
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: !mac, metaKey: mac, bubbles: true }));
     });
   }
+
+  // The code window's language tabs (arrow keys move between them).
+  const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.rt-win__tabs [role="tab"]'));
+  const select = (tab: HTMLButtonElement, focus = false) => {
+    tabs.forEach((t) => {
+      const on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      const pane = document.getElementById(t.getAttribute('aria-controls') ?? '');
+      if (pane) pane.hidden = !on;
+    });
+    if (focus) tab.focus();
+  };
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', () => select(tab));
+    tab.addEventListener('keydown', (e) => {
+      const next = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+      if (next < 0) return;
+      e.preventDefault();
+      select(tabs[(next + tabs.length) % tabs.length], true);
+    });
+  });
 </script>
 
 <style>
@@ -82,43 +165,62 @@ const variant = (v: string) => (v === 'outline' ? 'outline' : v === 'ghost' || v
     z-index: -1;
     pointer-events: none;
     background:
-      radial-gradient(40rem 18rem at 12% -4rem, var(--rt-glow-owned), transparent 70%),
-      radial-gradient(28rem 14rem at 96% 110%, var(--rt-glow-rented), transparent 70%),
+      radial-gradient(46rem 24rem at 8% -6rem, var(--rt-glow-owned), transparent 70%),
+      radial-gradient(34rem 20rem at 100% 100%, var(--rt-glow-rented), transparent 70%),
       radial-gradient(circle at 1px 1px, var(--rt-grid-strong) 1px, transparent 0) 0 0 / 22px 22px;
-    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
-    mask-image: linear-gradient(to bottom, #000 55%, transparent);
+    -webkit-mask-image: radial-gradient(ellipse 90% 100% at 50% 0%, #000 45%, transparent 100%);
+    mask-image: radial-gradient(ellipse 90% 100% at 50% 0%, #000 45%, transparent 100%);
   }
   .rt-dhero__inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
     width: 100%;
-    max-width: 64rem;
+    max-width: 76rem;
     margin-inline: auto;
-    padding: 2.5rem 1rem 2.25rem;
+    padding: 2.25rem 1rem 2.5rem;
   }
   @media (min-width: 48rem) {
     .rt-dhero__inner {
-      padding: 3.5rem 1.5rem 3rem;
+      padding: 3.25rem 1.75rem 3.5rem;
     }
   }
+  @media (min-width: 66rem) {
+    .rt-dhero__inner {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr);
+      align-items: center;
+      gap: 3rem;
+      padding-block: 4.25rem 4.5rem;
+    }
+  }
+  .rt-dhero__copy {
+    min-width: 0;
+  }
   .rt-dhero__eyebrow {
-    margin: 0 0 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0 0 0.9rem;
+    padding: 0.25rem 0.7rem 0.25rem 0.55rem;
+    border: 1px solid color-mix(in srgb, var(--rt-owned) 35%, var(--rt-line));
+    border-radius: 999px;
+    background: var(--rt-owned-soft);
     color: var(--rt-owned-ink);
-    font-family: var(--rt-font-mono);
     font-size: 0.75rem;
-    font-weight: 500;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-weight: 550;
+    letter-spacing: 0.02em;
   }
   .rt-dhero .rt-dhero__title {
     margin: 0;
     color: var(--rt-ink);
-    font-size: clamp(1.9rem, 1.4rem + 2vw, 2.75rem);
-    font-weight: 650;
-    letter-spacing: -0.03em;
-    line-height: 1.12;
+    font-size: clamp(2.1rem, 1.4rem + 3vw, 3.4rem);
+    font-weight: 700;
+    letter-spacing: -0.036em;
+    line-height: 1.05;
   }
   .rt-dhero .rt-dhero__lead {
-    max-width: 40rem;
-    margin: 0.85rem 0 0;
+    max-width: 34rem;
+    margin: 1rem 0 0;
     color: var(--rt-ink-2);
     font-size: 1.0625rem;
     line-height: 1.6;
@@ -128,12 +230,12 @@ const variant = (v: string) => (v === 'outline' ? 'outline' : v === 'ghost' || v
     align-items: center;
     gap: 0.7rem;
     width: 100%;
-    max-width: 34rem;
-    min-height: 3rem;
+    max-width: 32rem;
+    min-height: 3.1rem;
     margin-top: 1.5rem;
     padding: 0.6rem 0.75rem 0.6rem 1rem;
     border: 1px solid var(--rt-line-strong);
-    border-radius: 0.85rem;
+    border-radius: 0.9rem;
     background: var(--rt-surface);
     color: var(--rt-muted);
     box-shadow: var(--rt-shadow);
@@ -180,6 +282,223 @@ const variant = (v: string) => (v === 'outline' ? 'outline' : v === 'ghost' || v
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
-    margin-top: 1.25rem;
+    margin-top: 1.1rem;
+  }
+  .rt-dhero__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0;
+    margin: 1.5rem 0 0 !important;
+    padding: 0;
+    list-style: none;
+    color: var(--rt-muted);
+    font-size: 0.82rem;
+  }
+  .rt-dhero__meta li {
+    margin: 0 !important;
+    padding-block: 0;
+  }
+  .rt-dhero__meta li + li::before {
+    content: '\00b7';
+    margin-inline: 0.6rem;
+    color: var(--rt-line-strong);
+  }
+
+  /* ---------- Code window ---------- */
+  .rt-dhero__win {
+    position: relative;
+    min-width: 0;
+    border-radius: 1rem;
+    padding: 1px;
+  }
+  /* The hairline beam: a static brand-colour edge; it turns slowly only when motion is allowed. */
+  .rt-dhero__beam {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: conic-gradient(from var(--rt-beam, 0deg), transparent 0 55%, var(--rt-owned) 75%, var(--rt-rented) 90%, transparent);
+    opacity: 0.8;
+    pointer-events: none;
+  }
+  @property --rt-beam {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-dhero__beam {
+      animation: rt-beam 9s linear infinite;
+    }
+    @keyframes rt-beam {
+      to {
+        --rt-beam: 360deg;
+      }
+    }
+  }
+  .rt-win {
+    position: relative;
+    overflow: hidden;
+    border-radius: calc(1rem - 1px);
+    background: var(--rt-code-bg);
+    box-shadow: var(--rt-shadow-lift);
+  }
+  .rt-win__bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--rt-line);
+    background: var(--rt-surface-2);
+  }
+  .rt-win__dots {
+    display: inline-flex;
+    gap: 0.4rem;
+  }
+  .rt-win__dots i {
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 999px;
+    background: var(--rt-line-strong);
+  }
+  .rt-win__dots i:nth-child(1) {
+    background: #ff5f57;
+  }
+  .rt-win__dots i:nth-child(2) {
+    background: #febc2e;
+  }
+  .rt-win__dots i:nth-child(3) {
+    background: #28c840;
+  }
+  .rt-win__tabs {
+    display: flex;
+    gap: 0.15rem;
+    margin-left: 0.25rem;
+  }
+  .rt-win__tabs button {
+    min-height: 1.9rem;
+    padding: 0 0.7rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--rt-muted);
+    font: 500 0.8rem var(--rt-font-sans);
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+  .rt-win__tabs button:hover {
+    color: var(--rt-ink);
+  }
+  .rt-win__tabs button[aria-selected='true'] {
+    background: var(--rt-code-bg);
+    color: var(--rt-ink);
+    box-shadow: inset 0 0 0 1px var(--rt-line);
+  }
+  .rt-win__tabs button:focus-visible,
+  .rt-win pre:focus-visible {
+    outline: 2px solid var(--rt-focus);
+    outline-offset: -2px;
+  }
+  .rt-win__host {
+    margin-left: auto;
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.72rem;
+  }
+  @media (max-width: 30rem) {
+    .rt-win__host {
+      display: none;
+    }
+  }
+  .rt-win pre {
+    margin: 0 !important;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    background: transparent;
+    border: 0;
+    color: var(--rt-ink-2);
+    font-family: var(--rt-font-mono);
+    font-size: 0.78rem;
+    line-height: 1.75;
+    scrollbar-width: thin;
+  }
+  .rt-win pre[hidden] {
+    display: none;
+  }
+  .rt-win pre code {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    white-space: normal;
+  }
+  .rt-win :global(.l) {
+    display: block;
+    min-height: 1.75em;
+    white-space: pre;
+  }
+  .rt-win :global(.k) {
+    color: var(--rt-rented-ink);
+  }
+  .rt-win :global(.f) {
+    color: var(--rt-owned-ink);
+  }
+  .rt-win :global(.s) {
+    color: var(--rt-good-ink);
+  }
+  .rt-win :global(.c) {
+    color: var(--rt-owned-ink);
+  }
+  .rt-win :global(.m),
+  .rt-win :global(.d) {
+    color: var(--rt-muted);
+  }
+  .rt-win__out {
+    border-top: 1px dashed var(--rt-line-strong);
+    background: color-mix(in srgb, var(--rt-owned-soft) 30%, var(--rt-code-bg));
+  }
+  .rt-win .rt-win__label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0.65rem 1.1rem 0;
+    color: var(--rt-muted);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+  }
+  .rt-win .rt-win__label code {
+    padding: 0 0.3rem;
+    border: 0;
+    background: var(--rt-surface-2);
+    font-size: 0.95em;
+  }
+  .rt-win__out pre {
+    padding-top: 0.5rem;
+  }
+  /* The answer's lines appear one after another, once. Reduced motion: all shown at once. */
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-win :global(.l[class*=' r']) {
+      opacity: 0;
+      transform: translateY(4px);
+      animation: rt-line 0.5s var(--rt-ease) forwards;
+    }
+    .rt-win :global(.r1) { animation-delay: 0.7s; }
+    .rt-win :global(.r2) { animation-delay: 0.95s; }
+    .rt-win :global(.r3) { animation-delay: 1.2s; }
+    .rt-win :global(.r4) { animation-delay: 1.45s; }
+    .rt-win :global(.r5) { animation-delay: 1.7s; }
+    .rt-win :global(.r6) { animation-delay: 1.95s; }
+    @keyframes rt-line {
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
   }
 </style>
