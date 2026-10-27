@@ -1,5 +1,6 @@
-// The video link's emails as plain text: one per human visit (capped per UTC day) and a daily summary. No imports, so the tests
-// run it under Node. The emails carry the source, the two-letter country and the time, never an IP address or a user agent.
+// The video link's emails as plain text: one per human visitor per UTC day (capped) and a daily summary. No imports, so the tests
+// run it under Node. The emails carry the city and country, the network, a coarse device (for example "Windows desktop, Chrome"),
+// the source, the time and counts of unique humans; never an IP address, a user agent or a cookie.
 
 const IST_OFFSET_MS = 330 * 60_000; // India Standard Time is UTC+5:30 all year (no daylight saving)
 
@@ -15,10 +16,15 @@ export interface Mail {
 
 export interface Visit {
   source: string;
+  city: string;
   country: string;
+  /** "Reliance Jio (AS55836)". */
+  network: string;
+  /** "Windows desktop, Chrome". */
+  device: string;
   at: number;
-  /** Human clicks counted so far on this UTC day, this one included. */
-  today: number;
+  /** Different human visitors counted so far on this UTC day, this one included. */
+  unique: number;
   /** The UTC day, "2026-10-26". */
   day: string;
   /** This email's number on the day, and the most there will be. */
@@ -27,12 +33,15 @@ export interface Visit {
 }
 
 export function visitEmail(v: Visit): Mail {
+  const place = [v.city, v.country].filter(Boolean).join(", ");
   const lines = [
-    "Someone opened the Ratchet demo video link.",
+    "Someone opened the Ratchet video link.",
+    `Where: ${place}`,
+    `Network: ${v.network}`,
+    `Device: ${v.device}`,
     `Source: ${v.source}`,
-    `Country: ${v.country}`,
     `Time (IST): ${istTime(v.at)}`,
-    `Today so far: ${v.today} human ${v.today === 1 ? "click" : "clicks"} (UTC day ${v.day}).`,
+    `Unique humans today: ${v.unique} (UTC day ${v.day}).`,
   ];
   if (v.slot >= v.cap) {
     lines.push(
@@ -40,14 +49,21 @@ export function visitEmail(v: Visit): Mail {
       `This is visit email ${v.slot} of ${v.cap} for this UTC day, the daily cap. No more visit emails today; the 09:00 IST summary counts every click.`,
     );
   }
-  lines.push("", "No IP address, user agent or cookie is stored.");
-  return { subject: `Ratchet video opened (${v.source}, ${v.country})`, text: lines.join("\n") + "\n" };
+  lines.push("", "Kept 30 days: country, city, network, coarse device and a daily-changing visitor hash. Never the IP address, user agent or a cookie.");
+  return { subject: `Ratchet video opened (${place}, ${v.source})`, text: lines.join("\n") + "\n" };
 }
 
 export interface Summary {
   day: string;
   /** Clicks per source on that day. */
   sources: { source: string; human: number; bot: number }[];
+  /** Bot visits on that day by reason ("" is a row from before reasons were kept). */
+  reasons: { reason: string; n: number }[];
+  /** Different human visitors on that day. */
+  unique: number;
+  /** Networks of human and of bot visits on that day, most first. */
+  humanNetworks: { network: string; n: number }[];
+  botNetworks: { network: string; n: number }[];
   /** Human clicks per country on that day, from the events table. */
   countries: { country: string; n: number }[];
   /** Visit emails sent on that day. */
@@ -55,22 +71,38 @@ export interface Summary {
   cap: number;
 }
 
+const top5 = (rows: { network: string; n: number }[]): string[] =>
+  rows.length ? rows.slice(0, 5).map((r, i) => `  ${i + 1}. ${r.network}: ${r.n}`) : ["  none"];
+
 export function summaryEmail(s: Summary): Mail {
   const human = s.sources.reduce((a, r) => a + r.human, 0);
   const bot = s.sources.reduce((a, r) => a + r.bot, 0);
   const rows = [...s.sources].sort((a, b) => b.human - a.human || b.bot - a.bot || a.source.localeCompare(b.source));
+  const reasons = [...s.reasons].sort((a, b) => b.n - a.n || a.reason.localeCompare(b.reason));
   const lines = [
-    `The Ratchet demo video link on ${s.day} (UTC day).`,
-    `Human clicks: ${human}`,
-    `Link previews and bots: ${bot}`,
+    `The Ratchet video link on ${s.day} (UTC day).`,
+    `Humans: ${human} ${human === 1 ? "click" : "clicks"}, ${s.unique} unique`,
+    `Bots: ${bot}`,
     "",
-    "By source (human / previews and bots):",
+    "Bots by reason:",
+    ...(reasons.length ? reasons.map((r) => `  ${r.reason || "not recorded"}: ${r.n}`) : ["  none"]),
+    "",
+    "Top 5 networks, humans:",
+    ...top5(s.humanNetworks),
+    "",
+    "Top 5 networks, bots:",
+    ...top5(s.botNetworks),
+    "",
+    "By source (human / bots):",
     ...rows.map((r) => `  ${r.source}: ${r.human} / ${r.bot}`),
     "",
     `Countries (human clicks): ${s.countries.length ? s.countries.map((c) => `${c.country} ${c.n}`).join(", ") : "none"}`,
     `Visit emails sent: ${s.emails} of ${s.cap}.`,
   ];
-  return { subject: `Ratchet video link, ${s.day} (UTC): ${human} human ${human === 1 ? "click" : "clicks"}`, text: lines.join("\n") + "\n" };
+  return {
+    subject: `Ratchet video link, ${s.day} (UTC): ${s.unique} unique ${s.unique === 1 ? "human" : "humans"}, ${bot} bot ${bot === 1 ? "visit" : "visits"}`,
+    text: lines.join("\n") + "\n",
+  };
 }
 
 /** A header value on one line: a stray line break would start a new header. */
