@@ -670,6 +670,45 @@ def test_readyz_reports_missing_adapters_and_queues_their_reload(gw, monkeypatch
     assert len(student.calls_to("/models")) == 4
 
 
+@pytest.mark.req("FR-12.30", "NFR-2")
+def test_readyz_retries_a_timed_out_teacher_check_once(gw, monkeypatch, tmp_path):
+    """Right after a start the first `/models` call can time out. The check is tried once more after a short pause: a
+    second answer is `ready`; a second timeout is `degraded` with the timeout's class. An answer other than a timeout
+    (a refused connection) is not retried."""
+    monkeypatch.setattr(readiness, "TEACHER_RETRY_DELAY_S", 0)
+    student = FakeOpenAIServer(models=("student",))
+
+    def run(outcomes: list[str], name: str):
+        calls: list[str] = []
+
+        def teacher(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.path)
+            outcome = outcomes[min(len(calls), len(outcomes)) - 1]
+            if outcome == "timeout":
+                raise httpx.ConnectTimeout("timed out connecting to https://tokenfactory.test/v1/models", request=request)
+            if outcome == "refused":
+                raise httpx.ConnectError("connection refused", request=request)
+            return httpx.Response(200, json={"data": [{"id": OPEN_TEACHER}]})
+
+        _runtime(gw, monkeypatch, _live(tmp_path, db_path=str(tmp_path / f"{name}.db")), httpx.MockTransport(teacher), student)
+        r = _readyz(gw)
+        return r, calls
+
+    r, calls = run(["timeout", "ok"], "a")
+    teacher = r.json()["checks"]["teacher"]
+    assert len(calls) == 2 and teacher["ok"] is True and "error" not in teacher and r.json()["status"] == "ready", r.json()
+
+    r, calls = run(["timeout", "timeout"], "b")
+    teacher = r.json()["checks"]["teacher"]
+    assert len(calls) == 2 and teacher["error"] == "ConnectTimeout" and "tokenfactory" not in r.text
+    assert (r.status_code, r.json()["status"]) == (200, "degraded")
+
+    r, calls = run(["refused"], "c")
+    assert len(calls) == 1 and r.json()["checks"]["teacher"]["error"] == "ConnectError"
+
+    assert readiness.TEACHER_BUDGET_S >= 2 * readiness.TEACHER_ATTEMPT_TIMEOUT_S + 1.5 and readiness.TEACHER_BUDGET_S < 5
+
+
 @pytest.mark.req("FR-12.30", "NFR-2", "FR-2.12")
 def test_readyz_follows_the_teacher(gw, monkeypatch, tmp_path):
     """An open teacher breaker is 503, unless a fallback teacher's breaker is closed or the student stands in

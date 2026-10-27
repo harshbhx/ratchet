@@ -3,7 +3,7 @@
   "info": {
     "title": "Ratchet gateway",
     "version": "0.5.0",
-    "description": "The HTTP API of the Ratchet gateway (`ratchet.gateway:app`), generated from the code with `python docs-site/scripts/export-reference.py`. The chat route speaks OpenAI's format, so any OpenAI SDK works. Examples, error envelopes and access levels are in the [hand-written API guide](https://docs.ratchet.dualmindlab.tech/reference/api/). Mock-only demo controls answer 404 in live mode, and in live mode most `/ratchet/*` routes need an admin or dashboard key unless the dashboard is public.",
+    "description": "The HTTP API of the Ratchet gateway (`ratchet.gateway:app`), generated from the code with `python docs-site/scripts/export-reference.py`. The chat route speaks OpenAI's format, so any OpenAI SDK works. Examples, error envelopes and access levels are in the [hand-written API guide](https://docs.ratchet.dualmindlab.tech/reference/api/). Mock-only controls answer 404 in live mode, and in live mode most `/ratchet/*` routes need an admin or dashboard key unless the dashboard is public.",
     "license": {
       "name": "Apache-2.0",
       "url": "https://github.com/harshbhx/ratchet/blob/main/LICENSE"
@@ -2222,7 +2222,7 @@
       },
       "put": {
         "summary": "Put Task",
-        "description": "Create or replace an API task: 200 `{task, spec_hash, changed, created}`, 422 `{errors}` for a bad spec, 403 for\na built-in or file task, 409 when the registry (or the mock demo's share of it) is full.",
+        "description": "Create or replace an API task: 200 `{task, spec_hash, changed, created}`, 422 `{errors}` for a bad spec, 403 for\na built-in or file task, 409 when the registry (or mock mode's share of it) is full.",
         "operationId": "put_task_ratchet_tasks__name__put",
         "parameters": [
           {
@@ -4823,7 +4823,7 @@
     "/ratchet/demo/day": {
       "post": {
         "summary": "Demo Day",
-        "description": "Simulate one day of traffic (support tickets, Scout research calls, both, structured outputs or tool requests),\nthen one night of training. Mock models: `simulation` says so in the response.",
+        "description": "Run one day of mock traffic (support tickets, Scout research calls, both, structured outputs or tool requests),\nthen one night of training. Mock models: the response's `simulation` field says so.",
         "operationId": "demo_day_ratchet_demo_day_post",
         "parameters": [
           {
@@ -4871,7 +4871,7 @@
           }
         },
         "tags": [
-          "Demo controls (mock only)"
+          "Mock-mode controls (mock only)"
         ]
       }
     },
@@ -4894,7 +4894,7 @@
           }
         },
         "tags": [
-          "Demo controls (mock only)"
+          "Mock-mode controls (mock only)"
         ]
       }
     },
@@ -4939,7 +4939,7 @@
           }
         },
         "tags": [
-          "Demo controls (mock only)"
+          "Mock-mode controls (mock only)"
         ]
       }
     },
@@ -5000,7 +5000,7 @@
           }
         },
         "tags": [
-          "Demo controls (mock only)"
+          "Mock-mode controls (mock only)"
         ]
       }
     },
@@ -5045,7 +5045,7 @@
           }
         },
         "tags": [
-          "Demo controls (mock only)"
+          "Mock-mode controls (mock only)"
         ]
       }
     },
@@ -5070,7 +5070,7 @@
           }
         },
         "tags": [
-          "Demo controls (mock only)"
+          "Mock-mode controls (mock only)"
         ]
       }
     },
@@ -5086,72 +5086,6 @@
                 "schema": {
                   "type": "object",
                   "title": "Response Scout Examples Scout Examples Get"
-                }
-              }
-            }
-          }
-        },
-        "tags": [
-          "Scout"
-        ]
-      }
-    },
-    "/scout/recorded": {
-      "get": {
-        "summary": "Scout Recorded",
-        "description": "Recorded live runs, newest first: read-only, no model call, no guard budget, no ledger row.",
-        "operationId": "scout_recorded_scout_recorded_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "title": "Response Scout Recorded Scout Recorded Get"
-                }
-              }
-            }
-          }
-        },
-        "tags": [
-          "Scout"
-        ]
-      }
-    },
-    "/scout/recorded/{rid}": {
-      "get": {
-        "summary": "Scout Recorded One",
-        "operationId": "scout_recorded_one_scout_recorded__rid__get",
-        "parameters": [
-          {
-            "name": "rid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Rid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "title": "Response Scout Recorded One Scout Recorded  Rid  Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -5362,7 +5296,7 @@
     },
     {
       "url": "https://{host}",
-      "description": "Your gateway (the public demo's host by default)",
+      "description": "Your gateway (the live gateway's host by default)",
       "variables": {
         "host": {
           "default": "ratchet.dualmindlab.tech"
@@ -5412,12 +5346,12 @@
       "description": "Operator actions with an audit trail: versions, switches, pins, erasure and export."
     },
     {
-      "name": "Demo controls (mock only)",
-      "description": "Buttons of the mock demo. They answer 404 in live mode."
+      "name": "Mock-mode controls (mock only)",
+      "description": "Buttons of the mock-mode gateway. They answer 404 in live mode."
     },
     {
       "name": "Scout",
-      "description": "The multi-agent research demo: runs, the event stream and the budget guard's status."
+      "description": "The multi-agent research tool: runs, the event stream and the budget guard's status."
     },
     {
       "name": "Pages",

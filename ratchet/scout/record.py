@@ -1,9 +1,8 @@
-"""Recorded Scout runs (FR-10.40, ADR 0140): the operator records one live run, and the gateway plays it back read-only.
+"""Recorded Scout runs (FR-10.40, ADR 0140): the operator can save one live run as a file.
 
-A judge who arrives after the day's runs are used up, or while Token Factory or Tavily fails, can still watch a real run
-at its real pace, labelled as a recording. The file holds the question the operator chose, the run's events with their
-offsets, the host name and the totals; never a header, a key or a judge code (INV-12, INV-13). The gateway only reads
-these files and never writes one. A visitor's own run is not recorded here; its triage and reader calls quote the
+The gateway does not serve these files. The file holds the question the operator chose, the run's events with their
+offsets, the host name and the totals; never a header, a key or a judge code (INV-12, INV-13). The gateway
+never writes one. A visitor's own run is not recorded here; its triage and reader calls quote the
 question and, like any distillable call, a teacher answer to one of them is stored as a redacted training example.
 """
 
@@ -23,7 +22,6 @@ import httpx
 SCHEMA = "ratchet.scout-recording/v1"
 ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[a-z0-9-]{1,40}$")
 MAX_BYTES = 2 * 1024 * 1024
-MAX_LISTED = 20
 DEFAULT_DIR = "evidence/scout"
 
 
@@ -101,7 +99,7 @@ def record(
     if mode not in ("live", "mock"):
         raise RecordError(f"unknown mode {mode!r}")
     if mode == "mock" and not allow_mock:
-        raise RecordError("the gateway is in mock mode: this would record a simulation (use --allow-mock to keep it)")
+        raise RecordError("the gateway is in mock mode: this would record a mock-mode run (use --allow-mock to keep it)")
     totals = events[-1].get("totals")
     rec = {
         "schema": SCHEMA,
@@ -129,75 +127,3 @@ def write(rec: dict[str, Any], out_dir: str | Path) -> Path:
     path = d / f"{recording_id(rec)}.json"
     path.write_text(json.dumps(rec, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return path
-
-
-# ------------------------------------------------------------------ reading (the gateway)
-
-_cache: dict[str, tuple[int, int, dict[str, Any] | None]] = {}
-
-
-def _valid(rec: Any) -> bool:
-    if not isinstance(rec, dict) or rec.get("schema") != SCHEMA:
-        return False
-    if rec.get("mode") not in ("live", "mock") or not isinstance(rec.get("question"), str):
-        return False
-    if not isinstance(rec.get("recorded_at"), str) or not isinstance(rec.get("duration_ms"), int):
-        return False
-    evs = rec.get("events")
-    if not isinstance(evs, list) or not evs or not all(isinstance(e, dict) and isinstance(e.get("t_ms"), int) for e in evs):
-        return False
-    return evs[-1].get("type") == "done" and isinstance(rec.get("totals"), dict)
-
-
-def _load(path: Path) -> dict[str, Any] | None:
-    """The parsed recording at `path`, or None for a file that is too large, not JSON or not this schema. Cached by
-    modification time and size, so a new or changed file appears without a restart."""
-    try:
-        st = path.stat()
-    except OSError:
-        return None
-    key = str(path)
-    hit = _cache.get(key)
-    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
-        return hit[2]
-    rec: dict[str, Any] | None = None
-    if st.st_size <= MAX_BYTES:
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-            rec = parsed if _valid(parsed) else None
-        except (OSError, ValueError, RecursionError):
-            rec = None
-    if len(_cache) > 256:
-        _cache.clear()
-    _cache[key] = (st.st_mtime_ns, st.st_size, rec)
-    return rec
-
-
-def get(directory: str, rid: str) -> dict[str, Any] | None:
-    """One recording by id, or None. The id must match `ID_RE` and the resolved path must stay inside the directory."""
-    if not directory or not isinstance(rid, str) or not ID_RE.fullmatch(rid):
-        return None
-    base = Path(directory).resolve()
-    path = (base / f"{rid}.json").resolve()
-    if path.parent != base or not path.is_file():
-        return None
-    return _load(path)
-
-
-def listing(directory: str) -> list[dict[str, Any]]:
-    """Up to 20 recordings, newest first: id, recorded_at, question, duration_ms, mode, totals."""
-    if not directory:
-        return []
-    try:
-        names = sorted((p for p in Path(directory).iterdir() if p.suffix == ".json" and ID_RE.fullmatch(p.stem)), reverse=True)
-    except OSError:
-        return []
-    out: list[dict[str, Any]] = []
-    for p in names:
-        rec = _load(p.resolve())
-        if rec is None:
-            continue
-        out.append({"id": p.stem, **{k: rec[k] for k in ("recorded_at", "question", "duration_ms", "mode", "totals")}})
-        if len(out) >= MAX_LISTED:
-            break
-    return out

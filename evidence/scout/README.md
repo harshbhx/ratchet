@@ -1,9 +1,7 @@
 # Recorded live Scout runs
 
 Three real Scout runs. Two were recorded on 23 Oct 2026 (UTC, 23:13 and 23:14) through a gateway in live mode on one laptop; the third on 24 Oct 2026 (11:56 UTC) through the deployed live demo at `live.ratchet.dualmindlab.tech`, which shows the demo's own Tavily and Token Factory keys work. The
-gateway plays them back read-only at `GET /scout/recorded` when `RATCHET_SCOUT_RECORDINGS_DIR` points here (the Docker image sets it),
-so a visitor can watch a real run at its real pace without a model call or a search credit. The Scout page labels them
-"Recorded live run". See [ADR 0140](../../docs/adr/0140-recorded-scout-run.md).
+gateway no longer serves them (the `/scout/recorded` routes were removed); they stay here as evidence. See [ADR 0140](../../docs/adr/0140-recorded-scout-run.md).
 
 | Question | Time | Model calls | Cost | Searches | Recorded through |
 |---|---|---|---|---|---|

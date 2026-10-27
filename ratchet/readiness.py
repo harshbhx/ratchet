@@ -9,7 +9,8 @@ Liveness (`/healthz`, `/livez`) only says the process answers. Readiness (`/read
 
 The HTTP probes run on a process-wide pool of PROBE_WORKERS threads and the ledger probe on a thread of its own, never
 the request thread pool (so two hung endpoints can never make the ledger look unwritable), each caller waiting at most
-PROBE_TIMEOUT_S, and a result is reused for PROBE_TTL_S, so however often a load balancer asks, the teacher sees one
+PROBE_TIMEOUT_S (the teacher: TEACHER_BUDGET_S, since a `/models` call that timed out is tried once more), and a result
+is reused for PROBE_TTL_S, so however often a load balancer asks, the teacher sees one
 `/models` call per TTL. The student endpoint's result, which never makes the gateway not ready, is reused for
 STUDENT_PROBE_TTL_S while it is ok, so polling `/readyz` sends its endpoint one request per 5 minutes. Breaker states are
 read fresh on every call. Answers name states, statuses and exception classes only, never a URL, a key or an exception's
@@ -41,6 +42,12 @@ if TYPE_CHECKING:  # the gateway imports this module
 PROBE_TIMEOUT_S = 2.0  # what a caller waits for a probe, and each HTTP probe's own timeout
 PROBE_TTL_S = 15.0  # how long a probe's result is reused
 STUDENT_PROBE_TTL_S = 300.0  # how long the student endpoint's ok result is reused: each probe is a request to the endpoint
+# The teacher's `/models` check is tried a second time after a short pause when the first attempt times out (a connect or read
+# timeout), so a gateway that has only just started, or a brief network stall, is not reported degraded. Both attempts and the
+# pause fit in TEACHER_BUDGET_S, which is what a caller waits for the teacher probe (the other probes keep PROBE_TIMEOUT_S).
+TEACHER_ATTEMPT_TIMEOUT_S = 1.5  # each attempt's own HTTP timeout
+TEACHER_RETRY_DELAY_S = 1.5  # the pause before the second attempt
+TEACHER_BUDGET_S = 2 * TEACHER_ATTEMPT_TIMEOUT_S + TEACHER_RETRY_DELAY_S + 0.1  # 4.6 s, under update.sh's 5 s wait
 PROBE_WORKERS = 2  # threads of the HTTP probe pool, shared by every Runtime in the process
 POOLS = {"upstream": PROBE_WORKERS, "ledger": 1}  # pool name -> threads; the ledger's own thread waits behind no endpoint
 
@@ -86,10 +93,12 @@ class ProbeCache:
         describe: Callable[[BaseException], str] | None = None,
         executors: Mapping[str, ThreadPoolExecutor] | None = None,
         ttls: Mapping[str, float] | None = None,
+        timeouts: Mapping[str, float] | None = None,
     ) -> None:
         self.ttl_s = ttl_s
         self.ttls = dict(ttls or {})
         self.timeout_s = timeout_s
+        self.timeouts = dict(timeouts or {})  # a probe's own caller wait, in place of `timeout_s`
         self.clock = clock
         self.executor = executor
         self.executors = dict(executors or {})
@@ -125,7 +134,8 @@ class ProbeCache:
         return result
 
     async def get(self, probes: Mapping[str, Probe]) -> dict[str, dict[str, Any]]:
-        """Every probe's result, in `probes`' order, within `timeout_s` in all."""
+        """Every probe's result, in `probes`' order; a caller waits at most `timeout_s` for each (`timeouts[name]` for a
+        probe with a wait of its own), all of them at the same time."""
         out: dict[str, dict[str, Any]] = {}
         waiting: dict[str, asyncio.Future[dict[str, Any]]] = {}
         for name, probe in probes.items():
@@ -136,12 +146,14 @@ class ProbeCache:
                 waiting[name] = asyncio.wrap_future(found)
         if waiting:
             # asyncio.wait, not wait_for: a timeout must not cancel a run that other callers share.
-            done, _ = await asyncio.wait(waiting.values(), timeout=self.timeout_s)
-            for name, fut in waiting.items():
+            async def settle(name: str, fut: asyncio.Future[dict[str, Any]]) -> None:
+                done, _ = await asyncio.wait([fut], timeout=self.timeouts.get(name, self.timeout_s))
                 if fut in done and not fut.cancelled() and fut.exception() is None:
                     out[name] = fut.result()
                 else:
                     out[name] = {"ok": False, "error": "timeout"}
+
+            await asyncio.gather(*(settle(name, fut) for name, fut in waiting.items()))
         return {name: out[name] for name in probes}
 
     def clear(self) -> None:
@@ -224,7 +236,10 @@ class Readiness:
     def __init__(self, rt: Runtime, cache: ProbeCache | None = None) -> None:
         self.rt = rt
         self.cache = cache or ProbeCache(
-            clock=rt.clock, executors={"ledger": pool("ledger")}, ttls={"student": STUDENT_PROBE_TTL_S}
+            clock=rt.clock,
+            executors={"ledger": pool("ledger")},
+            ttls={"student": STUDENT_PROBE_TTL_S},
+            timeouts={"teacher": TEACHER_BUDGET_S},
         )
         self.busy_runs = 0  # ledger probes in a row that found the ledger busy (BUSY)
 
@@ -240,8 +255,15 @@ class Readiness:
         return {"ok": True}
 
     def _teacher_models(self) -> dict[str, Any]:
+        """The teacher's model list. A timeout on the first attempt is tried once more after TEACHER_RETRY_DELAY_S; the
+        gateway is reported degraded only when the second attempt fails too (its error is the one reported)."""
         s = self.rt.settings
-        return list_models(s.teacher_base, s.teacher_api_key, self.rt.transports.get("teacher"), PROBE_TIMEOUT_S)
+        transport = self.rt.transports.get("teacher")
+        try:
+            return list_models(s.teacher_base, s.teacher_api_key, transport, TEACHER_ATTEMPT_TIMEOUT_S)
+        except httpx.TimeoutException:
+            time.sleep(TEACHER_RETRY_DELAY_S)
+            return list_models(s.teacher_base, s.teacher_api_key, transport, TEACHER_ATTEMPT_TIMEOUT_S)
 
     def _student_models(self) -> dict[str, Any]:
         """The endpoint's model list, checked against the adapters of every routed version (live, canary, shadow). Each

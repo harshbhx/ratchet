@@ -297,7 +297,7 @@ class DownStudent:
     base_url = PRODUCTION
 
     def complete(self, messages, model, n=1, temperature=0.0, logprobs=False, response_format=None, params=None, **_):
-        raise httpx.ConnectError("the mock student endpoint is down (demo outage)")
+        raise httpx.ConnectError("the mock student endpoint is down (mock outage)")
 
 
 class MockFleet:
