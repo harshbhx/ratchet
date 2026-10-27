@@ -42,7 +42,7 @@ export function ClosingCta({ className }: { className?: string }) {
         onPointerMove={move}
         className="beam-border group/cta relative isolate overflow-hidden rounded-[28px] border border-line bg-surface shadow-card"
       >
-        <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 -z-10 opacity-70 [mask-image:radial-gradient(ellipse_70%_80%_at_50%_30%,black,transparent)]" />
+        <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 -z-10 opacity-70 [mask-image:radial-gradient(ellipse_90%_90%_at_50%_30%,black,transparent)]" />
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 -z-10 [background:radial-gradient(45%_60%_at_15%_0%,color-mix(in_srgb,var(--owned)_16%,transparent),transparent),radial-gradient(45%_60%_at_90%_100%,color-mix(in_srgb,var(--rented)_16%,transparent),transparent)]"
@@ -57,16 +57,16 @@ export function ClosingCta({ className }: { className?: string }) {
           <span className="meteor left-[60%]" style={{ animationDelay: "6s" }} />
         </div>
 
-        <div className="relative px-5 py-14 text-center sm:px-10 sm:py-20 lg:px-16 lg:py-24">
+        <div className="relative px-5 py-14 text-center sm:px-10 sm:py-20 lg:px-16 lg:py-24 xl:py-32">
           <LogoMark className="mx-auto mb-7 size-12" />
-          <h2 className="mx-auto max-w-[18ch] text-balance text-[2.6rem] font-semibold leading-[1.02] tracking-[-0.04em] text-ink sm:text-6xl lg:text-7xl">
+          <h2 className="mx-auto max-w-[18ch] text-balance xl:max-w-[20ch] text-[2.6rem] font-semibold leading-[1.02] tracking-[-0.04em] text-ink sm:text-6xl lg:text-7xl xl:text-8xl">
             Your traffic can teach.{" "}
             <span className="bg-[linear-gradient(100deg,var(--owned-ink),var(--rented-ink))] bg-clip-text text-transparent">Keep what it learns.</span>
           </h2>
-          <p className="mx-auto mt-6 max-w-[52ch] text-pretty text-[17px] leading-relaxed text-ink-2">
+          <p className="mx-auto mt-6 max-w-[56ch] text-pretty text-[17px] leading-relaxed text-ink-2 xl:text-xl">
             Run Scout and watch each call get routed. Then open the dashboard to see the gateway's own traffic, costs and releases.
           </p>
-          <div className="mt-9 flex flex-col items-stretch justify-center gap-3 min-[480px]:flex-row min-[480px]:items-center">
+          <div className="mt-9 flex flex-col items-stretch justify-center gap-3 min-[480px]:flex-row min-[480px]:items-center xl:mt-11 xl:gap-4">
             <ButtonLink
               to={LIVE_PATH}
               size="lg"
@@ -82,7 +82,7 @@ export function ClosingCta({ className }: { className?: string }) {
             </ButtonLink>
           </div>
 
-          <ul className="mx-auto mt-12 grid max-w-4xl gap-px overflow-hidden rounded-2xl border border-line bg-line text-left sm:grid-cols-3">
+          <ul className="mx-auto mt-12 grid max-w-6xl gap-px overflow-hidden rounded-2xl border border-line bg-line text-left sm:grid-cols-3">
             {PROOF.map((p) => (
               <li key={p.value} className={cn("bg-surface/90 px-5 py-4 backdrop-blur-md")}>
                 <p className="text-[20px] font-semibold tracking-[-0.02em] text-ink tabular">{p.value}</p>

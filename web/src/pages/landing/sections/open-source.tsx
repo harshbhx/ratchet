@@ -79,8 +79,13 @@ export function OpenSource() {
           </Reveal>
         </div>
 
-        <ClosingCta className="mt-20 sm:mt-28" />
       </Container>
+      {/* Full width: only the side gutters, up to a cap on very wide screens. */}
+      <div className="mt-20 w-full px-4 sm:mt-28 sm:px-6 lg:px-10">
+        <div className="mx-auto max-w-[1960px]">
+          <ClosingCta />
+        </div>
+      </div>
     </Chapter>
   );
 }

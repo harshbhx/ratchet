@@ -114,7 +114,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
         className="pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-500 group-hover/footer:opacity-100 motion-reduce:hidden [background:radial-gradient(420px_circle_at_var(--mx,50%)_var(--my,0%),color-mix(in_srgb,var(--rented)_11%,transparent),transparent_70%)]"
       />
 
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1960px] px-4 sm:px-6 lg:px-10">
         <div className="relative mt-12 overflow-hidden rounded-3xl border border-line bg-surface/90 p-6 shadow-card sm:p-8">
           <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-50 [mask-image:linear-gradient(to_left,black,transparent_65%)]" />
           <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
@@ -136,8 +136,8 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
           </div>
         </div>
 
-        <div className="space-y-12 py-12 sm:space-y-14 sm:py-16">
-          <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between lg:gap-16">
+        <div className="grid gap-12 py-12 sm:py-16 lg:grid-cols-12 lg:gap-x-12">
+          <div className="flex flex-col gap-8 lg:col-span-4">
             <div className="max-w-xl">
             <Link to="/" aria-label="Ratchet home" className="inline-flex items-center rounded-lg">
               <Logo />
@@ -173,7 +173,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
             </div>
             </div>
           </div>
-          <nav aria-label="Footer" className="grid grid-cols-1 gap-x-8 gap-y-10 border-t border-line pt-10 sm:grid-cols-2 lg:grid-cols-4">
+          <nav aria-label="Footer" className="grid grid-cols-1 gap-x-8 gap-y-10 border-t border-line pt-10 sm:grid-cols-2 lg:col-span-8 lg:grid-cols-4 lg:border-t-0 lg:pt-1">
             {FOOTER_COLUMNS.map((col) => (
               <div key={col.title}>
                 <h2 className="font-mono text-[12px] uppercase tracking-[0.14em] text-muted">{col.title}</h2>
@@ -211,7 +211,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
 
       {/* A very large wordmark, cropped by the footer's edge and faded out: decoration only. */}
       <div aria-hidden className="pointer-events-none relative select-none overflow-hidden">
-        <p className="mx-auto -mb-[0.2em] max-w-6xl px-4 text-center text-[24vw] font-semibold leading-[0.85] tracking-[-0.06em] text-transparent sm:px-6 lg:px-8 lg:text-[15rem]"
+        <p className="mx-auto -mb-[0.2em] w-full max-w-[1960px] px-4 text-center text-[24vw] font-semibold leading-[0.85] tracking-[-0.06em] text-transparent sm:px-6 lg:px-10 lg:text-[16vw]"
           style={{
             backgroundImage: "linear-gradient(to bottom, color-mix(in srgb, var(--ink) 13%, transparent), transparent 80%)",
             WebkitBackgroundClip: "text",

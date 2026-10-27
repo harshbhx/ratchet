@@ -7,7 +7,7 @@ import { Logo } from "@/components/ui/logo";
 import { useTheme } from "@/lib/hooks";
 import { DUR, EASE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-import { LiveButton, type GatewayState } from "./site-header";
+import { LiveButton, ThemeIcon, type GatewayState } from "./site-header";
 import { isCurrentRoute, MORE_NAV, PAGE_NAV, STORY_NAV, type NavItem } from "./nav-model";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -207,9 +207,10 @@ function SheetThemeToggle() {
   return (
     <button
       type="button"
-      onClick={toggle}
-      className="inline-flex h-12 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface px-4 text-[15px] font-medium text-ink transition-colors hover:bg-surface-2 focus-visible:rounded-full"
+      onClick={(e) => toggle(e.currentTarget)}
+      className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-full border border-line-strong bg-surface px-4 text-[15px] font-medium text-ink transition-colors hover:bg-surface-2 focus-visible:rounded-full"
     >
+      <ThemeIcon theme={theme} />
       {theme === "dark" ? "Light theme" : "Dark theme"}
     </button>
   );

@@ -9,19 +9,30 @@ import { cn, LIVE_PATH } from "@/lib/utils";
 import { MobileMenu } from "./mobile-menu";
 import { isCurrentRoute, pillItems, sectionIds, type NavItem } from "./nav-model";
 
+/** Sun and moon stacked: the one that is not showing turns away and shrinks (a rotate and a scale, motion-safe). */
+export function ThemeIcon({ theme, className }: { theme: "light" | "dark"; className?: string }) {
+  const swap = "col-start-1 row-start-1 size-4 motion-safe:transition-[transform,opacity] motion-safe:duration-500 motion-safe:ease-[cubic-bezier(0.22,1,0.36,1)]";
+  return (
+    <span aria-hidden className={cn("inline-grid place-items-center", className)}>
+      <Sun className={cn(swap, theme === "dark" ? "rotate-0 scale-100 opacity-100" : "rotate-90 scale-0 opacity-0")} />
+      <Moon className={cn(swap, theme === "dark" ? "-rotate-90 scale-0 opacity-0" : "rotate-0 scale-100 opacity-100")} />
+    </span>
+  );
+}
+
 export function ThemeToggle({ className }: { className?: string }) {
   const { theme, toggle } = useTheme();
   return (
     <button
       type="button"
-      onClick={toggle}
+      onClick={(e) => toggle(e.currentTarget)}
       className={cn(
         "inline-flex size-9 items-center justify-center rounded-full text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:rounded-full",
         className,
       )}
       aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
     >
-      {theme === "dark" ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
+      <ThemeIcon theme={theme} />
     </button>
   );
 }

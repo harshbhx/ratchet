@@ -426,3 +426,17 @@
   .btn-shine::after { transition: none; }
   .meteor { display: none; }
 }
+
+/* The animated theme switch (lib/theme-transition.ts): while it runs, the old and new pages stack without the default cross-fade, and the
+   new one is revealed by a growing circle that the script animates. Scoped to the class the script sets, so page navigation is untouched. */
+html.theme-reveal::view-transition-old(root),
+html.theme-reveal::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+html.theme-reveal::view-transition-old(root) {
+  z-index: 1;
+}
+html.theme-reveal::view-transition-new(root) {
+  z-index: 2;
+}
