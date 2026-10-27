@@ -46,7 +46,7 @@ html {
     animation: none;
   }
   html[data-rt-vt='theme']::view-transition-new(root) {
-    animation: rt-theme-reveal 0.6s cubic-bezier(0.4, 0, 0.2, 1) both;
+    animation: rt-theme-reveal 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   @keyframes rt-theme-reveal {
     from {
