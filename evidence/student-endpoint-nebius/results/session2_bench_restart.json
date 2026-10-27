@@ -1,0 +1,46 @@
+{
+  "at": "2026-10-28 00:18:09 India Standard Time",
+  "gpu_usd_per_hour": 0.74,
+  "max_tokens": 256,
+  "temperature": 0,
+  "results": [
+    {
+      "adapter": "sql-r2",
+      "concurrency": 4,
+      "requests": 30,
+      "ok": 30,
+      "errors": 0,
+      "error_samples": [],
+      "wall_s": 10.62,
+      "lat_p50_s": 1.2647,
+      "lat_p95_s": 1.9905,
+      "ttft_p50_s": 0.6571,
+      "ttft_p95_s": 1.4245,
+      "tokens_out": 1166,
+      "tokens_per_s_total": 109.8,
+      "tokens_per_s_per_request_p50": 28.7013,
+      "requests_per_s": 2.825,
+      "cost_usd_per_1000_requests": 0.0728,
+      "cost_basis": "whole-GPU time at $0.74/h, wall 10.6 s for 30 ok requests"
+    },
+    {
+      "adapter": "toolcall",
+      "concurrency": 4,
+      "requests": 30,
+      "ok": 30,
+      "errors": 0,
+      "error_samples": [],
+      "wall_s": 8.84,
+      "lat_p50_s": 1.0813,
+      "lat_p95_s": 1.7335,
+      "ttft_p50_s": 0.6527,
+      "ttft_p95_s": 1.3831,
+      "tokens_out": 858,
+      "tokens_per_s_total": 97.1,
+      "tokens_per_s_per_request_p50": 25.7742,
+      "requests_per_s": 3.395,
+      "cost_usd_per_1000_requests": 0.0605,
+      "cost_basis": "whole-GPU time at $0.74/h, wall 8.8 s for 30 ok requests"
+    }
+  ]
+}

@@ -27,7 +27,7 @@ test("the splash is self-contained, accessible and honest", () => {
   assert.match(html, /<meta http-equiv="refresh" content="3"/);
   assert.match(html, /role="status"/);
   assert.match(html, /prefers-reduced-motion: reduce/);
-  assert.match(html, /Waking up the live demo/);
+  assert.match(html, /Waking up the live gateway/);
   assert.match(html, /It sleeps when idle to save cost\. This takes about 20 seconds\./);
   // No external resources: the only absolute links are the two anchors the visitor may follow.
   const srcs = [...html.matchAll(/(?:src|href)="(https?:[^"]+)"/g)].map((m) => m[1]);

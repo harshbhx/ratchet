@@ -1,4 +1,4 @@
-// What a visitor gets while the live demo's container is starting. No imports and no external files: the Worker uses it, and
+// What a visitor gets while the live gateway's container is starting. No imports and no external files: the Worker uses it, and
 // web/tests/live-waking.test.mjs runs it under Node.
 
 /** How long a request waits for the container before the visitor is told it is still waking up. */
@@ -10,7 +10,7 @@ export const READ_RETRY_MS = 700;
 
 /** The JSON every API caller gets (the Pages proxy sends the same body), which the web app turns into its "waking up" banner. */
 export const WARMING_BODY = {
-  error: { code: "warming_up", message: "The live demo is waking up. This takes about 20 seconds." },
+  error: { code: "warming_up", message: "The live gateway is waking up. This takes about 20 seconds." },
   warming_up: true,
 };
 
@@ -47,8 +47,8 @@ export function warmingFor(method: string, accept: string | null): Response {
   return wantsPage(method, accept) ? warmingPage() : warmingJson();
 }
 
-// The page shown while the demo container wakes up. Self-contained, light and dark, reduced-motion safe.
-// It reloads itself every 3 seconds (meta refresh) and sooner when /__ready says the demo answers.
+// The page shown while the gateway container wakes up. Self-contained, light and dark, reduced-motion safe.
+// It reloads itself every 3 seconds (meta refresh) and sooner when /__ready says the gateway answers.
 export const WAKING_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -56,7 +56,7 @@ export const WAKING_HTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
 <meta http-equiv="refresh" content="3" />
-<title>Waking up the Ratchet live demo</title>
+<title>Waking up the Ratchet live gateway</title>
 <style>
   :root { color-scheme: light dark; --bg:#fbfaf7; --ink:#121212; --muted:#64625d; --line:#e6e3dc; --blue:#2a78d6; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0b0b0c; --ink:#f2f1ec; --muted:#a4a39c; --line:#26262b; --blue:#5b9bec; } }
@@ -76,10 +76,10 @@ export const WAKING_HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <h1>Waking up the live demo</h1>
+  <h1>Waking up the live gateway</h1>
   <p role="status" aria-live="polite">It sleeps when idle to save cost. This takes about 20 seconds.</p>
   <div class="bar" aria-hidden="true"><i></i></div>
-  <p class="note">This page reloads by itself. The live demo answers with real calls to Nemotron 3 Ultra on Nebius Token Factory, under daily spending caps.<br />
+  <p class="note">This page reloads by itself. The live gateway answers with real calls to Nemotron 3 Ultra on Nebius Token Factory, under daily spending caps.<br />
     While you wait: <a href="https://docs.ratchet.dualmindlab.tech/" target="_blank" rel="noopener noreferrer">read the docs</a>,
     <a href="https://github.com/harshbhx/ratchet" target="_blank" rel="noopener noreferrer">see the code</a>.</p>
 </main>

@@ -43,6 +43,44 @@ def test_benchmark_holds_the_two_adapters_and_the_readme_matches_it():
     assert bench["max_tokens"] == 256 and bench["temperature"] == 0
     prompts = [json.loads(x) for x in (EV / "data" / "prompts.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
     assert len(prompts) == 30
+    _check_session_two_restart_numbers_match_the_files()
+    _check_session_two_benchmark_is_adapters_only_and_matches_the_readme()
+
+
+def _check_session_two_restart_numbers_match_the_files():
+    cold = json.loads((EV / "results" / "session2_cold_start.json").read_text(encoding="utf-8"))
+    restart = json.loads((EV / "results" / "session2_restart.json").read_text(encoding="utf-8"))
+    assert cold["seconds"]["state_running"] == pytest.approx(275.9, abs=0.1)
+    keys = ("first_models_ok", "both_adapters_loaded", "first_completion")
+    assert tuple(cold["seconds"][k] for k in keys) == (418.0, 419.4, 457.3)
+    assert tuple(restart["seconds"][k] for k in keys) == (384.8, 386.3, 424.2)
+    assert cold["seconds"]["first_completion"] - restart["seconds"]["first_completion"] == pytest.approx(33.1, abs=0.05)
+    for run in (cold, restart):
+        assert run["endpoint_id"] == "<redacted>" and run["url_host"] == "<redacted>"
+        assert set(run["adapter_load"]) == {"sql-r2", "toolcall"}  # the adapters are loaded again after every restart
+    readme = (EV / "README.md").read_text(encoding="utf-8")
+    assert "warm start was not measured" not in readme.lower() and "startup time after a restart is unknown" not in readme.lower()
+    needles = ("424.2 s", "457.3 s", "384.8 s", "7.1 minutes", "7.6 minutes", "about 33 s faster", "$0.22", "$0.67")
+    for needle in needles + ("No spot preemptions",):
+        assert needle in readme, needle
+
+
+def _check_session_two_benchmark_is_adapters_only_and_matches_the_readme():
+    bench = json.loads((EV / "results" / "session2_bench_restart.json").read_text(encoding="utf-8"))
+    rows = {r["adapter"]: r for r in bench["results"]}
+    assert set(rows) == {"sql-r2", "toolcall"}  # no base-model row
+    assert bench["max_tokens"] == 256 and bench["temperature"] == 0
+    for r in rows.values():
+        assert r["concurrency"] == 4 and r["requests"] == 30 and r["errors"] == 0
+    assert (rows["sql-r2"]["lat_p50_s"], rows["sql-r2"]["lat_p95_s"]) == (1.2647, 1.9905)
+    assert (rows["toolcall"]["lat_p50_s"], rows["toolcall"]["lat_p95_s"]) == (1.0813, 1.7335)
+    raw = (EV / "results" / "session2_bench_restart.json").read_text(encoding="utf-8")
+    assert "base" not in set(re.findall(r'"adapter":\s*"([^"]+)"', raw))
+    timeline = (EV / "results" / "timeline_session2.md").read_text(encoding="utf-8")
+    assert "base c=" not in timeline
+    readme = (EV / "README.md").read_text(encoding="utf-8")
+    for needle in ("p50 1.26 s", "p95 1.99 s", "p50 1.08 s", "p95 1.73 s", "30 non-exam prompts"):
+        assert needle in readme, needle
 
 
 @pytest.mark.req("INV-21")

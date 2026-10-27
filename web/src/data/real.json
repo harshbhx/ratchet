@@ -149,7 +149,7 @@
       "id": "student-endpoint-test",
       "claim": "The student served once on a Nebius Serverless Endpoint, for a speed test",
       "status": "real",
-      "evidence": "On 27 Oct 2026 the student was served once, by hand, on a Nebius Serverless Endpoint: one preemptible L40S, vLLM v0.18.0, Nemotron 3 Nano 4B with two LoRA adapters loaded at runtime (the published round-2 text-to-SQL adapter and the tool-calling adapter). Cold start took about 7.2 minutes from create to ready. With 16 requests at once the median answer took 1.6 s (SQL adapter) and 1.2 s (tool-calling adapter). It measured speed only, on 30 ordinary prompts, not accuracy. It cost about $0.45 of GPU time (the Nebius bill decides). A restart was tried and crashed, so warm start was not measured. The endpoint was deleted afterwards. The public live gateway is not connected to it: the teacher answers every live request.",
+      "evidence": "On 27 Oct 2026 the student was served once, by hand, on a Nebius Serverless Endpoint: one preemptible L40S, vLLM v0.18.0, Nemotron 3 Nano 4B with two LoRA adapters loaded at runtime (the published round-2 text-to-SQL adapter and the tool-calling adapter). Cold start took about 7.2 minutes from create to ready (7.6 minutes in a second session); a restart (stop, then start) took about 7.1 minutes to the first answer, with the adapters loaded again. With 16 requests at once the median answer took 1.6 s (SQL adapter) and 1.2 s (tool-calling adapter). It measured speed only, on 30 ordinary prompts, not accuracy. It cost about $0.67 of GPU time across two sessions (the Nebius bill decides). The first restart crashed on cache files on the bucket mount; the fix was to keep them on local disk, and the second session's restart worked. The endpoint was deleted afterwards. The public live gateway is not connected to it: the teacher answers every live request.",
       "check": {
         "label": "Read the evidence folder",
         "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius"
@@ -159,8 +159,9 @@
       "facts": [
         { "label": "Cold start", "value": "About 7.2 minutes from create to ready; both adapters loaded in about a second each" },
         { "label": "16 requests at once, median", "value": "1.6 s (SQL adapter), 1.2 s (tool-calling adapter)" },
-        { "label": "GPU time", "value": "About 35 minutes in all, about $0.45 at list price" },
-        { "label": "Not measured", "value": "Accuracy, and the time to restart a stopped endpoint" }
+        { "label": "GPU time", "value": "About 53 minutes across two sessions, about $0.67 at list price" },
+        { "label": "Restart", "value": "About 7.1 minutes to the first answer, against 7.6 minutes cold in the same session; the adapters are loaded again after every restart" },
+        { "label": "Not measured", "value": "Accuracy" }
       ],
       "metrics": []
     },
