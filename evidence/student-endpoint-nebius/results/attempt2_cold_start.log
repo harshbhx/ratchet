@@ -1,0 +1,11 @@
+[cold] issuing the create command now
+[cold] command returned after 7.9 s, endpoint <redacted>
+[cold] endpoint state PROVISIONING at 8.6 s
+[cold] endpoint state STARTING at 72.9 s
+[cold] endpoint state IMAGE_PULLING at 121.7 s
+[cold] endpoint state STARTING at 287.4 s
+[cold] endpoint state RUNNING at 293.0 s
+[cold] first GET /v1/models OK at 432.5 s
+[cold] adapter sql-r2 load HTTP 200 in 0.8 s
+[cold] adapter toolcall load HTTP 200 in 0.7 s
+[cold] ready: RUNNING 293.0 s, models 432.5 s, adapters 434.0 s, first completion 471.9 s

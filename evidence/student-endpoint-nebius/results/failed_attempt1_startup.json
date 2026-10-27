@@ -1,0 +1,31 @@
+{
+  "cold": {
+    "phase": "cold",
+    "command_issued_at": "2026-10-27 22:01:03 India Standard Time",
+    "states": [
+      {
+        "state": "PROVISIONING",
+        "at_seconds": 15.2
+      },
+      {
+        "state": "STARTING",
+        "at_seconds": 51.8
+      },
+      {
+        "state": "IMAGE_PULLING",
+        "at_seconds": 85.7
+      },
+      {
+        "state": "RUNNING",
+        "at_seconds": 268.8
+      }
+    ],
+    "seconds": {
+      "command_returned": 13.9,
+      "state_running": 268.8
+    },
+    "note": "attached to already-created endpoint",
+    "endpoint_id": "<redacted>",
+    "url_host": "<redacted>"
+  }
+}
