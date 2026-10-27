@@ -67,7 +67,7 @@ python -m ratchet.admin rollback 7 --reason "..."                               
 pytest -q --cov=ratchet --cov=sim                                                        # coverage, as in CI
 python scripts/regen_sim_reference.py [--check]                                          # pinned reference simulation fixture
 python scripts/reference_check.py [--only NAME]                                           # the three pinned workloads (make reference)
-pytest -q --runslow                                                                      # also the slow Monte Carlo runs, as in CI
+pytest -q --runslow                                                                      # also the slow Monte Carlo runs, as CI does on main
 python -m ratchet.liverun plan|smoke|run [--max-usd X] [--resume DIR] [--repeat-of DIR]   # the live-run harness (ADR 0121)
 python -m ratchet.liverun report DIR [--bill-usd X --bill-note T] [--repeat DIR2] [--publish]   # bill, repeat, publish
 python -m ratchet.liverun verify evidence/live                                           # recompute a results file's client-side numbers
