@@ -18,7 +18,7 @@ The hackathon's pass/fail Stage One needs a runtime call to Token Factory, so th
 
 - Visitors share one simulation; the dashboard on that host says so.
 - One more certificate and DNS name (automatic with sslip.io; an A record for a custom domain).
-- Memory and CPU caps keep the simulation from starving the live gateway. That both gateways fit in 2 vCPU / 8 GB under judging load is **unverified**; the VM may be smaller still, and the operator measures it on day 1 ([RUNBOOK](../RUNBOOK.md#simulation-host)). `RATCHET_SIM=off` drops the host.
+- Memory and CPU caps keep the simulation from starving the live gateway. That both gateways fit in 2 vCPU / 8 GB under judging load is **unverified**; the VM may be smaller still, and the operator measures it on day 1 ([RUNBOOK](../RUNBOOK.md)). `RATCHET_SIM=off` drops the host.
 - The record resets on restart and covers the gateway process only (not Night School, not the live-run harness). Breaker refusals are not calls and are not recorded.
 - Simulation numbers stay labelled simulation.
 - The janitor's thread can be ended: `DemoJanitor.stop()` wakes it at once and it never starts again, and the app's lifespan calls it at shutdown. Its callbacks read the gateway module's globals (`rt`, `_auto_reset`), so a thread that outlives the state it was built for, as the test fixtures that reload the module did after `test_demo_caps_reset_on_click` (RATCHET_DEMO_MAX_REQUESTS=250), resets whichever gateway is current a minute later and every minute after. The fixtures now end the janitor of the module they replace, and an autouse fixture fails a test that leaves one running.

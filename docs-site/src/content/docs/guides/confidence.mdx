@@ -120,7 +120,7 @@ A worked toy example (arithmetic only, not a result): three samples that all agr
 
 ### Why one signal is not enough
 
-Small models are poorly calibrated: a 4B model can put a high probability on a wrong answer. Token probability alone does not separate right from wrong, and agreement alone cannot tell three confident samples from three lucky ones. Ratchet combines them, because a single fixed bar was not enough: in early simulation runs, one global threshold of 0.80 let about 10% wrong answers through (simulation, mock models).
+Small models are poorly calibrated: a 4B model can put a high probability on a wrong answer. Token probability alone does not separate right from wrong, and agreement alone cannot tell three confident samples from three lucky ones. Ratchet combines them, because a single fixed bar was not enough.
 
 <StatRow cols={3} label="The three signals">
   <Stat value="Agreement" label="across the 3 samples, weight 0.6" note="Answers that agree are a sign the student knows; answers that differ are a sign it guesses." />
@@ -140,7 +140,7 @@ Two numbers describe any threshold:
 Raising the threshold usually serves fewer answers at higher precision. Usually, not always: one confidently wrong answer at the top can make precision fall as the threshold rises (which rules out some textbook methods).
 
 <Aside type="note" title="Toy example">
-The numbers below are made up to show the arithmetic. They are not results from Ratchet or from any simulation.
+The numbers below are made up to show the arithmetic. They are not results from Ratchet.
 </Aside>
 
 Take 20 golden rows. The ten **calibration** rows, sorted by the student's confidence, with whether its answer agreed with the teacher:
@@ -228,7 +228,7 @@ Several tasks can share one adapter: Scout's triage and reader calls next to sup
 
 When a task's record serves nothing, the router does not call the student for it at all (route `task_disabled`): its samples could never be served, so calling would only add cost and latency. With one task the record equals the global numbers.
 
-Per-task calibration is on by default. `RATCHET_PER_TASK_CALIBRATION=0` makes Night School write no records, so new versions keep one pooled threshold, as in v0.4. In the README's research and mixed simulations (mock models, seed 7, 8 days of 1,500 requests), per-task calibration makes the student serve somewhat less (92% of research calls on day 8, against 96% with one pooled threshold) in exchange for holding each task to its own target (simulation, README).
+Per-task calibration is on by default. `RATCHET_PER_TASK_CALIBRATION=0` makes Night School write no records, so new versions keep one pooled threshold, as in v0.4. Per-task calibration holds each task to its own target, at the price of the student serving somewhat less than with one pooled threshold.
 
 ### When a task's spec changes
 
@@ -254,7 +254,7 @@ The default point rule picks the threshold and the certificate checks it afterwa
 
 Testing a fixed order and stopping at the first failure spends the error budget once, so the chosen threshold has precision above the target with probability at least `1 − delta`. The grid must be fixed in advance: a grid built from the observed confidences would start with a one-row group, which cannot pass, and a grid picked after looking at the data breaks the guarantee.
 
-Learn-then-Test is opt-in because it is conservative early on. Ten calibration rows cannot certify 95%, since `0.95^10 = 0.60`, far above 0.05. In the toy table above only two calibration rows are at 0.95 or more, so Learn-then-Test would serve nothing. In the seed-7 reference configuration it serves nothing from v1 and v3 and saves 55.4% instead of 69.2% (simulation, mock models, one seed).
+Learn-then-Test is opt-in because it is conservative early on. Ten calibration rows cannot certify 95%, since `0.95^10 = 0.60`, far above 0.05. In the toy table above only two calibration rows are at 0.95 or more, so Learn-then-Test would serve nothing.
 
 ## Watching the confidence scores over time: the drift alarm
 
@@ -320,8 +320,8 @@ When the student's GPU endpoint is off (`RATCHET_STUDENT_BASE` unset), a trained
 
 That model never sat the exam, so no calibrated threshold or per-task record applies to it. `Ratchet.threshold` returns the fixed `Settings.confidence_threshold` (`RATCHET_CONFIDENCE_THRESHOLD`, default 0.80) for it, and its answers are **not covered by the adapter's certificate**. The same 0.80 is used for a version whose eval has no calibrated threshold.
 
-<Aside type="caution" title="Calibrated in simulation and offline so far">
-As of Oct 26, 2026, the teacher runs on Nebius Token Factory; the public demo has no student endpoint yet, so the teacher answers every request, and Night School has not calibrated a threshold on a live ledger. The scoring, calibration and certificate code is tested offline, and every threshold, precision and coverage figure from the simulator comes from mock models (simulation). The text-to-SQL adapter, trained on a borrowed GPU, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
+<Aside type="caution" title="Calibrated offline so far">
+As of Oct 26, 2026, the teacher runs on Nebius Token Factory; the live gateway has no student endpoint yet, so the teacher answers every request, and Night School has not calibrated a threshold on a live ledger. The scoring, calibration and certificate code is tested offline with mock models. The text-to-SQL adapter, trained on a borrowed GPU, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
 </Aside>
 
 ## For engineers

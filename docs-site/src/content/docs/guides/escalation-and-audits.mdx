@@ -293,7 +293,7 @@ What keeps it honest:
 - **The audit keeps the teacher's full deadline** (180 s). If slow answers, often the hard requests, failed more often, the audited precision would be biased upward.
 - **At shutdown** the gateway waits up to `RATCHET_SIDECAR_DRAIN_S` (10 s) for queued jobs, then gives up; those rows stay pending, which every statistic ignores.
 
-Mock mode (0 sidecar workers by default), Scout and the simulator keep audits inline, so the reference simulation does not move.
+Mock mode (0 sidecar workers by default) and Scout keep audits inline.
 
 ### Shadow arbitration
 
@@ -359,7 +359,7 @@ Where to look: each row's `audited`, `audit_agree`, `label_p` and `stored` colum
 
 ### Is 5% enough to catch a bad model?
 
-It is enough to catch a badly broken one quickly, because a canary only serves 10% and then 50% of traffic and needs at least 20 audits per stage before it can move. In the seed-7 reference run (**simulation**, mock models), a deliberately corrupted v3 with 41.2% audited precision was rolled back after 17 audits and 145 served answers. To get evidence faster, raise `RATCHET_CANARY_AUDIT_RATE` for canaries only, or turn on the sequential rule, which can roll back after a couple of disagreeing audits.
+It is enough to catch a badly broken one quickly, because a canary only serves 10% and then 50% of traffic and needs at least 20 audits per stage before it can move. To get evidence faster, raise `RATCHET_CANARY_AUDIT_RATE` for canaries only, or turn on the sequential rule, which can roll back after a couple of disagreeing audits.
 
 ### What if the teacher is wrong?
 
