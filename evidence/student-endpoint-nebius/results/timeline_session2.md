@@ -1,0 +1,31 @@
+# Timeline, session 2 (plain words, from the operator's status file; endpoint ids redacted, the base-model benchmark line and the last note removed)
+
+- 2026-10-27 23:53:25 IST  ENDPOINT STARTING NOW 23:53 IST (session 2). Preflight ok: endpoint list empty, no active jobs, real dry run said validation succeeded and created nothing; create script now filters any token line.
+- 2026-10-27 23:53:27 India Standard Time  [cold] issuing the create command now
+- 2026-10-27 23:53:34 India Standard Time  [cold] command returned after 6.8 s, endpoint <redacted>
+- 2026-10-27 23:53:35 India Standard Time  [cold] endpoint state PROVISIONING at 7.7 s
+- 2026-10-27 23:54:26 India Standard Time  [cold] endpoint state STARTING at 59.0 s
+- 2026-10-27 23:55:01 India Standard Time  [cold] endpoint state IMAGE_PULLING at 94.3 s
+- 2026-10-27 23:57:57 India Standard Time  [cold] endpoint state STARTING at 270.2 s
+- 2026-10-27 23:58:03 India Standard Time  [cold] endpoint state RUNNING at 275.8 s
+- 2026-10-28 00:00:25 India Standard Time  [cold] first GET /v1/models OK at 418.0 s
+- 2026-10-28 00:00:26 India Standard Time  [cold] adapter sql-r2 load HTTP 200 in 0.7 s
+- 2026-10-28 00:00:27 India Standard Time  [cold] adapter toolcall load HTTP 200 in 0.7 s
+- 2026-10-28 00:01:05 India Standard Time  [cold] ready: RUNNING 275.9 s, models 418.0 s, adapters 419.4 s, first completion 457.3 s
+- 2026-10-28 00:01:22 IST  session 2 cold start ok (endpoint <redacted>). Stopping it now to time the restart.
+- 2026-10-28 00:02:56 IST  endpoint STOPPED (confirmed). Starting it again (cached start).
+- 2026-10-28 00:02:57 India Standard Time  [cached] issuing the start command now
+- 2026-10-28 00:09:51 IST  first start attempt got an operation-conflict (stop op still finishing, nothing started); retrying start.
+- 2026-10-28 00:09:52 India Standard Time  [cached] issuing the start command now
+- 2026-10-28 00:09:53 India Standard Time  [cached] command returned after 1.1 s, endpoint <redacted>
+- 2026-10-28 00:09:54 India Standard Time  [cached] endpoint state STARTING at 2.2 s
+- 2026-10-28 00:11:25 India Standard Time  [cached] endpoint state IMAGE_PULLING at 93.0 s
+- 2026-10-28 00:14:16 India Standard Time  [cached] endpoint state STARTING at 264.3 s
+- 2026-10-28 00:14:27 India Standard Time  [cached] endpoint state RUNNING at 275.8 s
+- 2026-10-28 00:16:16 India Standard Time  [cached] first GET /v1/models OK at 384.8 s
+- 2026-10-28 00:16:17 India Standard Time  [cached] adapter sql-r2 load HTTP 200 in 0.8 s
+- 2026-10-28 00:16:18 India Standard Time  [cached] adapter toolcall load HTTP 200 in 0.7 s
+- 2026-10-28 00:16:56 India Standard Time  [cached] ready: RUNNING 275.9 s, models 384.8 s, adapters 386.3 s, first completion 424.2 s
+- 2026-10-28 00:17:27 IST  restart ok, both adapters reloaded; running benchmark c=4.
+- 2026-10-28 00:17:42 India Standard Time  [bench restart] sql-r2 c=4: p50 1.2647 s p95 1.9905 s, 109.8 tok/s, 2.825 req/s, $0.0728/1k, errors 0
+- 2026-10-28 00:17:56 India Standard Time  [bench restart] toolcall c=4: p50 1.0813 s p95 1.7335 s, 97.1 tok/s, 3.395 req/s, $0.0605/1k, errors 0

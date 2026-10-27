@@ -1,0 +1,67 @@
+{
+  "phase": "cold",
+  "command_issued_at": "2026-10-27 23:53:27 India Standard Time",
+  "states": [
+    {
+      "state": "PROVISIONING",
+      "at_seconds": 7.7
+    },
+    {
+      "state": "STARTING",
+      "at_seconds": 59.0
+    },
+    {
+      "state": "IMAGE_PULLING",
+      "at_seconds": 94.3
+    },
+    {
+      "state": "STARTING",
+      "at_seconds": 270.2
+    },
+    {
+      "state": "RUNNING",
+      "at_seconds": 275.8
+    }
+  ],
+  "seconds": {
+    "command_returned": 6.8,
+    "state_running": 275.9,
+    "first_models_ok": 418.0,
+    "adapter_sql-r2_loaded": 418.8,
+    "adapter_toolcall_loaded": 419.4,
+    "both_adapters_loaded": 419.4,
+    "first_completion": 457.3,
+    "total_until_ready": 457.7
+  },
+  "create_rc": 0,
+  "endpoint_id": "<redacted>",
+  "url_host": "<redacted>",
+  "models_codes_seen_before_ok": [
+    "200",
+    "503"
+  ],
+  "adapter_load": {
+    "sql-r2": {
+      "status": 200,
+      "seconds": 0.74,
+      "text": "Success: LoRA adapter 'sql-r2' added successfully."
+    },
+    "toolcall": {
+      "status": 200,
+      "seconds": 0.67,
+      "text": "Success: LoRA adapter 'toolcall' added successfully."
+    }
+  },
+  "first_completion": {
+    "sql-r2": {
+      "status": 200,
+      "seconds": 37.84,
+      "at_seconds": 457.3
+    },
+    "toolcall": {
+      "status": 200,
+      "seconds": 0.35,
+      "at_seconds": 457.6
+    }
+  }
+}

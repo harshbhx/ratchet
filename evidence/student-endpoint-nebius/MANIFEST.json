@@ -1,6 +1,6 @@
 {
  "made": "2026-10-27",
- "what": "the student served once on a Nebius Serverless Endpoint for a speed test (cold start and latency); adapters only, base-model rows kept private; no accuracy scored",
+ "what": "the student served on a Nebius Serverless Endpoint for speed tests, in two sessions (27 and 28 Oct 2026 IST): cold start, restart and latency; adapters only, base-model rows kept private; no accuracy scored",
  "adapters_served": {
   "sql-r2": "38f99d441e0527b75fdf8fd9d10acbf4473dcf70db7febe3ad73fccd631a6aa7 (the published round-2 adapter, not the Nebius-retrained one)",
   "toolcall": "fde47de3913fdf14d29328a174b5a92411c3f058989017c7709b4c572db324b9"
@@ -38,9 +38,29 @@
    "sha256": "834829cdfad3e7570dc6ece30eadbf19d1c6978e33e1eba88e456843b8df576e"
   },
   {
+   "file": "results/session2_bench_restart.json",
+   "bytes": 1228,
+   "sha256": "fe5f3eafeb78a4467224c9529e368176676341d0b63ae796a6a40f9a9bca8821"
+  },
+  {
+   "file": "results/session2_cold_start.json",
+   "bytes": 1369,
+   "sha256": "e2735a81f22b314c8f44a1e957fa0a61b02e80b836c84c37b3f05dc92e3a152c"
+  },
+  {
+   "file": "results/session2_restart.json",
+   "bytes": 1301,
+   "sha256": "fb32720687fc3959e136905141cdcd7156ce68c285354215b4c0fae6a2d27ac8"
+  },
+  {
    "file": "results/timeline.md",
    "bytes": 5594,
    "sha256": "446091070a8e4206b54ebd2ca785d8e2af0aca173578560e80d78ed14446a75c"
+  },
+  {
+   "file": "results/timeline_session2.md",
+   "bytes": 3112,
+   "sha256": "06fcb132684581714f3d0628d91a7a55352015248d9ec0457fb41066299987e6"
   },
   {
    "file": "scripts/bench.py",
