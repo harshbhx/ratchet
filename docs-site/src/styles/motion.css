@@ -1,9 +1,10 @@
 /*
   Motion between and within pages. All of it is CSS, so a browser without a feature simply skips it.
 
-  - Page changes: one cut, no fade. A cross-document view transition with no animation keeps the old page on screen
-    until the new one is ready, and the head's `<link rel="expect" href="#drawer" blocking="render">` (astro.config.mjs)
-    holds that first frame until the whole page has been parsed, so a reader never sees a page half built.
+  - Page changes: a plain navigation. The site used to opt in to cross-document view transitions and to hold the first
+    frame with `<link rel="expect" href="#drawer" blocking="render">`; on a big page (the architecture page is over 1 MB)
+    that kept the old page frozen until the whole new document had downloaded and parsed (#drawer is its last element).
+    Now the new page paints as soon as its head and first content are ready, and the next page is fetched on hover.
   - Reading progress: a 2px bar under the header on pages with a sidebar, driven by the scroll position
     (after beUI's Scroll Progress, MIT; without its smooth-scroll library, which would fight nested scrollers).
   - Theme switch: the new theme opens in a circle from the theme button (after beUI's Theme Toggle, MIT), set up by
@@ -17,17 +18,6 @@ html {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  @view-transition {
-    navigation: auto;
-  }
-
-  /* No animation for page changes: the new page replaces the old one in a single frame. */
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
-    animation: none;
-  }
-
   /* Reading progress */
   @supports (animation-timeline: scroll()) {
     html body:has(.aside) [data-slot='layout'] > header::after {

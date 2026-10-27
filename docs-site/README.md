@@ -440,9 +440,9 @@ summary, reading time on guides, "Edit on GitHub"), `Footer` ("Was this page rig
 previous and next pages, a credits line) and `Sidebar` (with `SidebarTree`: groups that fold, only the current page's
 group open at first, open groups and the scroll position kept from page to page, one gliding hover pill). Styles:
 `src/styles/theme.css` (tokens, light and dark), `chrome.css` (header, sidebar, "On this page", search), `content.css`
-(the page body), `motion.css` (page changes in one cut, held until the new page is fully parsed; the reading-progress
-bar; the theme switch's reveal) and `print.css`. Pages are prefetched on hover (Chromium prerenders them through
-speculation rules). `ReadingAids.astro`, rendered by `Footer`, adds "Expand" to every diagram (and opens content images)
+(the page body), `motion.css` (the reading-progress bar; the theme switch's reveal; page changes are plain navigations, with
+no view transition and no render blocking, so a big page paints as it arrives) and `print.css`. Sidebar pages are prefetched on hover (Chromium prerenders any same-site link through
+speculation rules). `public/_headers` sets the cache rules (Cloudflare Pages). `ReadingAids.astro`, rendered by `Footer`, adds "Expand" to every diagram (and opens content images)
 in a full-screen view, a back-to-top button below 1280px, a fade on tables that scroll sideways and copying a
 section's address from its heading link.
 
