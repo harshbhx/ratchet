@@ -10,7 +10,7 @@ export const LIVE_CHIPS = [
 ];
 
 /**
- * The chips to show. Live mode (free text) gets the four curated questions. A simulated gateway answers only its own
+ * The chips to show. Live mode (free text) gets the four curated questions. A mock gateway answers only its own
  * examples, so it shows what it sent. No answer yet: nothing, so no chip can start a run the gateway would refuse.
  */
 export function chipQuestions(examples: ScoutExamples | null): string[] {
@@ -58,7 +58,7 @@ export interface BudgetLeft {
 }
 
 /**
- * The live demo's budget a visitor can still use today: `public_budget_left_usd` when the gateway sends it (judges'
+ * The live gateway's budget a visitor can still use today: `public_budget_left_usd` when the gateway sends it (judges'
  * reserve excluded), else the budget minus today's spend. null in mock mode or without a budget.
  */
 export function budgetLeft(
@@ -75,22 +75,16 @@ export function budgetLeft(
 }
 
 export function runsLeftText(r: RunsLeft): string {
-  if (r.left === 0) return "No demo runs left today. The count resets at 00:00 UTC.";
+  if (r.left === 0) return "No free runs left today. The count resets at 00:00 UTC.";
   return `${r.left} ${r.left === 1 ? "run" : "runs"} left today`;
 }
 
-// ---------- the edge's daily limit per visitor, and the recorded runs offered instead
+// ---------- the edge's daily limit per visitor
 
 /** The edge refuses a fourth Scout run of a day with `{"detail": "Daily limit reached: 3 Scout runs per visitor per day. ..."}`. */
 export function isScoutDailyLimit(message: string | null | undefined): boolean {
   return typeof message === "string" && message.trimStart().startsWith("Daily limit reached");
 }
 
-export const SCOUT_LIMIT_TITLE = "You've used your 3 free Scout runs today.";
-export const SCOUT_LIMIT_TEXT = "They reset at 00:00 UTC. Meanwhile, watch a recorded run:";
-
-/** The recordings to offer: live ones first, each group in the gateway's order (newest first). */
-export function recordingChoices<T extends { mode: string }>(list: readonly T[] | null | undefined): T[] {
-  const all = list ?? [];
-  return [...all.filter((r) => r.mode === "live"), ...all.filter((r) => r.mode !== "live")];
-}
+export const SCOUT_LIMIT_TITLE = "You've used today's free tries.";
+export const SCOUT_LIMIT_TEXT = "They reset at 00:00 UTC.";

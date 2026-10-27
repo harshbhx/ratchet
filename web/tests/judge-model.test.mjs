@@ -28,9 +28,9 @@ test("a runs-left value that is not a count is left out", () => {
 test("each status has a plain message that never mentions the code's value", () => {
   assert.equal(m.unlockError(400), "Type the judge code first.");
   assert.equal(m.unlockError(401), "That code is not right. Check it and try again.");
-  assert.equal(m.unlockError(404), "Judge access is not turned on for this demo.");
+  assert.equal(m.unlockError(404), "Judge access is not turned on for this gateway.");
   assert.equal(m.unlockError(429), "Too many tries from this address. Try again in an hour.");
-  assert.match(m.unlockError(0), /Could not reach the demo/);
+  assert.match(m.unlockError(0), /Could not reach the gateway/);
   assert.match(m.unlockError(500), /\(500\)/);
   assert.match(m.signOutError(0), /Could not reach/);
   assert.match(m.signOutError(500), /\(500\)/);

@@ -100,7 +100,7 @@ export function SearcherLane({ run, derived }: { run: RunState; derived: Derived
             : undefined
       }
     >
-      {mock && <p className="-mt-1 mb-3 text-[12.5px] text-muted">Search results are simulated (example.org pages).</p>}
+      {mock && <p className="-mt-1 mb-3 text-[12.5px] text-muted">Search results are examples (example.org pages).</p>}
       {derived.groups.length === 0 ? (
         <Empty>{run.status === "idle" ? AGENTS.searcher.does : run.status === "running" ? "Waiting for the planner's queries." : "Not run."}</Empty>
       ) : (

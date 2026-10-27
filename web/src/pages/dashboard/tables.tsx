@@ -55,7 +55,7 @@ export function VersionsTable({ versions, live = false }: { versions: Version[];
       {rows.length === 0 ? (
         <Empty icon={Boxes} title="No versions yet">
           {live
-            ? "Night School does not run on this live demo, so no student is trained here and the teacher answers every request."
+            ? "No student has been trained from live traffic yet, so the teacher answers every request."
             : "Day 1 is all teacher (cold start). Night School trains v1 on the teacher's answers that night."}
         </Empty>
       ) : (

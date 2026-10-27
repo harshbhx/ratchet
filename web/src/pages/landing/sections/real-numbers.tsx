@@ -31,7 +31,7 @@ function Tile({ value, label, note, badge }: { value: ReactNode; label: string; 
 }
 
 /**
- * What the labelling cost, and what a call costs, in the dollars of the real runs (Measured), beside the live demo's own
+ * What the labelling cost, and what a call costs, in the dollars of the real runs (Measured), beside the live gateway's own
  * savings counter (Live, from `/ratchet/stats` `demo_split`). With no stats, the live tile says so and shows no number.
  */
 export function RealCostTiles({ stats, className }: { stats: Stats | null; className?: string }) {
@@ -67,15 +67,15 @@ export function RealCostTiles({ stats, className }: { stats: Stats | null; class
         <Tile
           badge={<LiveBadge />}
           value={fmtUsd(live.savedUsd, live.savedUsd < 1 ? 4 : 2)}
-          label={`saved by the live demo's split${live.savingsPct != null ? `, ${fmtPct(live.savingsPct)} below all-Ultra` : ""}`}
+          label={`saved by the random split${live.savingsPct != null ? `, ${fmtPct(live.savingsPct)} below all-Ultra` : ""}`}
           note={`${fmtInt(live.requests)} requests answered by the hosted Nano, picked at random: ${fmtUsd(live.costUsd, 4)} paid against ${fmtUsd(live.baselineUsd, 4)} all-Ultra.`}
         />
       ) : (
         <Tile
           badge={<LiveBadge>Live</LiveBadge>}
           value="–"
-          label="saved by the live demo's split"
-          note="Not available right now: the demo's stats did not load, or the split has served nothing yet. No number is shown."
+          label="saved by the random split"
+          note="Not available right now: the gateway's stats did not load, or the split has served nothing yet. No number is shown."
         />
       )}
     </ul>

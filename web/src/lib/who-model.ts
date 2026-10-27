@@ -38,16 +38,16 @@ export interface WhoInput {
 export const WHO_TEXT = {
   owned: "Nano + your adapter",
   hosted: "Nano 30B · hosted",
-  demoSplit: "Nano 30B · demo split",
+  demoSplit: "Nano 30B · random split",
   rented: "Ultra · Token Factory",
   tavily: "Tavily",
   search: "Search",
 } as const;
 
-/** The route of a call the live demo's split sent to the hosted Nano at random (ratchet/router.py DEMO_SPLIT_ROUTE, ADR 0147). */
+/** The route of a call the random split sent to the hosted Nano at random (ratchet/router.py DEMO_SPLIT_ROUTE, ADR 0147). */
 export const DEMO_SPLIT_ROUTE = "demo_split";
 /** The label every demo-split answer carries, on its badge and in its tooltip. */
-export const DEMO_SPLIT_TITLE = "Nano 30B (hosted, untuned) · demo split: picked at random, not by the confidence gate";
+export const DEMO_SPLIT_TITLE = "Nano 30B (hosted, untuned) · random split: picked at random, not by the confidence gate";
 
 export function isDemoSplit(route?: string | null): boolean {
   return route === DEMO_SPLIT_ROUTE;
@@ -56,7 +56,7 @@ export function isDemoSplit(route?: string | null): boolean {
 export const TEACHER_TITLE = "Nemotron 3 Ultra on Nebius Token Factory";
 /** What a page says in place of the adapter's precision or certificate while the hosted fallback answers. */
 export const NOT_CERTIFIED = "not covered by the certificate";
-const SIMULATED = "Simulation: a mock model plays ";
+const SIMULATED = "Mock model: plays ";
 
 /** The same model id, ignoring case and surrounding spaces (an upstream may echo an id in another case). */
 export function sameModel(a?: string | null, b?: string | null): boolean {
@@ -114,7 +114,7 @@ export function whoLabel({ servedBy, model, fallback, threshold, windows, simula
   return { kind: "tool", text: model === "tavily" ? WHO_TEXT.tavily : WHO_TEXT.search, title: model ?? "" };
 }
 
-/** How many of these calls the live demo's split picked (a Scout step's `detail.route`). */
+/** How many of these calls the random split picked (a Scout step's `detail.route`). */
 export function demoSplitCalls(steps: readonly { served_by: ServedBy; detail?: object | null }[]): number {
   return steps.filter((s) => s.served_by === "student" && isDemoSplit((s.detail as { route?: string } | null | undefined)?.route)).length;
 }
@@ -137,7 +137,7 @@ export interface DemoSplitStat {
  */
 export function demoSplitStat(split?: DemoSplitStats | null): DemoSplitStat | null {
   if (!split || (!split.enabled && !(split.requests > 0))) return null;
-  const lines = ["A random share of calls goes to the hosted Nano 30B (untuned), picked at random, not by the confidence gate."];
+  const lines = ["A random share of eligible requests goes to the hosted Nano 30B (untuned) on Nebius Token Factory, picked at random, not by the confidence gate, and is audited."];
   if (split.requests > 0) {
     lines.push(`${split.requests} of ${split.of_requests} requests of those tasks so far (${pct(split.share)}).`);
     lines.push(
@@ -149,13 +149,13 @@ export function demoSplitStat(split?: DemoSplitStats | null): DemoSplitStat | nu
   } else {
     lines.push("No request has been picked yet.");
   }
-  return { label: "Demo split", value: split.enabled ? pct(split.rate) : "off", lines };
+  return { label: "Random split", value: split.enabled ? pct(split.rate) : "off", lines };
 }
 
 /** The Scout run's note when some student calls were demo-split picks; null when none were. */
 export function demoSplitNote(picked: number, studentCalls: number): string | null {
   if (picked <= 0) return null;
-  return `Demo split: ${picked} of ${studentCalls} student ${studentCalls === 1 ? "call was" : "calls were"} picked at random for the hosted Nano, not by the confidence gate.`;
+  return `Random split: ${picked} of ${studentCalls} student ${studentCalls === 1 ? "call was" : "calls were"} picked at random for the hosted Nano, not by the confidence gate.`;
 }
 
 /** How many of these calls the hosted fallback answered. */
@@ -256,7 +256,7 @@ export function servingLine(serving?: StudentServing | null): ServingLine | null
     return {
       kind: "hosted",
       text: "Nano 30B · hosted on Token Factory (endpoint off)",
-      detail: `${serving.demo_split ? `demo split ${pct(serving.demo_split)} picked at random, not by the confidence gate · ` : ""}${t ? `threshold ${t} · ` : ""}${NOT_CERTIFIED}`,
+      detail: `${serving.demo_split ? `random split ${pct(serving.demo_split)} picked at random, not by the confidence gate · ` : ""}${t ? `threshold ${t} · ` : ""}${NOT_CERTIFIED}`,
       title: hostedTitle(serving.threshold, hasWindows(serving)),
     };
   }

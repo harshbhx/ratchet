@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { motion } from "motion/react";
-import { ArrowRight, ArrowUpRight, FlaskConical, Radio } from "lucide-react";
+import { ArrowRight, FlaskConical, Radio } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Container } from "@/components/ui/section";
 import { CountUp } from "@/components/ui/stat";
@@ -28,17 +28,16 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   // With the GPU endpoint off the hosted, untuned Nano answers student calls, so the share is not "your adapter" (FR-7.40).
   const share = studentShareCopy(stats.student_serving);
 
-  // The last real upstream calls (live mode only; the simulation records none), content-free (FR-11.31).
+  // The last real upstream calls (live mode only; mock models record none), content-free (FR-11.31).
   const tf = !mock && stats.upstream?.recording ? lastCall(stats.upstream, "token_factory") : null;
   const tavily = !mock && stats.upstream?.recording ? lastCall(stats.upstream, "tavily") : null;
   const since = stats.upstream?.since;
-  const other = mock ? stats.links?.live : stats.links?.sim;
 
   const items: { label: string; value: ReactNode; sub: string }[] = [
     {
       label: "Saved vs all-Ultra",
       value: empty ? "–" : <CountUp value={stats.totals.savings_pct} format={(v) => fmtPct(v)} />,
-      sub: empty ? "no requests yet on this live demo" : `${fmtUsd(stats.totals.saved_usd, 2)} so far`,
+      sub: empty ? "no requests yet on this live gateway" : `${fmtUsd(stats.totals.saved_usd, 2)} so far`,
     },
     {
       label: share.label,
@@ -69,7 +68,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
               </h2>
               {mock ? (
                 <Badge tone="outline">
-                  <FlaskConical aria-hidden /> Simulation (mock models)
+                  <FlaskConical aria-hidden /> Mock models
                 </Badge>
               ) : (
                 <Badge tone="good">
@@ -82,11 +81,6 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
               <Link to="/dashboard" className="inline-flex items-center gap-1 text-[13px] font-medium text-ink-2 transition-colors hover:text-ink">
                 Open the dashboard <ArrowRight className="size-3.5" />
               </Link>
-              {other && (
-                <a href={other} className="inline-flex items-center gap-1 text-[13px] font-medium text-ink-2 transition-colors hover:text-ink">
-                  {mock ? "Open the live gateway" : "Open the simulation"} <ArrowUpRight className="size-3.5" aria-hidden />
-                </a>
-              )}
             </div>
           </div>
           <dl className="grid grid-cols-2 lg:grid-cols-4">

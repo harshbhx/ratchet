@@ -909,7 +909,7 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-7.5": ("ratchet.gateway:demo_day", "ratchet.gateway:demo_break_next", "ratchet.gateway:demo_reset"),
     "FR-7.6": ("web/src/styles/globals.css", "web/src/components/layout/site-header.tsx"),
     "FR-7.7": ("ratchet.ledger:Ledger.stats_by_task", "web/src/pages/dashboard/tables.tsx"),
-    "FR-7.8": ("ratchet.gateway:demo_day", "ratchet.gateway:demo_reset", "web/src/pages/dashboard/controls.tsx"),
+    "FR-7.8": ("ratchet.gateway:demo_day", "ratchet.gateway:demo_reset"),
     "FR-7.20": ("web/src/pages/dashboard/economics.tsx", "web/src/pages/dashboard/economics-model.ts", "ratchet.gateway:cost"),
     "FR-7.21": (
         "web/src/pages/dashboard/registry.tsx",
@@ -925,7 +925,6 @@ CODE: dict[str, tuple[str, ...]] = {
     "FR-7.23": (
         "web/src/pages/landing/sections/bill.tsx",
         "web/src/pages/landing/bill-model.ts",
-        "web/src/lib/sim.ts",
         "ratchet.gateway:cost",
     ),
     "FR-7.24": (
@@ -993,7 +992,6 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.scout.__main__:record_main",
         "ratchet.gateway:scout_recorded",
         "ratchet.gateway:scout_recorded_one",
-        "web/src/lib/recording-model.ts",
     ),
     # 6.11 Demo hosting
     "FR-11.1": ("deploy/vm/create_vm.sh", "deploy/vm/cloud-init.yaml", "deploy/nebius/nebius.sh", "deploy/vm/set_env.sh"),
@@ -1606,7 +1604,7 @@ CODE: dict[str, tuple[str, ...]] = {
         "ratchet.router:Ratchet._circuit_event",
         "ratchet.gateway:demo_student_outage",
     ),
-    "INV-20": ("web/src/lib/sim.ts", "web/src/pages/landing/bill-model.ts", "scripts/regen_sim_reference.py"),
+    "INV-20": ("web/src/pages/landing/bill-model.ts", "scripts/regen_sim_reference.py"),
     "INV-21": ("web/src/pages/landing/trust-model.ts", "web/src/pages/landing/sections/checked.tsx"),
     "INV-22": (
         "ratchet.router:Ratchet.store_opt_out",

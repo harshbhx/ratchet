@@ -5,7 +5,6 @@ import {
   CircleDashed,
   CloudCog,
   Coins,
-  FlaskConical,
   Info,
   PowerOff,
   ServerCog,
@@ -612,18 +611,6 @@ function DailySavingsChart({ daily, truncated }: { daily: CostDay[]; truncated: 
 
 /* ---------------- the panel ---------------- */
 
-function SimulationNote() {
-  return (
-    <p className="mt-3 flex items-start gap-1.5 text-[12px] leading-[18px] text-muted">
-      <FlaskConical className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-      <span>
-        Simulation: mock traffic, with the endpoint's uptime (<span className="font-mono">RATCHET_MOCK_ENDPOINT_HOURS</span> a day) and each training job's length
-        simulated in <span className="font-mono">sim/</span>. Not measured GPU time.
-      </span>
-    </p>
-  );
-}
-
 const DESCRIPTION = "What the student costs per token and by the GPU-hours you pay for, where self-hosting breaks even, and what to do.";
 
 function Full({ report, mock, stale }: { report: CostReport; mock: boolean; stale: string | null }) {
@@ -645,7 +632,7 @@ function Full({ report, mock, stale }: { report: CostReport; mock: boolean; stal
       {empty ? (
         <Empty icon={Coins} title="No cost data yet">
           {mock ? (
-            "Run a day: the simulator records the endpoint's hours and each training job beside the requests."
+            "Send requests and record the endpoint's hours to see a cost report."
           ) : (
             <>
               Send requests, and record the student endpoint's uptime with <span className="font-mono">python -m ratchet.cost endpoint up</span> and{" "}
@@ -723,13 +710,12 @@ function Full({ report, mock, stale }: { report: CostReport; mock: boolean; stal
           </div>
         </>
       )}
-      {mock && <SimulationNote />}
     </Panel>
   );
 }
 
 /** When only /ratchet/stats `cost` is available: the headline numbers, and why the full report is missing. */
-function Summary({ cost, mock, error }: { cost: CostSummary; mock: boolean; error: string | null }) {
+function Summary({ cost, error }: { cost: CostSummary; error: string | null }) {
   const pct = cost.gpu_hours_savings_pct;
   return (
     <Panel id="economics" title="Economics" description={DESCRIPTION}>
@@ -759,7 +745,6 @@ function Summary({ cost, mock, error }: { cost: CostSummary; mock: boolean; erro
         The full report (<span className="font-mono">GET /ratchet/cost</span>) did not load{error ? `: ${error}` : ""}. These numbers come from{" "}
         <span className="font-mono">/ratchet/stats</span>.
       </p>
-      {mock && <SimulationNote />}
     </Panel>
   );
 }
@@ -782,5 +767,5 @@ export function EconomicsPanel({ stats, cost }: { stats: Stats; cost: CostState 
   const mock = stats.mode !== "live";
   if (cost.report) return <Full report={cost.report} mock={mock} stale={cost.error} />;
   if (cost.loading && !cost.missing) return <Loading />;
-  return stats.cost ? <Summary cost={stats.cost} mock={mock} error={cost.error} /> : null;
+  return stats.cost ? <Summary cost={stats.cost} error={cost.error} /> : null;
 }

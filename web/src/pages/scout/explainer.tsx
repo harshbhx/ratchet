@@ -1,9 +1,8 @@
-import { ArrowLeft, ArrowRight, ArrowUpRight, Pin, Sprout } from "lucide-react";
-import { ButtonA, ButtonLink } from "@/components/ui/button";
+import { ArrowLeft, Pin, Sprout } from "lucide-react";
+import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Eyebrow } from "@/components/ui/section";
 import { WhoBadge, useWho } from "@/components/ui/who";
-import { DEMO_URL } from "@/lib/utils";
 
 /** Why some calls move to the student (Nano with your adapter) and others never do. */
 export function Explainer() {
@@ -42,7 +41,7 @@ export function Explainer() {
           </div>
           <p className="mt-4 text-[15px] leading-relaxed text-ink-2">
             They make many short calls with a fixed answer shape: a few labels and one fact. Ratchet keeps Ultra's answers to them as training data,
-            trains a small Nemotron Nano model on those answers each night, and lets it answer when it is confident.
+            is built to train a small Nemotron Nano model on those answers each night, and to let it answer when it is confident.
           </p>
           <p className="mt-3 text-[15px] leading-relaxed text-ink-2">
             When it is not confident, the call is <strong className="font-semibold text-rented-ink">escalated</strong> to Ultra, and that answer
@@ -82,23 +81,6 @@ export function Explainer() {
       </p>
 
       <div className="mt-8 flex flex-wrap gap-3">
-        {/* Night School runs on the simulation, not on the live gateway: the live site links to the simulation's dashboard. */}
-        {who.simulated ? (
-          <ButtonLink to="/dashboard" size="lg" className="h-auto min-h-12 whitespace-normal py-3 text-left">
-            Watch Night School train and release new versions <ArrowRight aria-hidden />
-          </ButtonLink>
-        ) : (
-          <ButtonA
-            href={`${DEMO_URL}/dashboard`}
-            target="_blank"
-            rel="noopener noreferrer"
-            size="lg"
-            className="h-auto min-h-12 whitespace-normal py-3 text-left"
-          >
-            Watch Night School train and release versions in the simulation <ArrowUpRight aria-hidden />
-            <span className="sr-only"> (opens in a new tab)</span>
-          </ButtonA>
-        )}
         <ButtonLink to="/" variant="ghost" size="lg">
           <ArrowLeft aria-hidden /> Back to the story
         </ButtonLink>

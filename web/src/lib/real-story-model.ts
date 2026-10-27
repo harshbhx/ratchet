@@ -1,6 +1,6 @@
 /**
  * The real numbers the story page prints besides the exam scores: what the teacher's labelling cost, what a call costs
- * at list prices, the one precision-bar fact, and the live demo's savings counter. The file `src/data/real-costs.json`
+ * at list prices, the one precision-bar fact, and the live gateway's savings counter. The file `src/data/real-costs.json`
  * is held to `evidence/` by `tests/test_story_real_numbers.py`, so a hand-typed number cannot drift. Pure, no JSX:
  * tested by `tests/real-story-model.test.mjs`.
  */
@@ -43,7 +43,7 @@ export interface DemoSavings {
   savingsPct: number | null;
 }
 
-/** The live demo's split counter from `/ratchet/stats`, or null when the stats are missing, the split is off or it has served nothing. */
+/** The random split counter from `/ratchet/stats`, or null when the stats are missing, the split is off or it has served nothing. */
 export function demoSavings(stats: Stats | null | undefined): DemoSavings | null {
   const s: DemoSplitStats | undefined = stats?.demo_split;
   if (!s || !s.enabled || !(s.requests > 0)) return null;

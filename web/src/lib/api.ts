@@ -128,11 +128,11 @@ export interface StudentServing {
   certified: boolean;
   /** The daily endpoint windows (W10, RATCHET_STUDENT_WINDOWS); null or absent when none are set. */
   window?: { open: boolean; next_start_utc: string | null } | null;
-  /** The live demo's split (RATCHET_DEMO_SPLIT, ADR 0147): the share of eligible requests sent to the hosted Nano at random. Absent when off. */
+  /** The random split (RATCHET_DEMO_SPLIT, ADR 0147): the share of eligible requests sent to the hosted Nano at random. Absent when off. */
   demo_split?: number;
 }
 
-/** `/ratchet/stats` `demo_split` (FR-12.34): what the live demo's random split did. Counts and dollars. */
+/** `/ratchet/stats` `demo_split` (FR-12.34): what the random split did. Counts and dollars. */
 export interface DemoSplitStats {
   enabled: boolean;
   /** RATCHET_DEMO_SPLIT. */
@@ -157,7 +157,7 @@ export interface DemoSplitStats {
 export interface Stats {
   mode: Mode;
   day: number;
-  /** v0.5: the other surface's URLs, the shared simulation's limits and the last real upstream call per role. Absent on an older gateway. */
+  /** v0.5: the other surface's URLs, the mock gateway's limits and the last real upstream call per role. Absent on an older gateway. */
   links?: Links;
   demo?: DemoInfo;
   upstream?: Upstream;
@@ -166,7 +166,7 @@ export interface Stats {
   /** v0.5: the hosted, untuned model that answers student calls while the GPU endpoint is off (RATCHET_FALLBACK_STUDENT). */
   fallback_student?: string;
   student_serving?: StudentServing;
-  /** FR-12.34: the live demo's split; absent on an older gateway. */
+  /** FR-12.34: the random split; absent on an older gateway. */
   demo_split?: DemoSplitStats;
   days: DayStats[];
   tasks: TaskStats[];
@@ -445,11 +445,10 @@ export interface ScoutTotals {
   baseline_usd: number;
   savings_pct: number;
   wall_ms: number;
-  /** Student calls the live demo's split picked at random (ADR 0147); absent on an older gateway. */
+  /** Student calls the random split picked at random (ADR 0147); absent on an older gateway. */
   demo_split_calls?: number;
 }
 
-import type { Recording, RecordingSummary } from "@/lib/recording-model";
 
 export type ScoutEvent =
   | { type: "start"; run_id: string; question: string; mode: Mode }
@@ -545,15 +544,6 @@ export const api = {
   stats: () => json<Stats>("/ratchet/stats"),
   /** 404 on a gateway older than v0.5 (the dashboard then hides its Economics panel). */
   cost: (days?: number) => json<CostReport>(days == null ? "/ratchet/cost" : `/ratchet/cost?days=${encodeURIComponent(days)}`),
-  demoDay: (workload: Workload, requests = 1500) =>
-    json<{ day: number; workload: Workload; night: NightReport; auto_reset?: string | null }>(
-      `/ratchet/demo/day?workload=${encodeURIComponent(workload)}&requests=${requests}`,
-      { method: "POST" },
-    ),
-  breakNext: () => json<{ corrupt: string }>("/ratchet/demo/break-next", { method: "POST" }),
-  /** Mock only: the student endpoint refuses connections for `seconds` (the gateway clamps it to 5..300). */
-  studentOutage: (seconds: number) =>
-    json<{ seconds: number; until: number }>(`/ratchet/demo/student-outage?seconds=${encodeURIComponent(seconds)}`, { method: "POST" }),
   /** 404 on a gateway older than v0.5 (the dashboard then hides its Task registry panel). */
   tasks: () => json<TaskRegistry>("/ratchet/tasks"),
   task: (name: string) => json<TaskEntry>(taskPath(name)),
@@ -563,7 +553,6 @@ export const api = {
   putTask: (name: string, spec: Record<string, unknown>, adminKey?: string) =>
     json<TaskSaved>(taskPath(name), { method: "PUT", body: JSON.stringify(spec), headers: adminHeaders(adminKey) }),
   deleteTask: (name: string, adminKey?: string) => json<TaskDeleted>(taskPath(name), { method: "DELETE", headers: adminHeaders(adminKey) }),
-  reset: () => json<{ status: string }>("/ratchet/demo/reset", { method: "POST" }),
   redact: (text: string) => json<RedactPreview>("/ratchet/redact", { method: "POST", body: JSON.stringify({ text }) }),
   scoutExamples: () => json<ScoutExamples>("/scout/examples"),
   scoutStatus: () => json<ScoutStatus>("/scout/status", { credentials: "same-origin" }),
@@ -571,9 +560,6 @@ export const api = {
   judgeUnlock: (code: string) => judgeCall("POST", JSON.stringify({ code })),
   /** End the judge session (clears the cookie). Resolves to the HTTP status. */
   judgeSignOut: () => judgeCall("DELETE"),
-  /** Recorded live runs, newest first (FR-10.40): read-only, no model call, no budget. */
-  scoutRecordings: () => json<{ recordings: RecordingSummary[] }>("/scout/recorded"),
-  scoutRecording: (id: string) => json<Recording>(`/scout/recorded/${encodeURIComponent(id)}`),
   scoutRun: (question: string) =>
     json<{ events: ScoutEvent[] }>("/scout/run", { method: "POST", body: JSON.stringify({ question }) }),
 };

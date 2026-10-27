@@ -1,13 +1,12 @@
 import { motion } from "motion/react";
-import { ArrowRight, CircleAlert, Clock, Play, RotateCcw, WifiOff, Wallet } from "lucide-react";
+import { ArrowRight, CircleAlert, Clock, RotateCcw, WifiOff, Wallet } from "lucide-react";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { recordingLabel, watchLabel, type RecordingSummary } from "@/lib/recording-model";
 import { cn, fmtMs } from "@/lib/utils";
 import { studentCopy } from "@/lib/who-model";
 import { AGENTS, AgentDisc, RouteNote, StepMeta, usd } from "./bits";
 import { AnswerBody, type SourceFact } from "./answer";
-import { SCOUT_LIMIT_TEXT, SCOUT_LIMIT_TITLE, recordingChoices } from "./scout-model";
+import { SCOUT_LIMIT_TEXT, SCOUT_LIMIT_TITLE } from "./scout-model";
 import { agentState, type Derived, type RunState } from "./state";
 
 const rise = { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] as const } };
@@ -210,7 +209,7 @@ export function RunSummary({ run, derived }: { run: RunState; derived: Derived }
               </table>
               <p className="mt-3 text-[11.5px] leading-relaxed text-muted">
                 "Of" is what the same calls would cost on Ultra alone. Searcher calls are web searches, not model calls.
-                {run.mode === "mock" && " Simulation: mock models and prices."}
+                {run.mode === "mock" && " Mock models and prices."}
               </p>
             </div>
           )}
@@ -235,62 +234,42 @@ export function classifyError(message: string) {
   if (/example questions only|mock mode/.test(m))
     return {
       icon: CircleAlert,
-      title: "This demo answers the example questions only",
+      title: "This gateway answers the example questions only",
       retry: false,
       hint: "Pick one of the example questions above.",
     };
   if (/budget/.test(m))
     return {
       icon: Wallet,
-      title: "Today's demo budget is used up",
+      title: "Today's free budget is used up",
       retry: false,
       hint: /tomorrow|utc/.test(m) ? null : "It resets at 00:00 UTC.",
     };
   if (/rate|limit|too many|per hour|runs per|try again later|429/.test(m))
-    return { icon: Clock, title: "The demo limit is reached for now", retry: true, hint: "Wait a few minutes, then try again." };
+    return { icon: Clock, title: "The usage limit is reached for now", retry: true, hint: "Wait a few minutes, then try again." };
   if (/connection|reach|network|lost|failed to fetch/.test(m))
     return { icon: WifiOff, title: "The connection to Scout dropped", retry: true, hint: "Check your connection and try again." };
   return { icon: CircleAlert, title: "Scout stopped", retry: true, hint: null as string | null };
 }
 
-/**
- * The edge's daily limit per visitor: said plainly, with the recorded runs the gateway lists to watch instead. A recorded run
- * plays through the same reducer as a live one, labelled "Recorded" in the page header, and makes no model or search call.
- */
-export function DailyLimitNotice({ recordings, onWatch }: { recordings: RecordingSummary[]; onWatch: (rec: RecordingSummary) => void }) {
-  const choices = recordingChoices(recordings);
+/** The edge's daily limit per visitor, said plainly. */
+export function DailyLimitNotice() {
   return (
     <motion.div
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
       role="alert"
-      className="flex scroll-mt-[196px] flex-col gap-3 rounded-2xl border border-warn/35 bg-warn-soft px-4 py-3.5 sm:px-5"
+      className="flex scroll-mt-[196px] items-start gap-3 rounded-2xl border border-warn/35 bg-warn-soft px-4 py-3.5 sm:px-5"
     >
-      <div className="flex items-start gap-3">
-        <Clock className="mt-0.5 size-5 shrink-0 text-warn" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="text-[14.5px] font-semibold text-ink">{SCOUT_LIMIT_TITLE}</p>
-          <p className="mt-0.5 text-[13.5px] leading-relaxed text-ink-2">{choices.length > 0 ? SCOUT_LIMIT_TEXT : "They reset at 00:00 UTC."}</p>
-        </div>
-      </div>
-      {choices.length > 0 && (
-        <ul className="flex flex-col gap-2 sm:pl-8">
-          {choices.map((r) => (
-            <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <Button type="button" size="sm" onClick={() => onWatch(r)}>
-                <Play aria-hidden /> {watchLabel(r)}
-              </Button>
-              <span className="min-w-0 text-[13px] text-ink-2 [overflow-wrap:anywhere]">{r.question}</span>
-              <span className="text-[12.5px] text-muted">{recordingLabel(r)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <Clock className="mt-0.5 size-5 shrink-0 text-warn" aria-hidden />
+      <p className="min-w-0 flex-1 text-[14.5px] font-semibold text-ink">
+        {SCOUT_LIMIT_TITLE} <span className="font-normal text-ink-2">{SCOUT_LIMIT_TEXT}</span>
+      </p>
     </motion.div>
   );
 }
 
-export function ErrorAlert({ message, onRetry, onWatch }: { message: string; onRetry: () => void; onWatch?: () => void }) {
+export function ErrorAlert({ message, onRetry }: { message: string; onRetry: () => void }) {
   const c = classifyError(message);
   const Icon = c.icon;
   const text = message.charAt(0).toUpperCase() + message.slice(1);
@@ -310,11 +289,6 @@ export function ErrorAlert({ message, onRetry, onWatch }: { message: string; onR
         </p>
       </div>
       <div className="flex flex-wrap gap-2 self-start">
-        {onWatch && c.title !== "This demo answers the example questions only" && (
-          <Button type="button" size="sm" onClick={onWatch}>
-            <Play aria-hidden /> Watch a recorded live run
-          </Button>
-        )}
         {c.retry && (
           <Button type="button" variant="outline" size="sm" onClick={onRetry}>
             <RotateCcw aria-hidden /> Try again

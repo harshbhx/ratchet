@@ -40,8 +40,8 @@ const STEPS: { title: string; body: ReactNode; chips: string[] }[] = [
     title: "Night School retrains.",
     body: (
       <>
-        Each night Night School fine-tunes a new adapter from the base model, on every teacher answer so far, never on the student's own
-        answers. Then it is tested on a held-out golden set that training never sees. It is built to run as a Nebius Serverless Job. One such job has run, by hand: on 27 Oct 2026 the round-2 adapter was retrained on a Nebius L40S. The original adapters were trained by hand on a borrowed GPU; the nightly loop itself is still simulated.
+        Built to run each night, Night School fine-tunes a new adapter from the base model, on every teacher answer so far, never on the student's own
+        answers. Then it is tested on a held-out golden set that training never sees. It is built to run as a Nebius Serverless Job. One such job has run, by hand: on 27 Oct 2026 the round-2 adapter was retrained on a Nebius L40S. The original adapters were trained by hand on a borrowed GPU; the nightly loop itself is built and tested but has not run on live traffic.
       </>
     ),
     chips: ["Serverless Job · one hand-run job, nightly loop scripted", "from base, cumulative", "golden set held out"],

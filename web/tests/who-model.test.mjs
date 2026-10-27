@@ -20,7 +20,7 @@ test("the badge words and tooltips are the label table's", () => {
   assert.deepEqual(m.WHO_TEXT, {
     owned: "Nano + your adapter",
     hosted: "Nano 30B · hosted",
-    demoSplit: "Nano 30B · demo split",
+    demoSplit: "Nano 30B · random split",
     rented: "Ultra · Token Factory",
     tavily: "Tavily",
     search: "Search",
@@ -76,8 +76,8 @@ test("the teacher is Ultra on Token Factory, a tool is a search", () => {
 test("in mock mode the tooltip says a mock model plays the real one; the words stay", () => {
   const owned = m.whoLabel({ servedBy: "student", model: "student-v2", simulated: true });
   assert.equal(owned.text, "Nano + your adapter");
-  assert.equal(owned.title, "Simulation: a mock model plays Nemotron 3 Nano 4B with our LoRA adapter v2, built to run on a Nebius Serverless Endpoint");
-  assert.equal(m.whoLabel({ servedBy: "teacher", simulated: true }).title, "Simulation: a mock model plays Nemotron 3 Ultra on Nebius Token Factory");
+  assert.equal(owned.title, "Mock model: plays Nemotron 3 Nano 4B with our LoRA adapter v2, built to run on a Nebius Serverless Endpoint");
+  assert.equal(m.whoLabel({ servedBy: "teacher", simulated: true }).title, "Mock model: plays Nemotron 3 Ultra on Nebius Token Factory");
   assert.equal(m.whoLabel({ servedBy: "tool", model: "tavily", simulated: true }).title, "tavily");
 });
 
@@ -254,16 +254,16 @@ test("Scout counts hosted calls and its done text names the hosted Nano", () => 
   assert.equal(scout.derive(scout.initialRun, FALLBACK).hosted, false);
 });
 
-test("a demo-split answer is labelled as a random pick, whatever its confidence (ADR 0147)", () => {
+test("a random-split answer is labelled as a random pick, whatever its confidence (ADR 0147)", () => {
   const split = m.whoLabel({ servedBy: "student", model: FALLBACK, fallback: FALLBACK, route: "demo_split" });
   assert.deepEqual(split, {
     kind: "hosted",
-    text: "Nano 30B · demo split",
+    text: "Nano 30B · random split",
     title:
-      "Nano 30B (hosted, untuned) · demo split: picked at random, not by the confidence gate. Not covered by our adapter's precision certificate.",
+      "Nano 30B (hosted, untuned) · random split: picked at random, not by the confidence gate. Not covered by our adapter's precision certificate.",
   });
   // Even with no fallback id known to the page, the route alone says what it was.
-  assert.equal(m.whoLabel({ servedBy: "student", route: "demo_split" }).text, "Nano 30B · demo split");
+  assert.equal(m.whoLabel({ servedBy: "student", route: "demo_split" }).text, "Nano 30B · random split");
   // Any other route keeps the ordinary badge; a teacher answer is never labelled a split.
   assert.equal(m.whoLabel({ servedBy: "student", model: FALLBACK, fallback: FALLBACK, route: "student" }).text, "Nano 30B · hosted");
   assert.equal(m.whoLabel({ servedBy: "teacher", model: ULTRA, route: "demo_split" }).text, "Ultra · Token Factory");
@@ -289,10 +289,10 @@ test("the dashboard's split stat says what it is and what it did", () => {
     savings_pct: 0.9,
   };
   const s = m.demoSplitStat(base);
-  assert.equal(s.label, "Demo split");
+  assert.equal(s.label, "Random split");
   assert.equal(s.value, "40%");
   assert.deepEqual(s.lines, [
-    "A random share of calls goes to the hosted Nano 30B (untuned), picked at random, not by the confidence gate.",
+    "A random share of eligible requests goes to the hosted Nano 30B (untuned) on Nebius Token Factory, picked at random, not by the confidence gate, and is audited.",
     "8 of 20 requests of those tasks so far (40%).",
     "Ultra audited 2: the Nano agreed on 1 (50%).",
     "Cost 90% below all-Ultra on these calls.",
@@ -307,7 +307,7 @@ test("the dashboard's split stat says what it is and what it did", () => {
   assert.equal(m.demoSplitStat({ ...base, enabled: false }).value, "off");
 });
 
-test("a Scout run counts and names its demo-split calls", () => {
+test("a Scout run counts and names its random-split calls", () => {
   const steps = [
     { served_by: "student", detail: { route: "demo_split" } },
     { served_by: "student", detail: { route: "demo_split" } },
@@ -318,13 +318,13 @@ test("a Scout run counts and names its demo-split calls", () => {
   assert.equal(m.demoSplitCalls(steps), 2);
   assert.equal(
     m.demoSplitNote(2, 3),
-    "Demo split: 2 of 3 student calls were picked at random for the hosted Nano, not by the confidence gate.",
+    "Random split: 2 of 3 student calls were picked at random for the hosted Nano, not by the confidence gate.",
   );
-  assert.equal(m.demoSplitNote(1, 1), "Demo split: 1 of 1 student call was picked at random for the hosted Nano, not by the confidence gate.");
+  assert.equal(m.demoSplitNote(1, 1), "Random split: 1 of 1 student call was picked at random for the hosted Nano, not by the confidence gate.");
   assert.equal(m.demoSplitNote(0, 4), null);
 });
 
 test("the serving line names the split while the hosted Nano serves", () => {
   const line = m.servingLine({ kind: "hosted_fallback", model: FALLBACK, version: 1, threshold: null, certified: false, tasks: {}, demo_split: 0.4 });
-  assert.match(line.detail, /^demo split 40% picked at random, not by the confidence gate · not covered by the certificate$/);
+  assert.match(line.detail, /^random split 40% picked at random, not by the confidence gate · not covered by the certificate$/);
 });

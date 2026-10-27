@@ -15,7 +15,7 @@ import { REPO_URL } from "@/lib/utils";
 import { REAL } from "@/pages/judges/real";
 import { HeroFlow } from "./hero-flow";
 
-/** "Watch the 3-minute demo": the video's counting link, tagged from=site; null hides the link. */
+/** "Watch the 3-minute video": the video's counting link, tagged from=site; null hides the link. */
 const VIDEO_HREF = videoHref(REAL.links, "site");
 
 // The aurora is a WebGL shader: it loads after the hero's text has painted, and the page is complete without it.
@@ -137,7 +137,7 @@ export function Hero() {
                 Watch it learn
               </a>
               <Link to="/scout" className="rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink">
-                Scout demo
+                Scout
               </Link>
               <Link to="/dashboard" className="rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink">
                 Dashboard
@@ -149,7 +149,7 @@ export function Hero() {
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"
                 >
-                  Watch the 3-minute demo <ArrowUpRight className="size-3.5 text-muted" aria-hidden />
+                  Watch the 3-minute video <ArrowUpRight className="size-3.5 text-muted" aria-hidden />
                   <span className="sr-only"> (video, opens in a new tab)</span>
                 </a>
               )}

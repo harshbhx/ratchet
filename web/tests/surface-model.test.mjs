@@ -1,4 +1,4 @@
-// The last-call line and the shared-simulation notice (src/lib/surface-model.ts). Pure functions over
+// The last-call line (src/lib/surface-model.ts). Pure functions over
 // /ratchet/stats; an older gateway without the blocks gets null. Run with `npm test`.
 import assert from "node:assert/strict";
 import { register } from "node:module";
@@ -61,19 +61,4 @@ test("fmtAge boundaries", () => {
   assert.equal(m.fmtAge(3599), "59 min ago");
   assert.equal(m.fmtAge(3600), "1 h ago");
   assert.equal(m.fmtAge(86400), "1 d ago");
-});
-
-test("sharedNotice names only the limits that are set and is null on the live gateway", () => {
-  const all = { shared: true, idle_reset_s: 7200, max_days: 30, max_requests: 200000 };
-  assert.equal(
-    m.sharedNotice(all),
-    "Shared simulation: every visitor sees and changes the same state. It resets after 2 h without activity, 30 simulated days or 200,000 requests.",
-  );
-  assert.equal(
-    m.sharedNotice({ shared: true, idle_reset_s: null, max_days: 30, max_requests: null }),
-    "Shared simulation: every visitor sees and changes the same state. It resets after 30 simulated days.",
-  );
-  assert.equal(m.sharedNotice({ shared: true }), "Shared simulation: every visitor sees and changes the same state.");
-  assert.equal(m.sharedNotice({ shared: false }), null);
-  assert.equal(m.sharedNotice(undefined), null);
 });

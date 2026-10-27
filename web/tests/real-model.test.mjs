@@ -9,8 +9,8 @@ register("./ts-hooks.mjs", import.meta.url);
 const m = await import("../src/lib/real-model.ts");
 const text = readFileSync(new URL("../src/data/real.json", import.meta.url), "utf8");
 
-test("the vocabulary is the five statuses, each with words and a tone", () => {
-  assert.deepEqual([...m.REAL_STATUSES], ["real", "measured", "simulation", "pending", "not-run"]);
+test("the vocabulary is the four statuses, each with words and a tone", () => {
+  assert.deepEqual([...m.REAL_STATUSES], ["real", "measured", "pending", "not-run"]);
   for (const s of m.REAL_STATUSES) {
     assert.ok(m.STATUS_TEXT[s].label && m.STATUS_TEXT[s].meaning, s);
     assert.ok(m.STATUS_TONE[s], s);
@@ -28,7 +28,7 @@ test("real.json parses whole: every entry kept, with evidence and a way to check
     assert.match(e.date, /^\d{4}-\d{2}-\d{2}$/, e.id);
   }
   assert.equal(new Set(data.entries.map((e) => e.id)).size, data.entries.length);
-  assert.ok(data.links.repo.startsWith("https://") && data.links.docs.startsWith("https://") && data.links.demo.startsWith("https://"));
+  assert.ok(data.links.repo.startsWith("https://") && data.links.docs.startsWith("https://"));
 });
 
 test("the exam stays pending with no number until every metric is filled", () => {
@@ -93,8 +93,8 @@ test("the site's video links go through videoHref: the hero tagged site, the jud
   }
 });
 
-test("a gateway's numbers: simulation on the mock demo, measured on a live gateway", () => {
-  assert.equal(m.gatewayStatus("mock"), "simulation");
+test("a gateway's numbers: measured on a live gateway, no badge on a mock one", () => {
+  assert.equal(m.gatewayStatus("mock"), null);
   assert.equal(m.gatewayStatus("live"), "measured");
   assert.equal(m.gatewayStatus(undefined), null);
   assert.equal(m.fmtDate("2026-10-22"), "22 Oct 2026");

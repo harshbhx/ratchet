@@ -1,86 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { ArrowUpRight, Check, ChevronDown, CircleSlash, Copy, FlaskConical, Loader2, Lock, Play, ServerOff, ShieldAlert, Unplug } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowUpRight, Check, ChevronDown, Copy, Loader2, Lock, ServerOff, ShieldAlert, Unplug } from "lucide-react";
 import { ScrollX } from "@/components/ui/scroll-x";
-import { DEMO_URL, cn } from "@/lib/utils";
-import { useChapterId } from "./chapter";
-import { useJudges, type DemoAction } from "./data";
+import { cn } from "@/lib/utils";
 import { unavailable, type Fetched } from "./judges-model";
 
 export { Chapter, ChapterProvider, useChapterId, useChapters } from "./chapter";
-
-const ACTION_LABEL: Record<DemoAction, string> = {
-  day: "Run a simulated day",
-  break: "Inject a bad deploy",
-  outage: "Start a 45 s student outage",
-};
-
-/** A link to the same place on the simulation demo (mock models), where the demo controls run. */
-export function SimLink({ hash, children }: { hash?: string | null; children: ReactNode }) {
-  return (
-    <a
-      href={`${DEMO_URL}/judges${hash ? `#${hash}` : ""}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-flex items-center gap-0.5 font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink"
-    >
-      {children}
-      <ArrowUpRight className="size-3 shrink-0" aria-hidden />
-      <span className="sr-only"> (opens in a new tab)</span>
-    </a>
-  );
-}
-
-/**
- * The "Try it" strip: buttons for the mock demo's own controls that move this chapter's numbers. Shown only on a mock
- * gateway with its controls on; the result line says what happened, in words. On a live gateway it links to the same
- * chapter on the simulation demo.
- */
-export function TryIt({ actions, note, extra }: { actions: DemoAction[]; note?: ReactNode; extra?: ReactNode }) {
-  const { mock, busy, act, stats } = useJudges();
-  const chapter = useChapterId();
-  const [line, setLine] = useState<{ ok: boolean; text: string } | null>(null);
-  if (!stats) return null;
-  if (!mock)
-    return (
-      <p className="mt-4 flex items-start gap-2 text-[13px] text-muted">
-        <CircleSlash className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        <span>
-          Demo controls run on the <SimLink hash={chapter}>simulation demo</SimLink> only.
-        </span>
-      </p>
-    );
-  return (
-    <div className="mt-5 rounded-xl border border-dashed border-line-strong bg-bg-sunken/60 p-3 sm:p-3.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-1 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-ink-2">
-          <FlaskConical className="size-3.5 text-muted" aria-hidden /> Try it
-          <span className="font-normal text-muted">(simulation, shared demo)</span>
-        </span>
-        {actions.map((a) => (
-          <Button
-            key={a}
-            size="sm"
-            variant={a === "day" ? "primary" : "outline"}
-            disabled={busy != null}
-            onClick={async () => {
-              setLine(null);
-              setLine(await act(a));
-            }}
-          >
-            {busy === a ? <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : <Play aria-hidden />}
-            {ACTION_LABEL[a]}
-          </Button>
-        ))}
-        {extra}
-      </div>
-      {note && <p className="mt-2 text-[12.5px] leading-relaxed text-muted">{note}</p>}
-      <p className={cn("text-[13px]", line ? "mt-2" : "sr-only", line && !line.ok ? "text-bad" : "text-ink-2")} aria-live="polite">
-        {busy ? "Running…" : (line?.text ?? "")}
-      </p>
-    </div>
-  );
-}
 
 /** A failed read, said plainly: never a number. */
 export function Unavailable({ path, read, className }: { path: string; read: Fetched<unknown>; className?: string }) {

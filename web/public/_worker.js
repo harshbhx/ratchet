@@ -14,7 +14,7 @@
 // proxy sends x-ratchet-edge (the token) and x-ratchet-client-ip (cf-connecting-ip), which the live Worker uses for its per-visitor limit.
 // Set it with `npx wrangler pages secret put EDGE_TOKEN --project-name ratchet`; it is never in the repo.
 //
-// /video (and /video/) is the demo video's short link: a 302 to its counting link, tagged from=site, answered here before anything
+// /video (and /video/) is the video's short link: a 302 to its counting link, tagged from=site, answered here before anything
 // else (no gateway call, nothing counted here) and never cached, so each visit reaches the counter.
 const VIDEO_URL = "https://video.ratchet.dualmindlab.tech/?from=site";
 
@@ -55,7 +55,7 @@ const WAKE_TEXT = /container suddenly disconnected|container is not running|cont
 /** The answer after the tries ran out: the same JSON the live Worker sends, which the web app turns into its "waking up" banner. */
 function warmingResponse() {
   return new Response(
-    JSON.stringify({ error: { code: "warming_up", message: "The live demo is waking up. This takes about 20 seconds." }, warming_up: true }),
+    JSON.stringify({ error: { code: "warming_up", message: "The live gateway is waking up. This takes about 20 seconds." }, warming_up: true }),
     { status: 503, headers: { "content-type": "application/json", "retry-after": "5", "cache-control": "no-store" } },
   );
 }

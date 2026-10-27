@@ -4,15 +4,14 @@ import type { Version } from "@/lib/api";
 import { cn, fmtPct } from "@/lib/utils";
 import { POLICY, stateLabel } from "./model";
 import { Panel } from "./ui";
-import { PipelineLink } from "./pipeline-link";
 
 type StageId = "candidate" | "shadow" | "canary10" | "canary50" | "live";
 
 const STAGES: { id: StageId; label: string; rule: string }[] = [
   { id: "candidate", label: "Candidate", rule: `Golden gate: precision ≥ ${fmtPct(POLICY.minPrecision)}, coverage ≥ ${fmtPct(POLICY.minCoverage)}` },
   { id: "shadow", label: "Shadow", rule: `Runs silently until ≥ ${POLICY.shadowMin} would-serve answers` },
-  { id: "canary10", label: "Canary 10%", rule: `≥ ${POLICY.auditsPerStage} audits to advance (15 in the simulation)` },
-  { id: "canary50", label: "Canary 50%", rule: `≥ ${POLICY.auditsPerStage} audits to advance (15 in the simulation)` },
+  { id: "canary10", label: "Canary 10%", rule: `≥ ${POLICY.auditsPerStage} audits to advance` },
+  { id: "canary50", label: "Canary 50%", rule: `≥ ${POLICY.auditsPerStage} audits to advance` },
   { id: "live", label: "Live", rule: "Serves every request it is sure about" },
 ];
 
@@ -36,7 +35,7 @@ function VersionChip({ v, exit, faulty }: { v: Version; exit?: boolean; faulty?:
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.85 }}
       transition={{ duration: 0.6, ease: EASE }}
-      title={`v${v.id}: ${stateLabel(v)}${v.eval.precision != null ? `, golden precision ${fmtPct(v.eval.precision)}` : ""}, trained day ${v.day}${faulty ? " (demo fault injected)" : ""}`}
+      title={`v${v.id}: ${stateLabel(v)}${v.eval.precision != null ? `, golden precision ${fmtPct(v.eval.precision)}` : ""}, trained day ${v.day}${faulty ? " (fault injected)" : ""}`}
       className={cn(
         "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 font-mono text-[12.5px] font-semibold",
         exit
@@ -82,7 +81,7 @@ function ExitBin({ icon: Icon, label, rule, items, tone, className }: { icon: Lu
   );
 }
 
-export function Pipeline({ versions, faultId, demoLink }: { versions: Version[]; faultId?: number | null; demoLink?: boolean }) {
+export function Pipeline({ versions, faultId }: { versions: Version[]; faultId?: number | null }) {
   const byStage = new Map<StageId, Version[]>(STAGES.map((s) => [s.id, []]));
   for (const v of versions) {
     const s = stageOf(v);
@@ -172,7 +171,6 @@ export function Pipeline({ versions, faultId, demoLink }: { versions: Version[];
           <ExitBin icon={Archive} tone="muted" label="Retired" rule="Replaced by a newer version" items={retired} />
         </div>
       </LayoutGroup>
-      {demoLink && <PipelineLink />}
     </Panel>
   );
 }

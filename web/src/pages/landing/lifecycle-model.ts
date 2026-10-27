@@ -352,7 +352,7 @@ export const SCENARIOS: Scenario[] = [
     summary: "A night produces an adapter that is worse on live traffic than it looked.",
     path: ["school", "golden", "shadow", "canary", "rollback"],
     notes: {
-      school: "A night trains a candidate that is worse on live traffic. The simulator's corrupted deploy is one way to make one.",
+      school: "A night trains a candidate that is worse on live traffic.",
       golden: `It could have stopped here: below ${pct(N.min_precision)} precision on the held-out half, a candidate is rejected and never serves. This one passes.`,
       shadow: "It gets through shadow too.",
       canary: "At 10% of traffic, the teacher's audits start to disagree with it.",

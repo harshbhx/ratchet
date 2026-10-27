@@ -14,13 +14,13 @@ export interface StageOneItem {
   link: { label: string; href: string } | { label: string; chapter: string } | null;
 }
 
-const { repo, demo } = REAL.links;
+const { repo } = REAL.links;
 /** The video's counting link (from=judges), null while there is no video. */
 const video = JUDGES_VIDEO;
 
 /**
  * The Stage One checklist. Statuses follow `src/data/real.json`'s rules: Real only for what ran and can be checked, Measured for
- * numbers recomputed from saved answers, Simulation for the mock demo, Pending for what is built or recorded later.
+ * numbers recomputed from saved answers, Pending for what is built or recorded later.
  */
 export const STAGE_ONE: StageOneItem[] = [
   {
@@ -31,18 +31,11 @@ export const STAGE_ONE: StageOneItem[] = [
     link: { label: "Repository", href: `${repo}/blob/main/LICENSE` },
   },
   {
-    id: "demo",
-    requirement: "A working demo URL",
-    status: "simulation",
-    evidence: "Runs the real gateway code with mock models, so its numbers are simulation.",
-    link: { label: "Open demo", href: demo },
-  },
-  {
     id: "live-demo",
-    requirement: "A live demo that calls Token Factory",
+    requirement: "A live gateway that calls Token Factory",
     status: "real",
     evidence: "Deployed on Cloudflare Containers, in live mode, with spending caps. A request to it is answered by Nemotron 3 Ultra on Token Factory. No trained student is served yet, so the teacher answers every request.",
-    link: { label: "Open the live demo", href: LIVE_URL },
+    link: { label: "Open the live gateway", href: LIVE_URL },
   },
   {
     id: "runtime-call",
@@ -68,7 +61,7 @@ export const STAGE_ONE: StageOneItem[] = [
   },
   {
     id: "video",
-    requirement: "A demo video",
+    requirement: "A video",
     status: video ? "real" : "pending",
     evidence: video ? "Public on YouTube since 26 Oct 2026, 2 minutes 59 seconds." : "Not published yet. This row changes when the link exists.",
     link: video ? { label: "Watch the video", href: video } : null,

@@ -77,8 +77,7 @@ function toolRows(exam: "hard" | "bfcl"): Row[] {
 /**
  * "Watch it learn", the measured part: the same Nano 4B untrained, after round 1 and after round 2 on the two text-to-SQL exams,
  * with Ultra beside it as a reference, then the tool-calling adapter. Every figure is read from `exams.json` and `toolcall.json`
- * (`evidence/` holds the answers; tests fail if a file drifts) or `real-costs.json`. The ten-day simulation that follows is a
- * different thing, and stays labelled Simulation.
+ * (`evidence/` holds the answers; tests fail if a file drifts) or `real-costs.json`.
  */
 export function RealCurve() {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -91,7 +90,7 @@ export function RealCurve() {
     <div ref={ref} className="overflow-hidden rounded-[24px] border border-line bg-surface shadow-card">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3.5 sm:px-6">
         <RealBadge status="measured" />
-        <span className="text-[13px] text-ink-2">Real models, exact match against one reference query. Not the simulation.</span>
+        <span className="text-[13px] text-ink-2">Real models, exact match against one reference query.</span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2">

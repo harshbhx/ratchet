@@ -1,11 +1,9 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { motion, useInView, useReducedMotion } from "motion/react";
-import { CircleDashed, CloudCog, FlaskConical, Info, PowerOff, Radio, ServerCog, ShieldCheck, TrendingDown, type LucideIcon } from "lucide-react";
+import { CircleDashed, CloudCog, Info, PowerOff, Radio, ServerCog, ShieldCheck, TrendingDown, type LucideIcon } from "lucide-react";
 import { api, type CostReport, type Stats } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container } from "@/components/ui/section";
-import { SIM_COMMAND, SIM_COST_REPORT, SIM_DAYS, SIM_SOURCE } from "@/lib/sim";
 import { cn, fmtInt } from "@/lib/utils";
 import { codeParts, fmtDecade, fmtHours, fmtMoney, fmtRate, fmtSignedPct, fmtTokenPrice, recMeta, windowLabel } from "../../dashboard/economics-model";
 import {
@@ -20,12 +18,10 @@ import {
   outcomes,
   partWidths,
   rowText,
-  simulateLine,
   tellsTheStory,
   verdict,
   type Bill,
   type BarPart,
-  type BillSource,
   type MeterMark,
 } from "../bill-model";
 import { Chapter, ChapterHead, EASE, ExtLink, LINKS, Lead, Reveal } from "../shared";
@@ -46,8 +42,8 @@ const FILL: Record<BarPart["fill"], string> = {
 
 /**
  * GET /ratchet/cost once the chapter is near the screen, and again whenever a stats poll shows the traffic moved. The
- * last good report stays when a refresh fails; null on a static preview or a gateway older than v0.5, which leaves
- * the reference simulation on screen.
+ * last good report stays when a refresh fails; null on a static preview or a gateway older than v0.5, which shows
+ * the no-break-even note.
  */
 function useStoryCost(stats: Stats | null, near: boolean): CostReport | null {
   const [report, setReport] = useState<CostReport | null>(null);
@@ -86,31 +82,6 @@ function ReportText({ text }: { text: string }) {
         ),
       )}
     </>
-  );
-}
-
-function SourceToggle({ value, onChange, mock }: { value: BillSource; onChange: (s: BillSource) => void; mock: boolean }) {
-  const opts: Array<{ key: BillSource; label: string }> = [
-    { key: "gateway", label: mock ? "This gateway (mock)" : "This gateway" },
-    { key: "reference", label: "Reference run" },
-  ];
-  return (
-    <div role="group" aria-label="Whose numbers to show" className="inline-flex rounded-full border border-line bg-bg-sunken p-0.5">
-      {opts.map((o) => (
-        <button
-          key={o.key}
-          type="button"
-          aria-pressed={value === o.key}
-          onClick={() => onChange(o.key)}
-          className={cn(
-            "h-7 whitespace-nowrap rounded-full px-3 text-[12.5px] font-medium transition-colors",
-            value === o.key ? "bg-surface text-ink shadow-card" : "text-muted hover:text-ink",
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -432,18 +403,11 @@ export function HonestBill({ stats }: { stats: Stats | null }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const near = useInView(ref, { once: true, margin: "800px 0px 800px 0px" });
   const report = useStoryCost(stats, near);
-  const [choice, setChoice] = useState<BillSource | null>(null);
-  const source: BillSource = report ? (choice ?? (tellsTheStory(report) ? "gateway" : "reference")) : "reference";
-  const shown = source === "gateway" && report ? report : SIM_COST_REPORT;
-  const bill = billOf(shown);
-  const name = baselineName(bill.teacherModel);
-  const mock = stats?.mode === "mock";
-
-  const span = source === "gateway" ? windowLabel(shown) : null;
-  const sub =
-    source === "gateway"
-      ? `${fmtInt(shown.requests ?? 0)} requests on this gateway${span ? `, ${span.toLowerCase()}` : ""}.`
-      : `${fmtInt(shown.requests ?? 0)} support tickets over ${SIM_DAYS.length} days in the reference simulation.`;
+  const shown = report && tellsTheStory(report) ? report : null;
+  const bill = shown ? billOf(shown) : null;
+  const name = bill ? baselineName(bill.teacherModel) : "all-teacher";
+  const span = shown ? windowLabel(shown) : null;
+  const sub = shown ? `${fmtInt(shown.requests ?? 0)} requests on this gateway${span ? `, ${span.toLowerCase()}` : ""}.` : "";
 
   return (
     <Chapter id="bill" className="border-t border-line">
@@ -481,8 +445,8 @@ export function HonestBill({ stats }: { stats: Stats | null }) {
         <Reveal className="mt-12">
           <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">The real bill so far</h3>
           <p className="mb-4 mt-1 max-w-[70ch] text-[13px] leading-relaxed text-muted">
-            Measured: what the teacher's labels cost for each round and what one call costs at list prices. Live: the demo's own savings
-            counter. Break-even and GPU-hours have no real run behind them yet, so they follow, labelled Simulation.
+            Measured: what the teacher's labels cost for each round and what one call costs at list prices. Live: this gateway's own savings
+            counter. Break-even and GPU-hours appear below once this gateway has recorded endpoint hours.
           </p>
           <RealCostTiles stats={stats} />
           <PrecisionFact className="mt-4" />
@@ -490,68 +454,42 @@ export function HonestBill({ stats }: { stats: Stats | null }) {
 
         <Reveal className="mt-14">
           <h3 className="mb-4 text-[15px] font-semibold tracking-[-0.01em] text-ink">Break-even and GPU-hours</h3>
-          <div className="overflow-hidden rounded-[24px] border border-line bg-surface shadow-card">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-line px-4 py-3.5 sm:px-6">
-              <div className="flex flex-wrap items-center gap-2">
-                {source === "reference" ? (
-                  <Badge tone="outline">
-                    <FlaskConical aria-hidden /> Simulation · reference run
-                  </Badge>
-                ) : mock ? (
-                  <Badge tone="outline">
-                    <FlaskConical aria-hidden /> Simulation (mock models) · this gateway
-                  </Badge>
-                ) : (
-                  <Badge tone="good">
-                    <Radio aria-hidden /> Live · this gateway
-                  </Badge>
-                )}
+          {shown && bill ? (
+            <div className="overflow-hidden rounded-[24px] border border-line bg-surface shadow-card">
+              <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3.5 sm:px-6">
+                <Badge tone="good">
+                  <Radio aria-hidden /> Live · this gateway
+                </Badge>
                 <span className="font-mono text-[12px] text-muted">GET /ratchet/cost</span>
               </div>
-              {report && <SourceToggle value={source} onChange={setChoice} mock={mock} />}
-            </div>
 
-            <div aria-live="polite" className="sr-only">
-              {source === "gateway" ? "Showing this gateway's cost report." : "Showing the reference simulation's cost report."}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-              <div className="border-b border-line p-4 sm:p-6 lg:border-b-0 lg:border-r">
-                <Bills key={source} bill={bill} name={name} sub={sub} />
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+                <div className="border-b border-line p-4 sm:p-6 lg:border-b-0 lg:border-r">
+                  <Bills bill={bill} name={name} sub={sub} />
+                </div>
+                <div className="p-4 sm:p-6">
+                  <BreakEven bill={bill} />
+                </div>
               </div>
-              <div className="p-4 sm:p-6">
-                <BreakEven key={source} bill={bill} />
+
+              <div className="border-t border-line p-4 sm:p-6">
+                <Recommendation bill={bill} />
               </div>
-            </div>
 
-            <div className="border-t border-line p-4 sm:p-6">
-              <Recommendation bill={bill} />
-            </div>
-
-            <div className="space-y-3 border-t border-line bg-surface-2/60 px-4 py-4 sm:px-6">
-              <Prices report={shown} />
-              {source === "reference" ? (
-                <>
-                  <p className="text-[12.5px] leading-relaxed text-muted">
-                    {SIM_SOURCE} The simulator keeps the student endpoint up 24 hours a day and times each night's training job (simulation
-                    assumptions). Not real model quality or a real bill.
-                  </p>
-                  <CodeBlock title="reproduce · terminal" copy={SIM_COMMAND} className="bg-surface [&_pre]:whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]">
-                    {tok.k("python")} {SIM_COMMAND.replace(/^python /, "")}
-                    {"\n"}
-                    {tok.c(`# ${simulateLine(SIM_COST_REPORT)}`)}
-                  </CodeBlock>
-                </>
-              ) : (
+              <div className="space-y-3 border-t border-line bg-surface-2/60 px-4 py-4 sm:px-6">
+                <Prices report={shown} />
                 <p className="text-[12.5px] leading-relaxed text-muted">
-                  {mock
-                    ? "This gateway runs mock models: its traffic and compute hours are simulated, so these are simulation numbers, not a real bill."
-                    : "Endpoint hours are what the operator recorded (python -m ratchet.cost endpoint up and down); an hour nobody recorded costs nothing here."}{" "}
-                  The same report: <code className="font-mono text-[12px] text-ink-2">python -m ratchet.cost report</code>.
+                  Endpoint hours are what the operator recorded (python -m ratchet.cost endpoint up and down); an hour nobody recorded costs
+                  nothing here. The same report: <code className="font-mono text-[12px] text-ink-2">python -m ratchet.cost report</code>.
                 </p>
-              )}
+              </div>
             </div>
-          </div>
+          ) : (
+            <p className="rounded-2xl border border-line bg-surface-2/60 p-5 text-[14px] leading-relaxed text-ink-2">
+              No break-even yet. It needs requests and endpoint hours recorded on this gateway, and none have been recorded. The numbers
+              above are the measured ones.
+            </p>
+          )}
         </Reveal>
       </Container>
     </Chapter>

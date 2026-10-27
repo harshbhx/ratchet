@@ -1,13 +1,10 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { motion } from "motion/react";
-import { CircleDashed, Info, Loader2, Play, ShieldCheck, Unplug } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CircleDashed, Info, ShieldCheck, Unplug } from "lucide-react";
 import type { Stats } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { WhoBadge } from "@/components/ui/who";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
 import { hasWindows, hostedThreshold } from "@/lib/who-model";
-import type { Busy, Notice } from "./controls";
 import { eventLabel, eventTone } from "./model";
 import {
   BREAKER_TONE,
@@ -19,16 +16,11 @@ import {
   fmtAgo,
   fmtClock,
   fmtSpan,
-  lastOutage,
   latestStandIns,
-  outageLeft,
   resilienceEvents,
   type BreakerView,
 } from "./resilience-model";
 import { BREAKER_ICON, DetailText, Empty, eventIcon, Panel, TONE_DOT, TONE_TEXT } from "./ui";
-
-/** Outage lengths the drill offers; the gateway accepts 5 to 300 s. */
-const DRILL_SECONDS = [30, 60, 120] as const;
 
 /** Re-render every `ms` while `active`, so a countdown moves; idle otherwise. */
 function useTick(active: boolean, ms = 1000): number {
@@ -181,137 +173,6 @@ function Fallbacks({ stats }: { stats: Stats }) {
   );
 }
 
-const NOTICE_TONE = {
-  good: "border-good/30 bg-good-soft/60",
-  warn: "border-warn/30 bg-warn-soft/70",
-  bad: "border-bad/30 bg-bad-soft/70",
-  info: "border-line bg-surface-2",
-};
-
-export interface OutageDemo {
-  busy: Busy;
-  /** Starts the drill; resolves to null once it runs (the countdown says the rest), or to why it could not start. */
-  onOutage: (seconds: number) => Promise<Omit<Notice, "id"> | null>;
-  onRunDay: () => void;
-  /** Called once when a running outage ends, so the panel reads the gateway again. */
-  onOutageEnd: () => void;
-  /** The gateway's clock minus the viewer's, in ms, measured when this viewer started a drill (0 otherwise). */
-  skewMs: number;
-}
-
-function OutageDrill({ stats, demo }: { stats: Stats; demo: OutageDemo }) {
-  const [seconds, setSeconds] = useState<number>(60);
-  const [notice, setNotice] = useState<Omit<Notice, "id"> | null>(null);
-  const outage = lastOutage(stats.events);
-  const live = outage != null && outageLeft(outage, Date.now() + demo.skewMs) > 0;
-  const now = useTick(live) + demo.skewMs;
-  const left = outageLeft(outage, now);
-  const running = left > 0;
-  const name = useId();
-  const ended = useRef<number | null>(null);
-  const breaker = breakerViews(stats.events).find((b) => b.name === "student");
-  const opened = outage != null && breaker?.changes.some((c) => c.to === "open" && c.ts != null && c.ts >= outage.start);
-
-  // Read the gateway once when the outage ends, so the panel shows what the probe finds.
-  const { onOutageEnd } = demo;
-  useEffect(() => {
-    if (!outage || running || ended.current === outage.until) return;
-    if (now / 1000 - outage.until < 60) {
-      ended.current = outage.until;
-      onOutageEnd();
-    }
-  }, [outage, running, now, onOutageEnd]);
-
-  const start = async () => {
-    setNotice(null);
-    setNotice(await demo.onOutage(seconds));
-  };
-  const any = demo.busy != null;
-
-  return (
-    <div className="rounded-xl border border-line p-3.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-md border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">Demo</span>
-        <p className="text-[13px] font-medium text-ink">Outage drill</p>
-      </div>
-      <p className="mt-1.5 max-w-[68ch] text-pretty text-[13px] leading-5 text-ink-2">
-        Take the student endpoint down, then send traffic: after five failed calls in a row (the default) its breaker opens, and the teacher answers the rest
-        without waiting on the endpoint. Once it is back, the first request after the breaker's wait probes it and closes it.
-      </p>
-
-      {running && outage ? (
-        <div className="mt-3 rounded-lg border border-bad/30 bg-bad-soft/50 px-3 py-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="flex items-center gap-2 text-[13px] font-medium text-ink">
-              <Unplug className="size-4 text-bad" aria-hidden />
-              Student endpoint down
-              <span className="font-normal text-ink-2 tabular">· {fmtSpan(left)} left</span>
-            </p>
-            <span className="text-[12px] text-muted tabular">until {fmtClock(outage.until)}</span>
-          </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface" aria-hidden>
-            <motion.div
-              className="h-full rounded-full bg-bad"
-              initial={false}
-              animate={{ width: `${(left / outage.seconds) * 100}%` }}
-              transition={{ duration: 0.9, ease: "linear" }}
-            />
-          </div>
-          <div className="mt-2.5 flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={demo.onRunDay} disabled={any} aria-busy={demo.busy === "day"}>
-              {demo.busy === "day" ? <Loader2 className="animate-spin" aria-hidden /> : <Play aria-hidden />}
-              {demo.busy === "day" ? "Running a day…" : "Run 1 day + night now"}
-            </Button>
-            <span className="text-[12.5px] text-ink-2">
-              {opened ? "The breaker opened; the teacher is answering for the student." : "Sends simulated traffic through the cascade while the endpoint is down."}
-            </span>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <div role="radiogroup" aria-label="Outage length" className="inline-flex rounded-full border border-line bg-bg-sunken p-0.5">
-            {DRILL_SECONDS.map((s) => (
-              <label
-                key={s}
-                className={cn(
-                  "relative flex h-7 cursor-pointer items-center rounded-full px-3 text-[12.5px] font-medium transition-colors",
-                  seconds === s ? "bg-surface text-ink shadow-card" : "text-muted hover:text-ink",
-                  any && "cursor-not-allowed opacity-60",
-                )}
-              >
-                <input type="radio" name={name} value={s} checked={seconds === s} disabled={any} onChange={() => setSeconds(s)} className="peer sr-only" />
-                {fmtSpan(s)}
-                <span className="pointer-events-none absolute inset-0 rounded-full peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--focus)]" />
-              </label>
-            ))}
-          </div>
-          <Button size="sm" variant="danger" onClick={() => void start()} disabled={any} aria-busy={demo.busy === "outage"}>
-            {demo.busy === "outage" ? <Loader2 className="animate-spin" aria-hidden /> : <Unplug aria-hidden />}
-            Take the student down
-          </Button>
-          {outage && !running && (
-            <span className="text-[12.5px] text-muted">
-              The last drill ended at <span className="tabular">{fmtClock(outage.until)}</span>.
-              {breaker?.state === "open" || breaker?.state === "half_open" ? " The breaker closes on the first successful probe: run another day." : ""}
-            </span>
-          )}
-        </div>
-      )}
-
-      <div role="status" aria-live="polite">
-        {/* Announced once when a drill starts; the visible countdown is not a live region, so it is not read every second. */}
-        {running && outage && <span className="sr-only">The student endpoint is down until {fmtClock(outage.until)}.</span>}
-        {notice && (
-          <div className={cn("mt-3 rounded-lg border px-3 py-2 text-[13px] leading-5", NOTICE_TONE[notice.tone])}>
-            <div className="font-medium text-ink">{notice.title}</div>
-            {notice.body && <div className="mt-0.5 text-ink-2">{notice.body}</div>}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function RecentFailures({ stats, nowMs }: { stats: Stats; nowMs: number }) {
   const events = resilienceEvents(stats.events);
   if (events.length === 0) {
@@ -350,10 +211,9 @@ function RecentFailures({ stats, nowMs }: { stats: Stats; nowMs: number }) {
 }
 
 /**
- * Circuit breakers, fallbacks and recent upstream failures, from /ratchet/stats only. In mock mode, the outage drill
- * (POST /ratchet/demo/student-outage) shows the student's breaker opening and closing.
+ * Circuit breakers, fallbacks and recent upstream failures, from /ratchet/stats only.
  */
-export function ResiliencePanel({ stats, demo }: { stats: Stats; demo?: OutageDemo }) {
+export function ResiliencePanel({ stats }: { stats: Stats }) {
   const views = breakerViews(stats.events);
   // A student-side breaker guards whatever answers student calls now: the hosted fallback while the endpoint is off.
   const student: StudentBadge = {
@@ -365,7 +225,7 @@ export function ResiliencePanel({ stats, demo }: { stats: Stats; demo?: OutageDe
   };
   const anyOpen = views.some((v) => v.state === "open" || v.state === "half_open");
   // Relative times move every 5 s while a breaker is open; otherwise each stats poll re-renders them.
-  const nowMs = useTick(anyOpen, 5000) + (demo?.skewMs ?? 0);
+  const nowMs = useTick(anyOpen, 5000);
 
   return (
     <Panel
@@ -394,8 +254,7 @@ export function ResiliencePanel({ stats, demo }: { stats: Stats; demo?: OutageDe
         <Fallbacks stats={stats} />
       </div>
 
-      <div className={cn("mt-3 grid gap-3", demo && "lg:grid-cols-2")}>
-        {demo && <OutageDrill stats={stats} demo={demo} />}
+      <div className="mt-3 grid gap-3">
         <div className="min-w-0 rounded-xl border border-line p-3.5">
           <p className="text-[13px] font-medium text-ink">Recent failures and recoveries</p>
           <div className="mt-3">

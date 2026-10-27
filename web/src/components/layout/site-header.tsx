@@ -258,8 +258,8 @@ export function SiteHeader() {
                 Dashboard
               </ButtonLink>
             )}
-            <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="sm" aria-label="Live demo, opens in a new tab">
-              Live demo <ArrowUpRight aria-hidden className="hidden lg:block" />
+            <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="sm" aria-label="Live gateway, opens in a new tab">
+              Live gateway <ArrowUpRight aria-hidden className="hidden lg:block" />
             </ButtonA>
             <button
               ref={menuButton}

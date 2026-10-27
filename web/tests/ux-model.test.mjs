@@ -7,7 +7,7 @@ register("./ts-hooks.mjs", import.meta.url);
 const s = await import("../src/pages/scout/scout-model.ts");
 const r = await import("../src/pages/landing/try-request-model.ts");
 
-test("chips: curated in live mode, the gateway's own in simulation, none before it answers", () => {
+test("chips: curated in live mode, the gateway's own on a mock gateway, none before it answers", () => {
   assert.deepEqual(s.chipQuestions(null), []);
   assert.deepEqual(s.chipQuestions({ mode: "live", examples: ["a", "b"], free_text: true }), s.LIVE_CHIPS);
   assert.deepEqual(s.chipQuestions({ mode: "mock", examples: ["a", "b"], free_text: false }), ["a", "b"]);
@@ -24,7 +24,7 @@ test("runs left comes only from the fields the status sends", () => {
   assert.equal(s.runsLeftToday(null), null);
   assert.equal(s.runsLeftText({ left: 1, max: 20, used: 19 }), "1 run left today");
   assert.equal(s.runsLeftText({ left: 5, max: 20, used: 15 }), "5 runs left today");
-  assert.match(s.runsLeftText({ left: 0, max: 20, used: 20 }), /No demo runs left/);
+  assert.match(s.runsLeftText({ left: 0, max: 20, used: 20 }), /No free runs left/);
 });
 
 test("a visitor's runs and budget leave out the judges' reserve", () => {

@@ -177,7 +177,7 @@
     <nav aria-label="Main">
       <ul>
         <li><a href="#how">How it works</a></li>
-        <li><a href="/scout">Scout demo</a></li>
+        <li><a href="/scout">Scout</a></li>
         <li><a href="/dashboard">Dashboard</a></li>
         <li><a href="https://github.com/harshbhx/ratchet/tree/main/docs">Docs</a></li>
         <li><a href="https://github.com/harshbhx/ratchet">GitHub</a></li>
@@ -196,7 +196,7 @@
         <h1 id="hero-title">Rent intelligence today. Own it tomorrow.</h1>
         <p class="sub">An <strong>OpenAI-compatible gateway</strong> that turns your own AI traffic into a Nemotron adapter <strong>you own</strong> (LoRA on NVIDIA's open Nano base), distilled only from open teachers whose licenses allow it. Built on NVIDIA Nemotron and Nebius.</p>
         <div class="ctas">
-          <a class="btn primary" href="/scout">Try the Scout demo</a>
+          <a class="btn primary" href="/scout">Try Scout</a>
           <a class="btn" href="/dashboard">Open the dashboard</a>
           <a class="btn" href="https://github.com/harshbhx/ratchet">View on GitHub</a>
         </div>
@@ -224,7 +224,7 @@ r = client.chat.completions.create(
     <section id="live" aria-labelledby="live-title" hidden>
       <div class="strip-head">
         <h2 id="live-title">From this gateway, right now</h2>
-        <span class="chip sim" id="modeChip">Simulation (mock models)</span>
+        <span class="chip sim" id="modeChip">Mock models</span>
         <span class="muted" style="font-size:13px" id="updated" aria-live="polite"></span>
       </div>
       <div class="tiles">
@@ -236,16 +236,6 @@ r = client.chat.completions.create(
       </div>
       <p class="note" id="liveNote">Read from <code>GET /ratchet/stats</code>, refreshed every 15 seconds. Details on the <a href="/dashboard">dashboard</a>.</p>
     </section>
-
-    <div class="panel simbox" role="group" aria-labelledby="sim-title">
-      <h3 id="sim-title"><span class="chip sim">Simulation</span> What the 10-day simulation shows</h3>
-      <div class="simrow">
-        <div><div class="v">98%</div><div class="l">of requests answered by the student by day 3</div></div>
-        <div><div class="v">85–87%</div><div class="l">cost saved vs all-teacher at steady state</div></div>
-        <div><div class="v">41%</div><div class="l">audited precision of a corrupted v3 deploy, which was rolled back automatically</div></div>
-      </div>
-      <p class="note">Simulation, mock models. Source: <code>python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3</code> (seed 7, 2,000 tickets a day, corrupted deploy of v3). Mock models show how the loop behaves, not real model quality.</p>
-    </div>
 
     <!-- How it works -->
     <section id="how" aria-labelledby="how-title">
@@ -386,7 +376,7 @@ r = client.chat.completions.create(
 
     <!-- Scout -->
     <section aria-labelledby="scout-title">
-      <p class="eyebrow">Scout, a multi-agent demo</p>
+      <p class="eyebrow">Scout, a multi-agent research app</p>
       <h2 id="scout-title">Ratchet on real agent traffic</h2>
       <p class="lead">Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two agents make many narrow, repeated calls, so Ratchet moves them to the student. The open-ended planning and writing stay on Ultra.</p>
       <div class="five">
@@ -397,8 +387,8 @@ r = client.chat.completions.create(
         <div class="card agent"><div class="tag"><span class="chip sim">Pinned to Ultra</span></div><h3>Writer</h3><p>Writes the final answer with citations.</p><p class="calls muted"><code>research-write</code></p></div>
       </div>
       <div class="scout-cta">
-        <a class="btn primary" href="/scout">Try the Scout demo</a>
-        <span class="muted" style="font-size:14px">Without API keys, Scout runs on mock models and simulated search results, and says so.</span>
+        <a class="btn primary" href="/scout">Try Scout</a>
+        <span class="muted" style="font-size:14px">Without API keys, Scout runs on mock models and example search results, and says so.</span>
       </div>
     </section>
 
@@ -418,7 +408,7 @@ r = client.chat.completions.create(
             <tr><td>Student</td><td>Nemotron 3 Nano 4B + LoRA with vLLM <span class="muted">(built for a Nebius Serverless Endpoint; scripted, ready to run)</span></td></tr>
             <tr><td>Night School</td><td>Nebius Serverless Jobs <span class="muted">(scripted, ready to run)</span></td></tr>
             <tr><td>Storage</td><td>Nebius Object Storage <span class="muted">(dataset and adapters; scripted, ready to run)</span></td></tr>
-            <tr><td>Search</td><td>Tavily <span class="muted">(Scout demo only)</span></td></tr>
+            <tr><td>Search</td><td>Tavily <span class="muted">(Scout only)</span></td></tr>
           </tbody>
         </table>
       </div>
@@ -427,18 +417,16 @@ r = client.chat.completions.create(
     <!-- Quick start -->
     <section aria-labelledby="qs-title">
       <p class="eyebrow">Quick start</p>
-      <h2 id="qs-title">Run the whole loop locally</h2>
-      <p class="lead">No API keys. About a minute. It uses mock models, so it shows how the loop behaves, not real model quality.</p>
+      <h2 id="qs-title">Run it locally</h2>
+      <p class="lead">No API keys. About a minute. It uses mock models, so its numbers are not measured.</p>
       <div class="panel codecard">
         <div class="cap"><span>bash</span><span>from the repo root</span></div>
 <pre tabindex="0" aria-label="Quick start commands"><code>pip install -e ".[dev]"
-python -m sim.simulate --days 10 \
-    --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn \
     ratchet.gateway:app --port 8000
 pytest -q</code></pre>
       </div>
-      <p class="note">The second command runs the full loop with a corrupted deploy. The third serves this page, the dashboard and Scout at <code>http://localhost:8000</code>. Live mode on Token Factory and Nebius is in the <a href="https://github.com/harshbhx/ratchet/tree/main/docs">docs</a>.</p>
+      <p class="note">The second command serves this page, the dashboard and Scout at <code>http://localhost:8000</code>. Live mode on Token Factory and Nebius is in the <a href="https://github.com/harshbhx/ratchet/tree/main/docs">docs</a>.</p>
     </section>
 
   </div>
@@ -476,7 +464,7 @@ pytest -q</code></pre>
     $("sLive").style.fontSize = live ? "" : "18px";
     $("sReq").textContent = (Number(t.requests) || 0).toLocaleString("en-US");
     const chip = $("modeChip");
-    if (s.mode === "mock") { chip.textContent = "Simulation (mock models)"; chip.className = "chip sim"; }
+    if (s.mode === "mock") { chip.textContent = "Mock models"; chip.className = "chip sim"; }
     else { chip.textContent = "Live traffic"; chip.className = "chip live"; }
     $("updated").textContent = "updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     strip.hidden = false;

@@ -30,7 +30,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "start",
     label: "The 90-second path",
     tourTitle: "Start here",
-    tour: "Three clicks show the whole idea: send a request, watch a bad deploy roll back on the simulation demo, then read what is real.",
+    tour: "Three clicks show the whole idea: send a request, read the exam scores, then read what is real.",
   },
   {
     id: "exams",
@@ -45,7 +45,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     label: "What's real",
     pinned: true,
     tourTitle: "What is real, and what is not",
-    tour: "Every claim has one status: real, measured, simulation, pending or ready to run. The exam results are measured and can be recomputed from the saved answers.",
+    tour: "Every claim has one status: real, measured, pending or ready to run. The exam results are measured and can be recomputed from the saved answers.",
   },
   {
     id: "client",
@@ -115,7 +115,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "inside",
     label: "Savings receipts",
     tourTitle: "The bill: savings receipts",
-    tour: "Each day gets a receipt over every request's cost, chained to the day before. On the live gateway these are its own numbers; on the simulation they are simulation.",
+    tour: "Each day gets a receipt over every request's cost, chained to the day before. On the live gateway these are its own numbers.",
   },
   {
     id: "watch",
@@ -136,14 +136,14 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "inside",
     label: "Resilience",
     tourTitle: "When a model fails",
-    tour: "Breakers stop calling a failing model and the teacher answers meanwhile. The outage drill shows it in the demo.",
+    tour: "Breakers stop calling a failing model and the teacher answers meanwhile. The log shows each breaker change.",
   },
   {
     id: "cost",
     group: "inside",
     label: "Cost",
     tourTitle: "The honest bill",
-    tour: "The same traffic priced per token and by GPU-hours paid. At demo volume a dedicated GPU does not pay, and the report says so.",
+    tour: "The same traffic priced per token and by GPU-hours paid. At this volume a dedicated GPU does not pay, and the report says so.",
   },
   {
     id: "check",
@@ -164,7 +164,7 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     group: "check",
     label: "Limits and links",
     tourTitle: "Honest limits",
-    tour: "What this is not yet, and where to find the code, the docs and the demo.",
+    tour: "What this is not yet, and where to find the code, the docs and the live gateway.",
   },
 ];
 
