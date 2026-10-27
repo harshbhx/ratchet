@@ -1,0 +1,7 @@
+[cold] issuing the start command now
+[cold] command returned after 13.9 s, endpoint <redacted>
+[cold] endpoint state PROVISIONING at 15.2 s
+[cold] endpoint state STARTING at 51.8 s
+[cold] endpoint state IMAGE_PULLING at 85.7 s
+[cold] endpoint state RUNNING at 268.8 s
+GET /v1/models never succeeded

@@ -432,19 +432,48 @@ def test_not_built_yet_matches_the_prd():
 
 NEBIUS_OVERCLAIMS = (
     "hosted on nebius end to end",
+    "hosted on nebius",
     "the demo runs on nebius",
+    "the demo is served from nebius",
     "served on nebius",
+    "served on nebius in production",
+    "in production on nebius",
+    "production serving on nebius",
     "not on nebius",
     "outside nebius",
+    "model you own",
 )
 
 
 @pytest.mark.req("NFR-70")
 def test_nebius_claims_stay_within_what_ran():
-    """Training ran once on Nebius (27 Oct 2026); serving there, hosting the site or demo there and endorsements are unclaimed."""
-    for rel in ("README.md", "docs/WHERE_IT_RUNS.md", "web/src/data/real.json"):
+    """Training ran once on Nebius and the student was served once there for a speed test (27 Oct 2026).
+
+    Serving the demo from Nebius, hosting the site or demo there, production serving and endorsements are unclaimed.
+    """
+    for rel in (
+        "README.md",
+        "docs/WHERE_IT_RUNS.md",
+        "web/src/data/real.json",
+        "docs-site/src/content/docs/guides/for-judges.mdx",
+    ):
         text = _read(rel).lower()
         for phrase in NEBIUS_OVERCLAIMS:
             assert phrase not in text, (rel, phrase)
-    assert "borrowed gpu" in _read("README.md").lower()
-    assert "Nebius AI Cloud" in _read("README.md") and "L40S" in _read("README.md")
+    readme = _read("README.md")
+    assert "borrowed gpu" in readme.lower()
+    assert "Nebius AI Cloud" in readme and "L40S" in readme
+    # The measured endpoint test is stated, linked, and kept apart from the demo.
+    for rel in ("README.md", "docs/WHERE_IT_RUNS.md", "docs-site/src/content/docs/guides/for-judges.mdx", "AGENTS.md"):
+        text = _read(rel)
+        assert "evidence/student-endpoint-nebius" in text, rel
+        assert "not connected" in text.lower(), rel
+    assert "student-endpoint-nebius" in _read("web/src/data/real.json")
+    # The old "has not run" wording about the endpoint is gone.
+    for rel in ("README.md", "docs/WHERE_IT_RUNS.md", "AGENTS.md", "docs-site/src/content/docs/guides/what-is-ratchet.mdx"):
+        text = _read(rel).lower()
+        assert "serving on a nebius endpoint has not happened" not in text, rel
+        assert "the student endpoint and the vm kit have not" not in text, rel
+        assert "it has not run yet" not in text, rel
+    # What is still unrun stays unclaimed.
+    assert "the vm kit and the nightly loop's job have not" in _read("docs/WHERE_IT_RUNS.md").lower()

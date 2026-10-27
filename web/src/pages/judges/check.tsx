@@ -69,6 +69,7 @@ export function SponsorsChapter() {
         { text: "A text-to-SQL adapter trained on a borrowed GPU, and the round-2 recipe retrained on a Nebius L40S (Serverless Job)", status: statusOf("adapter-training") },
         { text: "Its exam result", status: statusOf("exam-result") },
         { text: "The adapter and its data on Hugging Face", status: statusOf("hf-publish") },
+        { text: "Served once on a Nebius endpoint for a speed test", status: statusOf("student-endpoint-test") },
         { text: "Serving it on a Nebius endpoint through the gateway", status: statusOf("gateway-live") },
       ],
     },
@@ -126,7 +127,7 @@ export function SponsorsChapter() {
 const LIMITS = [
   "The adapters are small (Nemotron 3 Nano 4B, LoRA) and the published ones were trained on a borrowed GPU; the round-2 recipe was also retrained once on Nebius AI Cloud. At a 95% precision bar the text-to-SQL student answers 1 of 86 questions on exam 1 and none on exam 2, so it does not replace the teacher.",
   "The main site's dashboard and chapters read the live gateway: its numbers come from real Token Factory calls, its teacher answers every request, and its ledger lives in the container's /tmp, so a restart empties it. Every number on the separate simulation demo comes from mock models (simulation).",
-  "The gateway's live mode runs on Nebius Token Factory (a smoke run and the live demo). The public demo has no student endpoint yet, so the teacher answers every request; the student endpoint and the nightly loop's jobs are scripted and tested offline, ready to run with make nebius-plan, and the nightly loop itself is still simulated. The web front end and the live demo run on Cloudflare.",
+  "The gateway's live mode runs on Nebius Token Factory (a smoke run and the live demo). The public demo has no student endpoint yet, so the teacher answers every request; the student was served once, by hand, on a Nebius endpoint for a speed test (then deleted), the nightly loop's jobs are scripted and tested offline, ready to run with make nebius-plan, and the nightly loop itself is still simulated. The web front end and the live demo run on Cloudflare.",
   "Scout's recorded live runs were all answered by the teacher; no trained student has served a Scout call. The Scout demo page runs on a mock research world unless the gateway is live.",
   "The ledger is a single SQLite file, written by one gateway process.",
   "The simulation demo is shared: every visitor sees and changes the same simulated state.",

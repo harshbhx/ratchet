@@ -1,0 +1,61 @@
+{
+ "made": "2026-10-27",
+ "what": "the student served once on a Nebius Serverless Endpoint for a speed test (cold start and latency); adapters only, base-model rows kept private; no accuracy scored",
+ "adapters_served": {
+  "sql-r2": "38f99d441e0527b75fdf8fd9d10acbf4473dcf70db7febe3ad73fccd631a6aa7 (the published round-2 adapter, not the Nebius-retrained one)",
+  "toolcall": "fde47de3913fdf14d29328a174b5a92411c3f058989017c7709b4c572db324b9"
+ },
+ "adapter_weights_note": "not in git; the hashes identify the exact weights served",
+ "files": [
+  {
+   "file": "data/prompts.jsonl",
+   "bytes": 26383,
+   "sha256": "72a1d83992144dcb70fa1f99ef5f3b8a1c5454c7079f1084c654217ebf998042"
+  },
+  {
+   "file": "results/attempt1_and_cached_restart.json",
+   "bytes": 1309,
+   "sha256": "a1a4de96c041a35fb649899d677b7646697ffa7213498e9641a2b547d4b06d7e"
+  },
+  {
+   "file": "results/attempt2_cold_start.log",
+   "bytes": 534,
+   "sha256": "c90c3b538416213b7da955275760e4e3520f816ad43e5354f8509ac76a53042b"
+  },
+  {
+   "file": "results/bench_adapters.json",
+   "bytes": 3761,
+   "sha256": "043bb24fd2ee36bdc81bee2eb96c315e383e2c23fbcec38883d0babd31eff871"
+  },
+  {
+   "file": "results/failed_attempt1.log",
+   "bytes": 299,
+   "sha256": "377d3b6912453e651a60b7730a791acf2c26c014e7b8770fb9f52279403ae4c3"
+  },
+  {
+   "file": "results/failed_attempt1_startup.json",
+   "bytes": 631,
+   "sha256": "834829cdfad3e7570dc6ece30eadbf19d1c6978e33e1eba88e456843b8df576e"
+  },
+  {
+   "file": "results/timeline.md",
+   "bytes": 5594,
+   "sha256": "446091070a8e4206b54ebd2ca785d8e2af0aca173578560e80d78ed14446a75c"
+  },
+  {
+   "file": "scripts/bench.py",
+   "bytes": 4910,
+   "sha256": "ae800c042f68a87e3cb3a5a6bf097fd74e8c3ec54a4b3c44ca5ae1ff5a312689"
+  },
+  {
+   "file": "scripts/common.py",
+   "bytes": 1957,
+   "sha256": "eff833998a857a9b5065c8af8b32f0d664e263e3c1f034708acf55fa32909573"
+  },
+  {
+   "file": "scripts/startup.py",
+   "bytes": 5343,
+   "sha256": "ce11c3448f6735ca8caa576c358cd91d716721fe298e0989a9b18c9f80000f52"
+  }
+ ]
+}

@@ -1,0 +1,47 @@
+# Timeline (plain words, from the operator's status file; endpoint ids redacted, base-model benchmark lines removed)
+
+# STATUS (plain words, no secrets)
+
+- Part 1 done: adapters in bucket (hashes verified), prompts, scripts written, endpoint create validated with --dry-run. Endpoint not created yet; waiting for the GPU gate.
+- 2026-10-27 17:57:22 India Standard Time  Part 2 gate: watching the retrain's jobs (read-only) until a GPU machine has started
+- 2026-10-27 19:06:07  HOLD (coordinator): only ONE machine at a time. No endpoint exists. Endpoint will not be created while any retrain job is active; waiting for all jobs to end, cancel or fail.
+- 2026-10-27 19:06:13 India Standard Time  Part 2 gate: watching the retrain's jobs (read-only) until a GPU machine has started
+- 2026-10-27 19:16:11  Paused: retrain smoke job <redacted> is RUNNING. Endpoint NOT created, nothing billing from this task. Waiting for the coordinator's go-ahead once the retrain is fully finished.
+- 2026-10-27 20:07:36  Hosting test postponed to 29 Oct morning (laptop off overnight). No endpoint exists. When resumed: use spot L40S (--preemptible).
+- 2026-10-27 22:00:57 IST  ENDPOINT STARTING NOW (attempt 1). It was meant to be a dry run; a setting did not pass through, so the endpoint really was created. The spot flags were in, so it was tolerated as the first real cold-start run.
+- 2026-10-27 22:01:03 India Standard Time  [cold] issuing the start command now
+- 2026-10-27 22:01:03 India Standard Time  [cold] command returned after 13.9 s, endpoint <redacted>
+- 2026-10-27 22:01:05 India Standard Time  [cold] endpoint state PROVISIONING at 15.2 s
+- 2026-10-27 22:01:41 India Standard Time  [cold] endpoint state STARTING at 51.8 s
+- 2026-10-27 22:02:15 India Standard Time  [cold] endpoint state IMAGE_PULLING at 85.7 s
+- 2026-10-27 22:05:18 India Standard Time  [cold] endpoint state RUNNING at 268.8 s
+- 2026-10-27 22:16:49 IST  Cause of ERROR at ~22:11: vLLM crashed at start because HF_HOME on the bucket mount left an empty (0 byte) config.json (HF download rename does not work on the bucket mount). Not a preemption. Fix: HF_HOME now on local disk (/tmp), VLLM_CACHE_ROOT stays on the bucket; the stale hf-cache objects in the bucket are left alone (unused). Broken endpoint deleted; recreating once.
+- 2026-10-27 22:16:58 IST  ENDPOINT STARTING NOW (attempt 2, cold)
+- 2026-10-27 22:16:58 India Standard Time  [cold] issuing the create command now
+- 2026-10-27 22:17:06 India Standard Time  [cold] command returned after 7.9 s, endpoint <redacted>
+- 2026-10-27 22:17:07 India Standard Time  [cold] endpoint state PROVISIONING at 8.6 s
+- 2026-10-27 22:18:11 India Standard Time  [cold] endpoint state STARTING at 72.9 s
+- 2026-10-27 22:19:00 India Standard Time  [cold] endpoint state IMAGE_PULLING at 121.7 s
+- 2026-10-27 22:21:46 India Standard Time  [cold] endpoint state STARTING at 287.4 s
+- 2026-10-27 22:21:51 India Standard Time  [cold] endpoint state RUNNING at 293.0 s
+- 2026-10-27 22:24:11 India Standard Time  [cold] first GET /v1/models OK at 432.5 s
+- 2026-10-27 22:24:11 India Standard Time  [cold] adapter sql-r2 load HTTP 200 in 0.8 s
+- 2026-10-27 22:24:12 India Standard Time  [cold] adapter toolcall load HTTP 200 in 0.7 s
+- 2026-10-27 22:24:50 India Standard Time  [cold] ready: RUNNING 293.0 s, models 432.5 s, adapters 434.0 s, first completion 471.9 s
+- 2026-10-27 22:26:01 IST  cold start ok (see results); running cold benchmark
+- 2026-10-27 22:27:08 India Standard Time  [bench cold] sql-r2 c=1: p50 0.9904 s p95 1.7393 s, 11.4 tok/s, 0.301 req/s, $0.683/1k, errors 1
+- 2026-10-27 22:27:21 India Standard Time  [bench cold] sql-r2 c=4: p50 1.2542 s p95 1.8919 s, 121.3 tok/s, 3.111 req/s, $0.0661/1k, errors 0
+- 2026-10-27 22:27:30 India Standard Time  [bench cold] sql-r2 c=16: p50 1.6334 s p95 3.9434 s, 276.3 tok/s, 7.059 req/s, $0.0291/1k, errors 0
+- 2026-10-27 22:27:53 India Standard Time  [bench cold] toolcall c=1: p50 0.9479 s p95 1.2551 s, 27.7 tok/s, 0.974 req/s, $0.2111/1k, errors 0
+- 2026-10-27 22:28:05 India Standard Time  [bench cold] toolcall c=4: p50 1.0489 s p95 1.306 s, 100.7 tok/s, 3.447 req/s, $0.0596/1k, errors 0
+- 2026-10-27 22:28:11 India Standard Time  [bench cold] toolcall c=16: p50 1.2303 s p95 2.525 s, 302.1 tok/s, 10.628 req/s, $0.0193/1k, errors 0
+- 2026-10-27 22:28:55 IST  cold bench done; stopping endpoint
+- 2026-10-27 22:32:14 IST  endpoint stopped (confirmed). Starting it again (cached start)
+- 2026-10-27 22:32:14 India Standard Time  [cached] issuing the start command now
+- 2026-10-27 22:32:15 India Standard Time  [cached] command returned after 0.6 s, endpoint <redacted>
+- 2026-10-27 22:32:15 India Standard Time  [cached] endpoint state STARTING at 1.2 s
+- 2026-10-27 22:33:46 India Standard Time  [cached] endpoint state IMAGE_PULLING at 91.8 s
+- 2026-10-27 22:36:31 India Standard Time  [cached] endpoint state STARTING at 256.6 s
+- 2026-10-27 22:36:42 India Standard Time  [cached] endpoint state RUNNING at 267.9 s
+- 2026-10-27 22:42:32 IST  Cached restart ERROR cause: vLLM torch-compile cache in VLLM_CACHE_ROOT on the bucket mount held a truncated (too-short) file written during the cold run, so loading it crashed. Same root cause as before (bucket mount does not write cache files reliably). Not a preemption. Not restarting; cached start time not measured. Stopping endpoint.
+- 2026-10-27 22:43:56 IST  FINAL: endpoint deleted (stopped one still has a 250 GiB disk), endpoint list empty, no jobs running. GPU time about 35 min, about $0.45 at list price. Cached start not measured. See results/SUMMARY.md

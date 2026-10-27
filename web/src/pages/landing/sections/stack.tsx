@@ -99,7 +99,7 @@ export function Stack() {
           title="Built on Nebius and NVIDIA."
           lead={
             <Lead>
-              Open Nemotron models for every model role. The teacher runs on Nebius Token Factory, and the round-2 adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job). The student endpoint is scripted and ready to run. The web front end and the live demo run on Cloudflare. The gateway itself does no inference, so it fits on a
+              Open Nemotron models for every model role. The teacher runs on Nebius Token Factory, and the round-2 adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job). The student was served once on a Nebius endpoint for a speed test; the demo is not connected to it. The web front end and the live demo run on Cloudflare. The gateway itself does no inference, so it fits on a
               small CPU machine.
             </Lead>
           }

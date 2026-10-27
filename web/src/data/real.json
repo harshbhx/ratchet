@@ -147,10 +147,29 @@
       "metrics": []
     },
     {
+      "id": "student-endpoint-test",
+      "claim": "The student served once on a Nebius Serverless Endpoint, for a speed test",
+      "status": "real",
+      "evidence": "On 27 Oct 2026 the student was served once, by hand, on a Nebius Serverless Endpoint: one preemptible L40S, vLLM v0.18.0, Nemotron 3 Nano 4B with two LoRA adapters loaded at runtime (the published round-2 text-to-SQL adapter and the tool-calling adapter). Cold start took about 7.2 minutes from create to ready. With 16 requests at once the median answer took 1.6 s (SQL adapter) and 1.2 s (tool-calling adapter). It measured speed only, on 30 ordinary prompts, not accuracy. It cost about $0.45 of GPU time (the Nebius bill decides). A restart was tried and crashed, so warm start was not measured. The endpoint was deleted afterwards. The public live demo is not connected to it: the teacher answers every live request.",
+      "check": {
+        "label": "Read the evidence folder",
+        "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius"
+      },
+      "paths": ["evidence/student-endpoint-nebius/"],
+      "date": "2026-10-27",
+      "facts": [
+        { "label": "Cold start", "value": "About 7.2 minutes from create to ready; both adapters loaded in about a second each" },
+        { "label": "16 requests at once, median", "value": "1.6 s (SQL adapter), 1.2 s (tool-calling adapter)" },
+        { "label": "GPU time", "value": "About 35 minutes in all, about $0.45 at list price" },
+        { "label": "Not measured", "value": "Accuracy, and the time to restart a stopped endpoint" }
+      ],
+      "metrics": []
+    },
+    {
       "id": "gateway-live",
-      "claim": "The student served on a Nebius Serverless Endpoint, and the nightly job",
+      "claim": "The demo served from a Nebius Serverless Endpoint, and the nightly job",
       "status": "not-run",
-      "evidence": "The public demo has no student endpoint yet, so the teacher answers every request. The Serverless Endpoint script and the nightly Night School job are tested offline and ready to run with make nebius-plan. One Nebius Serverless Job has run, by hand: the round-2 retraining on 27 Oct 2026 (see the adapter entry). The nightly loop itself is still simulated. Both published text-to-SQL rounds were trained on a borrowed GPU.",
+      "evidence": "The public demo is not connected to a student endpoint, so the teacher answers every request. The Serverless Endpoint script and the nightly Night School job are tested offline and ready to run with make nebius-plan. The student was served once on an endpoint, by hand, for a speed test (see the entry above), and that endpoint was deleted. One Nebius Serverless Job has run, by hand: the round-2 retraining on 27 Oct 2026 (see the adapter entry). The nightly loop itself is still simulated. Both published text-to-SQL rounds were trained on a borrowed GPU.",
       "check": {
         "label": "Print every command the Nebius path runs (it changes nothing)",
         "command": "make nebius-plan"
