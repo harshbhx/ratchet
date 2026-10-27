@@ -2,7 +2,7 @@
 
 Ratchet is a gateway that sits between your app and a large "teacher" model. A small "student" model, NVIDIA's open Nano base with a LoRA adapter you own, answers each request first. If it is unsure, the request goes to the teacher. Every teacher answer is stored with its license, and every night a new student is trained on those answers and released through a series of safety gates.
 
-This page describes the code in `ratchet/` as of v0.5.0 (which includes the work listed in [AGENTS.md](../AGENTS.md#current-status-oct-25-2026)). Product context is in [PRD.md](PRD.md); the reasoning behind each choice is in the [ADRs](adr/README.md).
+This page describes the code in `ratchet/` as of v0.5.0 (which includes the work listed in [AGENTS.md](../AGENTS.md#current-status-oct-27-2026)). Product context is in [PRD.md](PRD.md); the reasoning behind each choice is in the [ADRs](adr/README.md).
 
 Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.md); FR-, NFR- and INV- ids are requirement and invariant ids ([REQUIREMENTS.md](REQUIREMENTS.md)). A one-page overview is in [README.md](../README.md).
 

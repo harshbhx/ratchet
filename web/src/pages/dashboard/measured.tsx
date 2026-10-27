@@ -24,7 +24,7 @@ export function MeasuredResults() {
         The trained adapter scores {x2} to {x1} times the untrained model, on the strict exam
       </h2>
       <p className="mt-1.5 max-w-[68ch] text-[13.5px] leading-relaxed text-ink-2">
-        A query counts only if it returns exactly the reference rows. It was trained on a borrowed GPU, on synthetic data. At a 95%
+        A query counts only if it returns exactly the reference rows. The published adapter was trained on a borrowed GPU, on synthetic data. At a 95%
         precision bar it answers 1 of 86 questions on exam 1 and none on exam 2 by itself, so most traffic still goes to the teacher.
       </p>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">

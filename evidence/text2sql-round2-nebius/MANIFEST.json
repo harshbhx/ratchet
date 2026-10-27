@@ -1,0 +1,134 @@
+{
+ "made": "2026-10-27",
+ "what": "the round-2 recipe retrained on Nebius AI Cloud (one preemptible L40S, Serverless Job); adapter answers only",
+ "exam": "exam 1: evidence/text2sql-round1/data/golden.jsonl (172 rows); exam 2: evidence/text2sql-exam2/data/golden.jsonl (200 rows, sha256 b7634971cf6b0d79e64e30e4c16d1253fad65ab9a501a06edc6c9f8e70d69058)",
+ "adapter_model.safetensors_sha256": "68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5",
+ "adapter_weights_note": "40.5 MB, not in git; the hash identifies the exact weights the answers came from",
+ "files": [
+  {
+   "file": "adapter/adapter_config.json",
+   "bytes": 1175,
+   "sha256": "f80ce2a03e1d165b45f641bba03a2da888ea410eb2bfdb0b5b50de291e30d3e7"
+  },
+  {
+   "file": "adapter/adapter_sha256.txt",
+   "bytes": 116,
+   "sha256": "9b8471743a51e73987679d44ece94c9fe3ff431bc3e270e6a6709c3cc28fe96b"
+  },
+  {
+   "file": "adapter/run_info.json",
+   "bytes": 506,
+   "sha256": "c86a98395590db5935ba0e41b4424c32b91253a06bb1306c8cfcce69e39d0367"
+  },
+  {
+   "file": "answers/raw_exam1_nebius.jsonl",
+   "bytes": 108687,
+   "sha256": "a84454eede5c8668956ec9d5832ddd1370389f37b35eecb768d9a371874b12c7"
+  },
+  {
+   "file": "answers/raw_exam2_nebius.jsonl",
+   "bytes": 96389,
+   "sha256": "eb927afeab2a3d98419f99f383a22aebca1283bde7ec7a70c68a1fd47347dc4e"
+  },
+  {
+   "file": "data/run.sh",
+   "bytes": 7140,
+   "sha256": "5d615b6f56806e0faead79fac29014dbbccd9ee9729e16a8835e133d4a72edfd"
+  },
+  {
+   "file": "logs/attempts.json",
+   "bytes": 3171,
+   "sha256": "86b8224b59d01646aacc63953bafe7208af7c94c222b75b147a5cb4d8578a966"
+  },
+  {
+   "file": "logs/DONE.txt",
+   "bytes": 28,
+   "sha256": "195dbffa4d483ddcae804f7e5ec9ea693cf1c14e1d4ac2fe3dbf3a1a6d2c2f67"
+  },
+  {
+   "file": "logs/nvidia-smi-end.txt",
+   "bytes": 1689,
+   "sha256": "0ba9b2ae22cf13f034b2bae81c0131168f42ffa4bc36166ad4e0897b09f476d7"
+  },
+  {
+   "file": "logs/nvidia-smi.txt",
+   "bytes": 1689,
+   "sha256": "35df66286797d47402ca06ed698475fc60ad4e6c43809f3f5aa6eaf8be131009"
+  },
+  {
+   "file": "logs/pip-freeze.txt",
+   "bytes": 2534,
+   "sha256": "0b963b75e8b182fe1d40148d9adcf11341d3d91e339e22a8100b2e826832798b"
+  },
+  {
+   "file": "logs/run-1793110441.log",
+   "bytes": 2820,
+   "sha256": "22eafce08b11f6fca52be93d6717c1ada2f617c93902f09b349b7ec5388a2472"
+  },
+  {
+   "file": "logs/run-1793111137.log",
+   "bytes": 5866,
+   "sha256": "982373e0168a7580156af530357496d633f617fc683f0f87dba1efda234c5c3a"
+  },
+  {
+   "file": "logs/run-1793111522.log",
+   "bytes": 11786,
+   "sha256": "68712e2aae07f93a1a1cfa47a998229cdaa478c2470891f4ff56a3626294274b"
+  },
+  {
+   "file": "logs/run-1793112209.log",
+   "bytes": 3292,
+   "sha256": "e22a2943fbd5c572d472b880d1a3e63d0c6d4ddec1e84037593280b9d35a5122"
+  },
+  {
+   "file": "logs/run-1793113920.log",
+   "bytes": 6849,
+   "sha256": "6085b90d0e62d794e12650f7a28fcc33a4fb118a54506cdcc668941da61127b0"
+  },
+  {
+   "file": "logs/train-1793111137.log",
+   "bytes": 20407,
+   "sha256": "10f39661af93daa6c26b90178d5eb10b7bbc8743eba8ffb245f89f067da68d2a"
+  },
+  {
+   "file": "logs/train-1793111522.log",
+   "bytes": 34426,
+   "sha256": "7fa6fb9d53faa4c796af06fb31d7ae69543dd2d5607875849f9a9337ebf48e8d"
+  },
+  {
+   "file": "logs/train-1793112209.log",
+   "bytes": 84021,
+   "sha256": "be74a02dd520643284327e746acbe8cfecdd785494a5293799eaff0810845ba9"
+  },
+  {
+   "file": "logs/train-1793113920.log",
+   "bytes": 80146,
+   "sha256": "cf915675ce25b9164cfdc2e6fb1477bcb60466db32e5070912623e1549acc0cb"
+  },
+  {
+   "file": "README.md",
+   "bytes": 8318,
+   "sha256": "ddee4908ead0468435fc118bb0e4f046ae954366a6a2f64362bd5acea7b82290"
+  },
+  {
+   "file": "results/results_nebius.json",
+   "bytes": 4059,
+   "sha256": "b2cf008acc882903f7c2b05358412886ae9c5b86437f2d13926f495982fac851"
+  },
+  {
+   "file": "results/run_facts.json",
+   "bytes": 1755,
+   "sha256": "07d5a6190851491d3412a4c5845399ba745cda99aaf5e2f2a1cabe07c0bb7e8d"
+  },
+  {
+   "file": "score_nebius.py",
+   "bytes": 7515,
+   "sha256": "5e154ca508ef4e484587fe33f429ee9fef4004913e8f2011914a2d4284d875ab"
+  },
+  {
+   "file": "tally.py",
+   "bytes": 4209,
+   "sha256": "fd1d49f0e90fb2dcfdb0ec9a36c77e051ec34f9016e692a3e848821746953c15"
+  }
+ ]
+}

@@ -42,7 +42,7 @@ Three clocks run the place: one ticks for every order, one every few minutes to 
 
 ## How it really works
 
-The design in one picture. It shows the intended flow; the adapters so far were trained by hand on a borrowed GPU, and teacher calls run on Nebius Token Factory.
+The design in one picture. It shows the intended flow; the original adapters were trained by hand on a borrowed GPU, the round-2 recipe was retrained once by hand on Nebius AI Cloud, and teacher calls run on Nebius Token Factory.
 
 <figure>
   <picture>
@@ -154,7 +154,7 @@ Token Factory listed no fine-tuning or LoRA serving for Nemotron when this desig
 </Steps>
 
 <Aside type="caution" title="The GPU steps are scripted and ready to run">
-As of Oct 26, 2026, the teacher runs on Nebius Token Factory. Steps 2 and 6 to 8 (the student endpoint and the training job) are scripted and tested against mock models and fake HTTP transports, ready to run with `make nebius-plan` and `make nebius-up`; the public demo has no student endpoint yet, so the teacher answers every request. The `nebius ai` commands in `deploy/` follow the CLI reference. Live mode itself runs on the public demo, where every request is a real Token Factory call. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
+As of Oct 27, 2026, the teacher runs on Nebius Token Factory and the round-2 recipe was retrained once by hand as a Nebius Serverless Job (one L40S). Steps 2 and 6 to 8 (the student endpoint and the nightly training job) are scripted and tested against mock models and fake HTTP transports, ready to run with `make nebius-plan` and `make nebius-up`; the public demo has no student endpoint yet, so the teacher answers every request. The `nebius ai` commands in `deploy/` follow the CLI reference. Live mode itself runs on the public demo, where every request is a real Token Factory call. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
 </Aside>
 
 ### What a request leaves behind
@@ -346,7 +346,7 @@ Estimates only. The Nebius VM kit, if you host the demo on it: about $72.50 for 
 
 ### What runs on Nebius today?
 
-The teacher: it runs on Nebius Token Factory, and the public demo calls it for real. As of Oct 26, 2026 the GPU side (the student endpoint and the training job) is scripted and covered by offline tests with fake transports, ready to run with `make nebius-plan` and `make nebius-up` after the day-1 checks. The text-to-SQL and tool-calling adapters were trained on a borrowed GPU.
+The teacher: it runs on Nebius Token Factory, and the public demo calls it for real. As of Oct 26, 2026 the GPU side (the student endpoint and the training job) is scripted and covered by offline tests with fake transports, ready to run with `make nebius-plan` and `make nebius-up` after the day-1 checks. The original text-to-SQL and tool-calling adapters were trained on a borrowed GPU; the round-2 recipe was retrained once by hand on a Nebius Serverless Job on 27 Oct 2026.
 
 ## Related
 

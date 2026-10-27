@@ -316,7 +316,7 @@ flowchart LR
 </figure>
 
 <Aside type="caution" title="Scripted and tested offline">
-As of Oct 26, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), ready to run as a Nebius Serverless Job with `make nebius-up`. The three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a borrowed GPU, outside Night School. The day-1 checks (`scripts/day1_check.py`) come first.
+As of Oct 26, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), ready to run as a Nebius Serverless Job with `make nebius-up`. The three original adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU, outside Night School. On 27 Oct 2026 the round-2 recipe was retrained once, by hand, as a Nebius Serverless Job on one preemptible L40S; the nightly loop did not start it. The day-1 checks (`scripts/day1_check.py`) come first.
 </Aside>
 
 ## For engineers
@@ -393,7 +393,7 @@ Big enough for the certificate to mean something. With about 200 golden rows, pr
 
 ### Has a real adapter been trained yet?
 
-Three, outside Night School: two text-to-SQL rounds and one tool-calling round, all trained on a borrowed GPU (see [Text-to-SQL](/guides/text-to-sql/) and [Results](/guides/results/)). As of Oct 26, 2026, Night School's loop is tested in simulation and its live path offline, ready to run with `make nebius-up`; the first real night follows the day-1 checks.
+Three, outside Night School: two text-to-SQL rounds and one tool-calling round, all trained on a borrowed GPU; the round-2 recipe was later retrained once by hand on Nebius AI Cloud (see [Text-to-SQL](/guides/text-to-sql/) and [Results](/guides/results/)). As of Oct 26, 2026, Night School's loop is tested in simulation and its live path offline, ready to run with `make nebius-up`; the first real night follows the day-1 checks.
 
 ## Related
 

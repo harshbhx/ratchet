@@ -2,7 +2,7 @@
 
 There are two ways to run Ratchet: **mock** (local, no keys, about a minute) and **live** (real Nemotron on Nebius). The `nebius ai` commands in `deploy/` follow the Nebius CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026) and Nebius's L40S fine-tuning tutorial. They are tested offline and ready to run: run both scripts with `DRY_RUN=1` first, and check anything marked **verify on day 1** with `--help` before relying on it. `python scripts/day1_check.py` runs the checks.
 
-> **One command for the whole path:** `make nebius-plan` prints every step below (the CPU VM, the bucket, the student endpoint, the wiring and the smoke check) and changes nothing; `deploy/nebius/nebius.sh up --yes --with-student` runs them, with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`. Same status as everything here: scripted, tested offline, ready to run. [Where everything runs](WHERE_IT_RUNS.md) has the map and the costs.
+> **One command for the whole path:** `make nebius-plan` prints every step below (the CPU VM, the bucket, the student endpoint, the wiring and the smoke check) and changes nothing; `deploy/nebius/nebius.sh up --yes --with-student` runs them, with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`. Same status as everything here: scripted, tested offline, ready to run. One training job has run by hand (the round-2 retraining on 27 Oct 2026, evidence in `evidence/text2sql-round2-nebius/`); the student endpoint and the VM have not. [Where everything runs](WHERE_IT_RUNS.md) has the map and the costs.
 
 ## 1. Local mock mode
 
@@ -11,7 +11,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 1976 tests, ~120 s
+pytest -q                                                          # 1977 tests, ~120 s
 python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```

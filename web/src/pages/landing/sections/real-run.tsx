@@ -69,7 +69,7 @@ export function RealRun() {
           <p className="mt-5 max-w-[78ch] rounded-xl border border-line bg-surface-2 px-4 py-3 text-[13.5px] leading-relaxed text-ink-2">
             <span className="font-medium text-ink">The honest limit.</span> It does not replace the teacher yet: when we ask for 95% right, the student
             answers 1 of 86 questions on exam 1 and none on exam 2, and the gate sends the rest to the teacher, which is the gate doing its job. The strict exam has one reference
-            answer, so even the teacher scores {pct(e1.teacher.rate)} and {pct(e2.teacher.rate)}. Trained on a borrowed GPU.
+            answer, so even the teacher scores {pct(e1.teacher.rate)} and {pct(e2.teacher.rate)}. The published adapter was trained on a borrowed GPU.
           </p>
 
           <ToolCallBlock where="bottom" />

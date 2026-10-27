@@ -29,6 +29,8 @@ EXCLUDED_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "linkedin.com", "twitter.
 EXCLUDED_PARTS = ("judge", "<", "{", "$")
 OWN_DOMAIN = "ratchet.dualmindlab.tech"
 OWN_PATHS = (("github.com", "/harshbhx/"), ("huggingface.co", "/harshbhx/"))
+# Links to this repo's main branch are checked against the checkout, so a file added in the same change does not 404.
+REPO_MAIN = re.compile(r"^https://github\.com/harshbhx/ratchet/(?:tree|blob)/main/([^?#]*)(#.*)?$")
 ALIVE_ON = {401, 403, 405, 406, 429, 451, 999}
 UA = "Mozilla/5.0 (compatible; ratchet-link-check/1)"
 CACHE_TTL = 24 * 3600
@@ -151,6 +153,12 @@ def main() -> int:
         rel = f.relative_to(ROOT).as_posix()
         for no, url in extract(f):
             if url.startswith(SKIP_SCHEMES):
+                continue
+            on_main = REPO_MAIN.match(url)
+            if on_main:
+                problem = check_internal(ROOT / "README.md", on_main[1].rstrip("/") + (on_main[2] or ""))
+                if problem:
+                    failures.append(f"{rel}:{no}: {url}: {problem}")
                 continue
             if url.startswith(("http://", "https://")):
                 host = (urllib.parse.urlparse(url).hostname or "").lower()

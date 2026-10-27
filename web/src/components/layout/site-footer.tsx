@@ -100,7 +100,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
               {stats?.mode === "mock"
                 ? "Numbers on this page are simulation unless labelled Measured. "
                 : "Numbers from the gateway are its own traffic; reference runs are labelled Simulation and exam results Measured. "}
-              The adapters were trained on a borrowed GPU.
+              The published adapters were trained on a borrowed GPU.
             </p>
             <div className="mt-4">
               <GatewayStatus stats={stats} error={error} />

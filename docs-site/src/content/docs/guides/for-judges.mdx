@@ -87,7 +87,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Three rows: what runs for real (green), what is simulation (dashed outline) and what is scripted and ready to run (amber, dashed). The teacher side runs for real; the student side is scripted and tested offline, ready to run with `make nebius-up`. The two notes below say the same in words.
+**Reading this diagram.** Three rows: what runs for real (green), what is simulation (dashed outline) and what is scripted and ready to run (amber, dashed). The teacher side runs for real, and one hand-run Nebius training job has run; serving the student is scripted and tested offline, ready to run with `make nebius-up`. The two notes below say the same in words.
 
 <ul class="rt-key">
   <li class="ok">Real</li>
@@ -100,7 +100,7 @@ flowchart TB
 
 <div class="rt-callout rt-callout--note">
 
-**Real, as of Oct 26, 2026.** Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The adapters were trained on a borrowed GPU, and their results are read from their own results files. The code and its roughly 1,900 tests run with no GPU. The only live run on record is a 20-request smoke run (`evidence/live-smoke-2026-10-23`): the teacher answered everything, no student was served and nothing was audited, so it measures no savings. Since Oct 24, 2026 the public live demo runs in live mode, and every request there is a real Token Factory call.
+**Real, as of Oct 27, 2026.** Built on NVIDIA Nemotron and Nebius: the teacher runs on Nebius Token Factory, and the round-2 adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job). The web front end and the live demo run on Cloudflare. Real calls to the teacher, Nemotron 3 Ultra on Nebius Token Factory, built the text-to-SQL data on Oct 22, 2026. The original published adapters were trained on a borrowed GPU, and their results are read from their own results files. On 27 Oct 2026 the round-2 text-to-SQL recipe (the same 4,322 examples and settings: 4-bit QLoRA, rank 16, 2 epochs, the same library versions) was retrained on Nebius AI Cloud, by hand, as a Nebius Serverless Job on one preemptible (spot) L40S, with checkpoints in a Nebius Object Storage bucket so it resumed after spot interruptions and with the Mamba kernels built for the L40S. Training loss went from 0.346 to 0.088 and the new adapter's SHA-256 is `68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5`. It scored 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance); training took 28.6 minutes of GPU time (58.7 minutes wall clock across two spot interruptions); the whole Nebius effort, failed and interrupted attempts included, used 2.73 GPU-hours, about $2.16 at list prices (the Nebius bill decides) ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)). The code and its roughly 1,900 tests run with no GPU. The only live run on record is a 20-request smoke run (`evidence/live-smoke-2026-10-23`): the teacher answered everything, no student was served and nothing was audited, so it measures no savings. Since Oct 24, 2026 the public live demo runs in live mode, and every request there is a real Token Factory call.
 
 </div>
 
@@ -154,7 +154,7 @@ On `/dashboard` there click **Run 1 day + night** a few times, then **Break next
 ## Honest limits
 
 <Aside type="caution" title="As of Oct 26, 2026">
-- The public demo has no student endpoint yet, so the teacher answers every request; the student endpoint and Night School's jobs are scripted and tested offline, ready to run with `make nebius-up`. The adapters were trained on a borrowed GPU.
+- The public demo has no student endpoint yet, so the teacher answers every request; the student endpoint and the nightly loop's jobs are scripted and tested offline, ready to run with `make nebius-up`; the one Nebius job that has run was started by hand, and the nightly loop itself is still simulated. The original adapters were trained on a borrowed GPU.
 - Savings and precision figures on the story page, in the README and in most of these docs are **simulation**.
 - Precision means agreement with the teacher, not ground truth.
 - The redactor is pattern-based: names and street addresses are not caught yet.
