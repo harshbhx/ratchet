@@ -136,14 +136,17 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
           </div>
         </div>
 
-        <div className="grid gap-12 py-12 sm:py-16 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,2.6fr)] lg:gap-16">
-          <div className="max-w-sm">
+        <div className="space-y-12 py-12 sm:space-y-14 sm:py-16">
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between lg:gap-16">
+            <div className="max-w-xl">
             <Link to="/" aria-label="Ratchet home" className="inline-flex items-center rounded-lg">
               <Logo />
             </Link>
             <p className="mt-5 text-balance text-[22px] font-semibold leading-snug tracking-[-0.025em] text-ink">{TAGLINE}</p>
             <p className="mt-3 inline-flex max-w-full items-center rounded-full border border-line bg-surface/80 px-3 py-1 text-[12.5px] font-medium text-ink-2">{BUILT_ON}</p>
-            <p className="mt-4 text-pretty text-[13px] leading-relaxed text-muted">
+            </div>
+            <div className="max-w-md">
+            <p className="text-pretty text-[13px] leading-relaxed text-muted">
               {stats?.mode === "mock"
                 ? "This gateway runs mock models, so its numbers are not measured. Exam results are labelled Measured. "
                 : "Numbers from the gateway are its own traffic and exam results are labelled Measured. "}
@@ -168,8 +171,9 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
                 </a>
               )}
             </div>
+            </div>
           </div>
-          <nav aria-label="Footer" className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-4">
+          <nav aria-label="Footer" className="grid grid-cols-1 gap-x-8 gap-y-10 border-t border-line pt-10 sm:grid-cols-2 lg:grid-cols-4">
             {FOOTER_COLUMNS.map((col) => (
               <div key={col.title}>
                 <h2 className="font-mono text-[12px] uppercase tracking-[0.14em] text-muted">{col.title}</h2>
@@ -186,7 +190,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
         </div>
 
         <div className="flex flex-col gap-4 border-t border-line py-6 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-2xl space-y-1.5 text-[12.5px] leading-relaxed text-muted">
+          <div className="min-w-0 flex-1 space-y-1.5 text-[12.5px] leading-relaxed text-muted">
             <p>© {new Date().getFullYear()} Harsh Bhanushali · DualMind Labs. Code under Apache-2.0; model weights and data keep their own licenses.</p>
             <p>
               Built for the Nebius x NVIDIA Global AI Hackathon; not an official product of either company, and not affiliated with or endorsed by NVIDIA or Nebius. The
