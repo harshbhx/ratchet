@@ -41,7 +41,7 @@ export default function LandingPage() {
         <TryIt mode={stats?.mode ?? null} />
         <WhatsIn />
         <LiveStrip stats={stats} />
-        <Rent />
+        <Rent stats={stats} />
         <Catch />
         <Why />
         <How />
