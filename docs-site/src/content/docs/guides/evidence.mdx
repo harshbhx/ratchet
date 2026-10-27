@@ -37,7 +37,7 @@ Each piece also says plainly what it cannot prove. A stamp shows nobody changed 
 
 ## How it really works
 
-The evidence is written at fixed moments, by code that draws no random numbers and calls no model, so it never changes a release decision or a simulation number.
+The evidence is written at fixed moments, by code that draws no random numbers and calls no model, so it never changes a release decision.
 
 <Steps>
 
@@ -177,7 +177,7 @@ How many rows a certificate needs, from `stats.required_rows`:
 | 0.95 | 59 | 93 | 124 | 153 |
 | 0.97 | 99 | 157 | 208 | 257 |
 
-Only served held-out rows count, so certifying 95% with one wrong answer takes about `2 × 93 / coverage` golden rows. In the reference run, the training certificates' lower bounds go from 0.875 (46 of 48, v1) to 0.964 (129 of 130, v7) (simulation, mock models, seed 7).
+Only served held-out rows count, so certifying 95% with one wrong answer takes about `2 × 93 / coverage` golden rows.
 
 **Check it:**
 
@@ -248,7 +248,7 @@ The verifier never trusts the root, result or value written in the proof file; i
 
 ```bash
 curl -s localhost:8000/ratchet/versions/2/bom > bom.json
-curl -s "localhost:8000/ratchet/demo/sample-example?version=2" > ex.json                    # mock demo: a committed prompt
+# ex.json: the body of a request that was stored as an example (task and messages)
 curl -s "localhost:8000/ratchet/versions/2/proof?split=train" -H 'content-type: application/json' -d @ex.json > proof.json
 python -m ratchet.proof verify proof.json --bom bom.json --expect included
 curl -s localhost:8000/ratchet/versions/2/heldout > heldout.json
@@ -256,9 +256,9 @@ python -m ratchet.proof heldout heldout.json --bom bom.json   # OK: all N golden
 python -m ratchet.proof key --task ticket-triage --messages request.json                    # the key a request is stored under
 ```
 
-Add `--public-key <yours>` to `verify` and `heldout` to trust the signer, not just the document. The proof (`POST /ratchet/versions/{id}/proof`) and held-out (`GET /ratchet/versions/{id}/heldout`) endpoints need an admin key in live mode (`Authorization: Bearer $ADMIN_KEY`); the mock demo without admin keys leaves them open. They are admin-only on purpose: for a text someone can guess, a yes-or-no answer about the training set is a leak. The `sample-example` endpoint exists in mock mode only.
+Add `--public-key <yours>` to `verify` and `heldout` to trust the signer, not just the document. The proof (`POST /ratchet/versions/{id}/proof`) and held-out (`GET /ratchet/versions/{id}/heldout`) endpoints need an admin key in live mode (`Authorization: Bearer $ADMIN_KEY`); They are admin-only on purpose: for a text someone can guess, a yes-or-no answer about the training set is a leak.
 
-A proof is about log2 of the set's size in siblings. A held-out certificate for 133 golden rows against 1,288 training leaves is about 113 KB of JSON (mock demo after four simulated days).
+A proof is about log2 of the set's size in siblings. A held-out certificate for 133 golden rows against 1,288 training leaves is about 113 KB of JSON.
 
 **What it does not prove.** The proofs show the operator's binding commitment, signed at training time, to the dataset an adapter was trained and graded on. They do not show that the weights came from that dataset: an operator who signs one set and trains on another is not caught by a Merkle proof. A proof of absence also names the neighbouring training example's key and value hashes, so held-out certificates go to auditors, not to the public.
 
@@ -274,14 +274,12 @@ A proof is about log2 of the set's size in siblings. A held-out certificate for 
 - **a frontier** from 0.30 to 1.00 in steps of 0.01, and an advisory suggested threshold, which nothing applies: thresholds change only through Night School;
 - **a calibrated baseline:** the ratio of what the teacher really billed on audited answers to the token formula's estimate (which assumes 300 reasoning tokens, `RATCHET_TEACHER_REASONING_TOKENS`).
 
-In the seed-7 bad-deploy run (6 days of 1,500 requests), the live v1 replays 6,208 requests at 97.7% coverage and 99.2% precision at its threshold 0.5, and 100% coverage at 97.0% precision at 0.30 (simulation, mock models).
-
 **Check it:**
 
 ```bash
 curl -s "localhost:8000/ratchet/replay?threshold=0.4&audit_rate=0.05"     # what happened, and what would have
 curl -s "localhost:8000/ratchet/replay/frontier?target=0.97"               # thresholds 0.30 to 1.00, an advisory suggestion
-python -m sim.simulate --db sim.db && python -m ratchet.replay --db sim.db   # the same from a simulated run (simulation)
+python -m ratchet.replay --db ratchet.db                                   # the same offline, from a ledger file
 ```
 
 **What it does not prove.** The replay is an analysis of the ledger as it stands, not a signed document. Its interval is approximate and computed on the same traffic the operator is looking at, so it is never a certificate and never a release decision. An escalation answered under a client's own sampling parameters, or for more than one choice, gives no label. A request whose escalation failed outright was never logged, so it is not in the replay. It replays one version at a time, because each adapter's confidence scale is its own.
@@ -326,7 +324,7 @@ flowchart TB
 
 Every chat response carries its ledger row id in `X-Ratchet-Request-Id` and `ratchet.row_id`, so a client can later ask for a proof that its request is in that day's receipt. With API keys on, a key reads only its own receipts and proofs and an admin key reads all of them; live mode without any keys serves no receipts, because the leaves list every request's time, task and cost. The gateway-wide receipt also shows the day's savings by GPU-hours paid, which are often negative at low volume. That view is informational (billing uses the per-token view); the [cost report](/guides/cost-and-savings/) is what says when self-hosting does not pay.
 
-When the mock teacher's reasoning varies around 420 tokens instead of the formula's assumed 300, the receipts measure `R` at about 1.3 to 1.4 for `ticket-triage` and correct the baseline (simulation, mock models).
+When the teacher's real reasoning differs from the formula's assumed 300 tokens, the receipts measure the ratio `R` from audited answers and correct the baseline.
 
 **Check it:**
 
@@ -336,7 +334,6 @@ curl -s localhost:8000/ratchet/receipts/2 > r2.json                            #
 curl -s localhost:8000/ratchet/receipts/3/proof/3006 > p.json                  # a row id you saw (ratchet.row_id) is in it
 curl -s localhost:8000/ratchet/receipts/3/leaves > leaves.jsonl                # every leaf: recompute everything
 python -m ratchet.receipt verify r3.json --public-key <yours> --prev r2.json --proof p.json --rows leaves.jsonl
-python -m sim.simulate --receipts --teacher-reasoning-mean 420                 # the bound next to the true cost (simulation)
 python -m ratchet.live seal                                                    # live: seal every day that ended (hourly cron)
 ```
 
@@ -345,7 +342,7 @@ python -m ratchet.live seal                                                    #
 **What it does not prove.** Receipts make edits after sealing detectable and tie the baseline to audited teacher bills. They cannot prove the costs written at request time: reconcile the summed teacher spend (`totals.teacher_cost_nusd` over the days) with the Token Factory bill for the same API key. The interval is a normal approximation, and heavier-tailed real bills may need more than 30 audits. The chain shows that a receipt was changed; it does not stop an operator from withholding one, so clients should keep the receipts they receive. Request ids are the ledger's global row ids, so a client can infer the gateway's total volume between two of its own requests.
 
 <Aside type="caution" title="Not run on live traffic yet">
-As of Oct 26, 2026, no adapter has been signed and no day has been sealed on a live gateway; the GPU side is scripted and tested offline, ready to run with `make nebius-up`. Real teacher calls on Token Factory built the text-to-SQL data, but every BOM, certificate, proof, replay and receipt number quoted on this page comes from mock models (simulation). The formats, the signatures and the verifiers are tested offline.
+As of Oct 28, 2026, no adapter has been signed and no day has been sealed on a live gateway; the GPU side is scripted and tested offline, ready to run with `make nebius-up`. Real teacher calls on Token Factory built the text-to-SQL data, but no BOM, certificate, proof, replay or receipt has been produced on live traffic. The formats, the signatures and the verifiers are tested offline.
 </Aside>
 
 ## For engineers
@@ -375,7 +372,7 @@ As of Oct 26, 2026, no adapter has been signed and no day has been sealed on a l
 | `RATCHET_RECEIPT_MIN_AUDITS` | `30` | Audits a task needs in one receipt before its baseline is calibrated and billed |
 | `RATCHET_TEACHER_REASONING_TOKENS` | `300` | The formula's assumed teacher reasoning, which the replay and the receipts measure |
 
-Endpoints ([API](/reference/api/)): `GET /ratchet/bom` (the whole ledger's provenance), `GET /ratchet/versions/{id}/bom`, `GET /ratchet/bom/public-key` (always public), `GET /ratchet/versions/{id}/certificate`, `POST /ratchet/versions/{id}/proof?split=train` (admin), `GET /ratchet/versions/{id}/heldout` (admin), `GET /ratchet/replay`, `GET /ratchet/replay/frontier`, `GET /ratchet/receipts`, `GET /ratchet/receipts/{period}`, `GET /ratchet/receipts/{period}/proof/{request_id}`, `GET /ratchet/receipts/{period}/leaves`, and the mock-only `GET /ratchet/demo/sample-example`. See [API: committed training sets](/reference/api/#committed-training-sets), [ledger replay](/reference/api/#ledger-replay) and [savings receipts](/reference/api/#savings-receipts).
+Endpoints ([API](/reference/api/)): `GET /ratchet/bom` (the whole ledger's provenance), `GET /ratchet/versions/{id}/bom`, `GET /ratchet/bom/public-key` (always public), `GET /ratchet/versions/{id}/certificate`, `POST /ratchet/versions/{id}/proof?split=train` (admin), `GET /ratchet/versions/{id}/heldout` (admin), `GET /ratchet/replay`, `GET /ratchet/replay/frontier`, `GET /ratchet/receipts`, `GET /ratchet/receipts/{period}`, `GET /ratchet/receipts/{period}/proof/{request_id}`, `GET /ratchet/receipts/{period}/leaves`. See [API: committed training sets](/reference/api/#committed-training-sets), [ledger replay](/reference/api/#ledger-replay) and [savings receipts](/reference/api/#savings-receipts).
 
 Events: `integrity` (stored leaves or request rows no longer rebuild a signed root: the endpoint answers 500 and never serves a proof that would fail), `receipt_skipped` (a day's request rows were folded by retention before it was sealed). The runbook covers [checking a certificate](/reference/runbook/#checking-a-certificate) and [proving what an adapter was trained on](/reference/runbook/#proving-what-an-adapter-was-trained-on).
 
@@ -403,7 +400,7 @@ Not on the request path beyond logging a few values per request: no model call, 
 
 ### Has any of it run on real traffic?
 
-Not the signed documents on this page. As of Oct 26, 2026, the signed BOMs, proofs, certificates and receipts described here have been produced only by the mock gateway, the simulator and the tests. The real-model measurements are the text-to-SQL and tool-calling adapters' exams, scored by standalone scripts (see [Results](/guides/results/)). The live-run harness (`python -m ratchet.liverun`) has run its smoke mode once (20 requests on Oct 23, about $0.01, 0 students and 0 audits, so no savings number); its measured `run` mode has not run.
+Not the signed documents on this page. As of Oct 28, 2026, the signed BOMs, proofs, certificates and receipts described here have been produced only by the tests, with mock models. The real-model measurements are the text-to-SQL and tool-calling adapters' exams, scored by standalone scripts (see [Results](/guides/results/)). The live-run harness (`python -m ratchet.liverun`) has not run its measured mode.
 
 ## Related
 

@@ -97,7 +97,7 @@ flowchart TB
 ### E
 
 - **E-process and e-value**: a running measure of evidence against "precision is at least the floor"; the sequential canary rolls back at an e-value of 20 and the live alert fires at 100, however often they look. ([Release gate](/guides/release-gate/))
-- **Edge guard**: Caddy's opt-in `RATCHET_API_GUARD=guarded` in the Nebius VM kit, which blocks `/v1/*`, the demo controls and the admin API without the `X-Ratchet-Admin-Token` header. ([Host it on Nebius](/guides/host-on-nebius/))
+- **Edge guard**: Caddy's opt-in `RATCHET_API_GUARD=guarded` in the Nebius VM kit, which blocks `/v1/*`, the mock-only controls and the admin API without the `X-Ratchet-Admin-Token` header. ([Host it on Nebius](/guides/host-on-nebius/))
 - **Erasure**: removing stored examples for good, by client, end user, hash or text; the example's hash stays behind as a tombstone so it is never stored again. ([Security](/guides/security/))
 - **Escalation**: a request the student was not confident about, sent to the teacher; the teacher's answer is served and, if valid, stored as training data. ([Escalation and audits](/guides/escalation-and-audits/))
 
@@ -147,7 +147,7 @@ flowchart TB
 ### M
 
 - **Merkle root**: one hash that commits to a whole set; an adapter's BOM signs one over its training set and one over its golden set, and a savings receipt signs one over a day's request metadata. ([Evidence](/guides/evidence/))
-- **Mock mode**: running with simulated models, traffic and search, with no keys and no GPU; its numbers show how the loop behaves, not how good a real model is. ([Quickstart](/guides/quickstart/))
+- **Mock mode**: running with mock models and search, with no keys and no GPU, for tests and development; its numbers say nothing about how good a real model is. ([Quickstart](/guides/quickstart/))
 
 ### N
 
@@ -184,7 +184,7 @@ flowchart TB
 
 ### S
 
-- **Scout**: the multi-agent research demo: a planner and a writer pinned to the teacher, a web searcher, and many small triage and reader calls the student learns. ([Scout](/guides/scout/))
+- **Scout**: the multi-agent research tool: a planner and a writer pinned to the teacher, a web searcher, and many small triage and reader calls the student learns. ([Scout](/guides/scout/))
 - **Self-consistency (agreement)**: how many of the student's samples (3 by default) give the same answer, compared with the task's comparators. ([Confidence](/guides/confidence/))
 - **Serverless Endpoint**: a Nebius service that serves a container at a URL; Ratchet runs vLLM with the student there on one L40S, billed while it runs. ([Host it on Nebius](/guides/host-on-nebius/))
 - **Serverless Job**: a Nebius service that runs a container to completion; Night School trains each adapter in one, on one L40S. ([Host it on Nebius](/guides/host-on-nebius/))
@@ -211,9 +211,7 @@ flowchart TB
 
 ### W
 
-- **Warm-up**: in mock mode, simulated days and nights run at startup (`RATCHET_MOCK_WARMUP_DAYS`), so the demo opens with a trained student. ([Quickstart](/guides/quickstart/))
 - **Wilson bound**: an interval for a proportion that behaves well on small samples; the default canary rollback uses its upper bound, and it is valid for one look at a fixed sample. ([Release gate](/guides/release-gate/))
-- **Workload**: the kind of simulated traffic: `tickets`, `research`, `mixed`, `schema` or `tools`. ([Quickstart](/guides/quickstart/))
 
 ## For engineers
 

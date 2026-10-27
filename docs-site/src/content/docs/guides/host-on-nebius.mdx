@@ -1,9 +1,9 @@
 ---
 title: Host it on Nebius
-description: Every Nebius piece Ratchet uses and how they connect, then the steps to run the demo VM, the GPU endpoint and training, with costs.
+description: Every Nebius piece Ratchet uses and how they connect, then the steps to run the VM, the GPU endpoint and training, with costs.
 ---
 
-import { Steps, Tabs, TabItem, Aside, FileTree } from '@astrojs/starlight/components';
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
@@ -16,7 +16,7 @@ import FadeContent from '../../../components/ui/FadeContent.astro';
 <Summary>Ratchet's Nebius deploy kit runs it on one small CPU VM that does no model inference, calls its teacher, judge and hosted fallback on Token Factory, and rents an L40S GPU only while you serve or train the student, so GPU money is spent only when you decide to spend it.</Summary>
 
 <Aside type="tip" title="One command, and a map of where everything runs">
-Everything below is wrapped in one script. `make nebius-plan` prints every command and changes nothing; `deploy/nebius/nebius.sh up --yes` (with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`) creates the CPU VM, adds the GPU student endpoint only with `--with-student`, wires the VM's `.env` and runs a smoke check, and `down` stops the endpoint first and then deletes the VM. It is scripted and tested offline, **ready to run with `make nebius-plan` and `make nebius-up`**. Two Nebius GPU steps have run so far, by hand: the round-2 retraining on 27 Oct 2026 (a Serverless Job on one preemptible L40S, checkpoints in Object Storage) and, the same day, one speed test of the student on a Serverless Endpoint (one spot L40S, deleted afterwards; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)). The VM and the demo's connection to an endpoint have not run. The commands, the flags and the costs (estimates) are in [Where everything runs](/reference/where-it-runs/#one-command-to-host-it-all-on-nebius), which also says what runs where today.
+Everything below is wrapped in one script. `make nebius-plan` prints every command and changes nothing; `deploy/nebius/nebius.sh up --yes` (with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`) creates the CPU VM, adds the GPU student endpoint only with `--with-student`, wires the VM's `.env` and runs a smoke check, and `down` stops the endpoint first and then deletes the VM. It is scripted and tested offline, **ready to run with `make nebius-plan` and `make nebius-up`**. Two Nebius GPU steps have run so far, by hand: the round-2 retraining on 27 Oct 2026 (a Serverless Job on one preemptible L40S, checkpoints in Object Storage) and, the same day, one speed test of the student on a Serverless Endpoint (one spot L40S, deleted afterwards; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)). The VM and the live gateway's connection to an endpoint have not run. The commands, the flags and the costs (estimates) are in [Where everything runs](/reference/where-it-runs/#one-command-to-host-it-all-on-nebius), which also says what runs where today.
 
 ```bash
 make nebius-plan
@@ -48,7 +48,7 @@ The teacher runs on Nebius Token Factory. As of Oct 27, 2026 the student endpoin
 
 | Piece | Nebius product and size | What runs there | How it bills |
 |---|---|---|---|
-| Front room | Compute VM, platform `cpu-e2`, preset `2vcpu-8gb`, region `eu-north1` | Docker Compose with Caddy (`caddy:2.11.7-alpine`), the gateway (one uvicorn worker), a second gateway in mock mode for the simulation at `sim.<domain>` (capped at 1 vCPU and 1 GiB, no keys), the SQLite ledger in the `ratchet-data` volume at `/data/ratchet.db`, and cron | While it runs. A stopped VM keeps billing for its disk |
+| Front room | Compute VM, platform `cpu-e2`, preset `2vcpu-8gb`, region `eu-north1` | Docker Compose with Caddy (`caddy:2.11.7-alpine`), the gateway (one uvicorn worker), the SQLite ledger in the `ratchet-data` volume at `/data/ratchet.db`, and cron | While it runs. A stopped VM keeps billing for its disk |
 | Teacher, judge, hosted fallback | Token Factory | Nemotron 3 Ultra (`nvidia/Nemotron-3-Ultra-550b-a55b`), Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`), Nemotron 3 Nano 30B (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`) | Per token |
 | Student | Serverless Endpoint, platform `gpu-l40s-a`, preset `1gpu-8vcpu-32gb` | vLLM `v0.18.0` serving `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`, with LoRA adapters loaded at runtime | While it runs. A stopped endpoint is not billed for compute or its own storage |
 | Night School training | Serverless Job, platform `gpu-l40s-a` | `python -m ratchet.nightschool.train` (Transformers, PEFT and TRL), capped at 2 hours | While it runs |
@@ -67,7 +67,6 @@ flowchart TB
   subgraph vm["Nebius CPU VM · 2 vCPU, 8 GB"]
     direction TB
     caddy["Caddy<br/>HTTPS, edge guard"] ==> live["Live gateway<br/>SQLite ledger"]
-    caddy --> sim["Simulation<br/>gateway, mock"]
   end
   subgraph tf["Token Factory · in use"]
     teacher["Ultra: teacher<br/>Super: judge<br/>Nano 30B: fallback"]
@@ -84,7 +83,7 @@ flowchart TB
   vm -.-> tavily
   vm -.-> gpu
 
-  class user,dns,caddy,live,sim neutral
+  class user,dns,caddy,live neutral
   class pages,teacher ok
   class tavily outline
   class ep,job,bucket pending
@@ -94,7 +93,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Green is in use today: Cloudflare Pages serves the static site and these docs (the public demos run on Cloudflare Workers with Containers; the Nebius VM in this guide is scripted and tested offline, ready to run), and the teacher runs on Nebius Token Factory, paid per token. Amber and dashed is the GPU side, scripted and tested offline and ready to run with `make nebius-up` (the original adapters were trained on a borrowed GPU; one hand-run Serverless Job on 27 Oct retrained the round-2 recipe). Plain boxes are the CPU VM this guide sets up: Caddy in front, the live gateway with its SQLite ledger, and a second gateway in mock mode for the simulation at `sim.<domain>`. The thick arrow is the paid path every live request can take; the dotted ones are optional: Tavily only for live Scout runs, the endpoint only while you run it, and the training job only once the Night School cron is turned on.
+**Reading this diagram.** Green is in use today: Cloudflare Pages serves the static site and these docs (the live gateway runs on Cloudflare Workers with Containers; the Nebius VM in this guide is scripted and tested offline, ready to run), and the teacher runs on Nebius Token Factory, paid per token. Amber and dashed is the GPU side, scripted and tested offline and ready to run with `make nebius-up` (the original adapters were trained on a borrowed GPU; one hand-run Serverless Job on 27 Oct retrained the round-2 recipe). Plain boxes are the CPU VM this guide sets up: Caddy in front, the live gateway with its SQLite ledger. The thick arrow is the paid path every live request can take; the dotted ones are optional: Tavily only for live Scout runs, the endpoint only while you run it, and the training job only once the Night School cron is turned on.
 
 <ul class="rt-key">
   <li class="ok">In use</li>
@@ -135,11 +134,11 @@ The bucket is mounted at `/data` in the training job and in the endpoint, laid o
 <Steps>
 
 1. **Install the Nebius CLI and log in**, on macOS, Ubuntu, WSL or the console's Cloud Shell.
-2. **Create the VM in mock mode.** Simulated models, no keys, no usage cost: a public demo that cannot run up a model bill.
+2. **Create the VM.** It starts with no keys, so it makes no model call and cannot run up a model bill until you configure it in step 6.
 3. **Give it a web address and check the pages.**
 4. **Run the day-1 checks** with a Token Factory key (`scripts/day1_check.py`, a few cents).
 5. **Create the bucket, the training image, the student endpoint and one training job by hand**, each with `DRY_RUN=1` first.
-6. **Switch the VM to live mode** with the edge guard and the Scout budget guard on.
+6. **Configure live mode** with the edge guard and the Scout budget guard on.
 7. **Keep it running** until judging ends: GPU only in planned windows, updates, backups, monitoring.
 8. **Tear it down**: the VM, its boot disk, the endpoint and the keys.
 
@@ -169,7 +168,7 @@ You also need:
 - **The repo public** at `https://github.com/harshbhx/ratchet`, because the VM clones it on first boot. For a private repo, `RATCHET_REPO_URL` can carry a read-only token; it stays in the VM's cloud-init user data, so revoke it after first boot.
 - **A region.** The default platform `cpu-e2` exists only in `eu-north1`, which also has L40S GPUs. In other regions set `RATCHET_VM_PLATFORM=cpu-d3`.
 
-### 2. Create the VM in mock mode
+### 2. Create the VM
 
 ```bash
 export NEBIUS_PROJECT_ID=<project ID>
@@ -214,8 +213,8 @@ Optional settings for `create_vm.sh`: `RATCHET_VM_NAME`, `RATCHET_VM_PLATFORM`, 
 | URL | Expect |
 |---|---|
 | `https://<domain>/` | The story page |
-| `https://<domain>/scout` | Scout. In mock mode it shows "Simulated search results" and only the example questions work |
-| `https://<domain>/dashboard` | The dashboard (simulation in mock mode) |
+| `https://<domain>/scout` | Scout (needs the keys from step 6) |
+| `https://<domain>/dashboard` | The dashboard |
 | `https://<domain>/healthz` | `{"status":"ok",...}`, always public |
 | `https://<domain>/readyz` | 200 `ready` (or `degraded`, with the reason under `checks`); 503 `not_ready` when the ledger cannot be written or no teacher can answer |
 | `https://<domain>/v1/models` | The model list; 403 when the Caddy guard is on, 401 when API keys are on and you send none |
@@ -288,26 +287,9 @@ What `student_endpoint.sh create` sets: the image `vllm/vllm-openai:v0.18.0-cu13
 Adapters loaded at runtime are lost when the endpoint stops. The gateway notices vLLM's 404 for an adapter and loads it again by itself, at most once per adapter per minute (`adapter_reloaded` events), and `/readyz` queues a reload for any routed adapter the endpoint no longer lists. Until then those student calls fall back to the teacher: they still succeed, at teacher cost. `python -m ratchet.live reload` reloads every live, canary and shadow adapter by hand.
 </Aside>
 
-### 6. Switch the VM to live mode
+### 6. Configure live mode
 
 The VM's settings live in `/opt/ratchet/deploy/vm/.env` (mode 0600, owned by `ratchet`, never in git). Keep comments on their own lines: Docker Compose and the scripts read this file.
-
-<Tabs>
-<TabItem label="Mock (the default)">
-
-```bash
-RATCHET_MODE=mock
-RATCHET_MOCK_WARMUP_DAYS=4
-RATCHET_API_GUARD=open
-RATCHET_PUBLIC_DASHBOARD=1
-```
-
-Simulated models, no keys, no model calls, no usage cost. Four simulated days and nights run at startup, so the dashboard opens on a trained student. The dashboard's demo buttons work, and every visitor shares one simulated state: one visitor's Reset affects everyone. Every number is simulation.
-
-Mock mode makes no Token Factory or Tavily call. So the public demo has to run in live mode.
-
-</TabItem>
-<TabItem label="Live">
 
 ```bash
 RATCHET_MODE=live
@@ -316,7 +298,7 @@ TAVILY_API_KEY=<Tavily key>
 # Empty: the hosted fallback answers student calls. Set both only while the endpoint runs.
 RATCHET_STUDENT_BASE=
 RATCHET_STUDENT_KEY=
-# Caddy blocks /v1/*, /ratchet/demo/* and /ratchet/admin/* without this token (hex, 32+ characters).
+# Caddy blocks /v1/*, /ratchet/admin/* without this token (hex, 32+ characters).
 RATCHET_API_GUARD=guarded
 RATCHET_ADMIN_TOKEN=<output of: openssl rand -hex 32>
 # Only because Caddy guards /v1/*. Or set RATCHET_API_KEYS instead (or as well).
@@ -329,10 +311,6 @@ RATCHET_AUDIT_RATE=0.05
 RATCHET_PUBLIC_DASHBOARD=1
 ```
 
-Remove the `RATCHET_MOCK_WARMUP_DAYS` line: it does nothing in live mode, and the config check warns about it.
-
-</TabItem>
-</Tabs>
 
 Then apply it:
 
@@ -356,13 +334,13 @@ Then apply it:
 What each guard is for:
 
 - **`/v1/*` is a paid endpoint.** Without a guard anyone could send unlimited requests on your Token Factory credit. Live mode refuses to start without `RATCHET_API_KEYS`, unless `RATCHET_ALLOW_UNAUTHENTICATED=1` says that something in front checks callers. On the VM that something is Caddy's edge guard: `RATCHET_API_GUARD=guarded` with a hex `RATCHET_ADMIN_TOKEN` of at least 32 characters. An empty or shorter token blocks the guarded paths for everyone, and Caddy strips the header before it reaches the gateway. To use the API yourself: `curl -H "X-Ratchet-Admin-Token: $TOKEN" https://<domain>/v1/models`, or `default_headers` in the OpenAI SDK.
-- **The Scout budget guard stays on in live mode**. Every Scout run is admitted against a daily dollar cap, a daily run cap and a per-IP hourly limit, and its spend is added after it ends, also on failure. The counters are kept in the ledger, so a restart, a crash or `update.sh` does not reset them. The code's default cap is $3.00 a day; the VM example sets $0.50, so the worst case over the 48 days from Oct 29 to Dec 15 is about $24 (estimate, [DEPLOY_NEBIUS_VM.md](/reference/deploy-nebius-vm/#switching-from-mock-to-live)). The budget guard does not cover `/v1/chat/completions`; the edge guard or API keys do.
+- **The Scout budget guard stays on in live mode**. Every Scout run is admitted against a daily dollar cap, a daily run cap and a per-IP hourly limit, and its spend is added after it ends, also on failure. The counters are kept in the ledger, so a restart, a crash or `update.sh` does not reset them. The code's default cap is $3.00 a day; the VM example sets $0.50, so the worst case over the 48 days from Oct 29 to Dec 15 is about $24 (estimate, [DEPLOY_NEBIUS_VM.md](/reference/deploy-nebius-vm/)). The budget guard does not cover `/v1/chat/completions`; the edge guard or API keys do.
 - **A reserve for judges.** `RATCHET_SCOUT_JUDGE_CODE` (generate it with `openssl rand -hex 16`) and `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` hold part of each day's runs, spend and Tavily credits back from the public. `RATCHET_TAVILY_MONTHLY_CREDITS` and `RATCHET_TAVILY_PACE_UNTIL=2026-12-15` spread the credits over the judging period. The code goes in the submission's testing instructions only, never on a public page, in the video or in a URL.
 - **The dashboard.** With `RATCHET_PUBLIC_DASHBOARD=1` judges see the live dashboard, and anonymous readers get client pseudonyms and events without URLs or error messages.
 - **Signed BOMs (optional).** Run `python -m ratchet.bom keygen` on your laptop, put the `RATCHET_BOM_SIGNING_KEY=` line in `.env`, and publish the public key it prints.
 
 <Aside type="caution" title="A fresh live ledger starts cold">
-Switching to live mode starts a new ledger file, so there is no trained version yet: every request is a cold start and the teacher answers it, at teacher prices. The hosted fallback stands in only for a version that exists. A student appears on the VM only after Night School trains and releases one on this ledger, and on the stock demo kit Night School does not run (step 7 below).
+Switching to live mode starts a new ledger file, so there is no trained version yet: every request is a cold start and the teacher answers it, at teacher prices. The hosted fallback stands in only for a version that exists. A student appears on the VM only after Night School trains and releases one on this ledger, and on the stock VM kit Night School does not run (step 7 below).
 </Aside>
 
 ### 7. Keep it running until judging ends
@@ -371,7 +349,7 @@ Switching to live mode starts a new ledger file, so there is no trained version 
 
 The student endpoint is the largest cost: about $32 for every full day it runs (an estimate, below). So:
 
-- **Most of the time, keep the endpoint stopped** and leave `RATCHET_STUDENT_BASE` and `RATCHET_STUDENT_KEY` empty. Student calls for a trained version then go to the hosted fallback, Nemotron 3 Nano 30B on Token Factory, paid per token. Be honest about it in the demo: it is untuned, it is held to the default threshold (`RATCHET_CONFIDENCE_THRESHOLD`, 0.80) instead of a calibrated one, and no certificate covers it. The pages say so: student answers carry the <Who as="fallback" /> badge, the dashboard header reads "Nano 30B · hosted on Token Factory (endpoint off)", and the live version's golden precision is hidden. `curl -s https://<domain>/ratchet/stats | jq .student_serving` shows what the pages read.
+- **Most of the time, keep the endpoint stopped** and leave `RATCHET_STUDENT_BASE` and `RATCHET_STUDENT_KEY` empty. Student calls for a trained version then go to the hosted fallback, Nemotron 3 Nano 30B on Token Factory, paid per token. Say so plainly: it is untuned, it is held to the default threshold (`RATCHET_CONFIDENCE_THRESHOLD`, 0.80) instead of a calibrated one, and no certificate covers it. The pages say so: student answers carry the <Who as="fallback" /> badge, the dashboard header reads "Nano 30B · hosted on Token Factory (endpoint off)", and the live version's golden precision is hidden. `curl -s https://<domain>/ratchet/stats | jq .student_serving` shows what the pages read.
 - **Start the endpoint for fixed windows** (`bash deploy/student_endpoint.sh start`), such as recording the video or a judging window you announced, and stop it right after (`bash deploy/student_endpoint.sh stop`). A stopped endpoint is not billed for compute or its own storage; the mounted bucket still is.
 - **Never stop the endpoint while `RATCHET_STUDENT_BASE` still points at it.** Student calls would fail, the student's circuit breaker would open after 5 failures in a row, and the teacher would answer those requests at Ultra prices instead of the cheaper hosted fallback. `/readyz` reports `degraded` meanwhile.
 - **Record the uptime for the cost report.** `student_endpoint.sh` runs `python -m ratchet.cost endpoint up|down` after `create`, `start` and `stop`, but that needs the ledger file; on your laptop it prints a note instead. Record it where the ledger is, on the VM, from `/opt/ratchet/deploy/vm`: `sudo -u ratchet docker compose exec -T ratchet python -m ratchet.cost endpoint up --usd-per-hour <your rate>` (and `down` after), or `POST /ratchet/cost/endpoint` with an admin key. `GET /ratchet/cost` then reports savings by GPU-hours actually paid.
@@ -421,11 +399,11 @@ To turn them on, remove the leading `# ` from those lines with `sudo nano /etc/c
 sudo -u ratchet /opt/ratchet/deploy/vm/update.sh
 ```
 
-[`update.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/update.sh) pulls (`git pull --ff-only`), builds the new image, and runs `python -m ratchet.config check` in it with your `.env`. On errors (exit 2) it stops and leaves the running gateway as it is, so a typo in `.env` never takes the demo down. Then it runs `docker compose up -d`, waits for the Docker health check (`/healthz`) and for `/readyz` to answer 200 inside the container, fetches `/`, `/healthz`, `/readyz`, `/dashboard` and `/scout` over HTTPS (and `/ratchet/stats` when the dashboard is public), and exits non-zero if any of them fail.
+[`update.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/update.sh) pulls (`git pull --ff-only`), builds the new image, and runs `python -m ratchet.config check` in it with your `.env`. On errors (exit 2) it stops and leaves the running gateway as it is, so a typo in `.env` never takes the gateway down. Then it runs `docker compose up -d`, waits for the Docker health check (`/healthz`) and for `/readyz` to answer 200 inside the container, fetches `/`, `/healthz`, `/readyz`, `/dashboard` and `/scout` over HTTPS (and `/ratchet/stats` when the dashboard is public), and exits non-zero if any of them fail.
 
 #### Backups
 
-[`backup.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/backup.sh) runs daily at 03:10 UTC. In live mode it copies the ledger with SQLite's online backup API inside the container, checks the copy with `PRAGMA integrity_check`, and keeps the newest 14 as `/var/backups/ratchet/ratchet-<UTC time>.db.gz`. In mock mode the ledger is in memory and the script does nothing. To also copy each backup to Object Storage, install the `aws` CLI on the VM, configure it as the `ratchet` user, and set `RATCHET_BUCKET_S3` and `RATCHET_S3_ENDPOINT` in `.env`.
+[`backup.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/backup.sh) runs daily at 03:10 UTC. In live mode it copies the ledger with SQLite's online backup API inside the container, checks the copy with `PRAGMA integrity_check`, and keeps the newest 14 as `/var/backups/ratchet/ratchet-<UTC time>.db.gz`. To also copy each backup to Object Storage, install the `aws` CLI on the VM, configure it as the `ratchet` user, and set `RATCHET_BUCKET_S3` and `RATCHET_S3_ENDPOINT` in `.env`.
 
 To restore, stop the gateway, remove the old `ratchet.db-wal` and `ratchet.db-shm` files (a stale WAL file would be replayed onto the restored copy), copy the backup into the volume and start it again; the commands are in [DEPLOY_NEBIUS_VM.md](/reference/deploy-nebius-vm/). Never copy the live file with `cp`.
 
@@ -510,7 +488,7 @@ A rough estimate for a short evaluation period is about **$35 to $75**: 6 to 8 t
 | [`deploy/vm/docker-compose.yml`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/docker-compose.yml) | The gateway (1 worker, `--proxy-headers`, health check on `/healthz`, port 8000 exposed only to Caddy) and Caddy (ports 80 and 443) |
 | [`deploy/vm/Caddyfile`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/Caddyfile) | HTTPS for `RATCHET_DOMAIN`, security headers, no buffering for `/scout/stream`, the opt-in edge guard, the admin token deleted from access logs |
 | [`deploy/vm/update.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/update.sh), [`deploy/vm/backup.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/backup.sh) | Pull, build, config check, restart, readiness wait; SQLite online backup with an integrity check |
-| [`deploy/vm/.env.vm.example`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/.env.vm.example) | Every VM setting with comments; starts in mock mode |
+| [`deploy/vm/.env.vm.example`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/.env.vm.example) | Every VM setting with comments |
 | [`deploy/student_endpoint.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/student_endpoint.sh) | `create`, `start` (the default), `stop`, `status` for the vLLM endpoint; finds the id by name in `nebius ai endpoint list --format json` and never guesses |
 | [`deploy/train_job.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/train_job.sh) | `nebius ai job create` for one training run, then polls the bucket for the adapter |
 | [`deploy/Dockerfile.train`](https://github.com/harshbhx/ratchet/blob/main/deploy/Dockerfile.train), [`deploy/train-versions.txt`](https://github.com/harshbhx/ratchet/blob/main/deploy/train-versions.txt) | The training image and its pinned versions; change both together |
@@ -521,7 +499,7 @@ A rough estimate for a short evaluation period is about **$35 to $75**: 6 to 8 t
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RATCHET_MODE` | `mock` | `live` calls Token Factory, the endpoint and Tavily |
+| `RATCHET_MODE` | `mock` | `live` (what this guide sets) calls Token Factory, the endpoint and Tavily |
 | `NEBIUS_API_KEY` | empty | Token Factory key: teacher, judge and hosted fallback |
 | `RATCHET_STUDENT_BASE`, `RATCHET_STUDENT_KEY` | empty | The endpoint's `/v1` URL and token; empty means the hosted fallback |
 | `RATCHET_FALLBACK_STUDENT` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | The hosted fallback model |
@@ -544,17 +522,17 @@ A rough estimate for a short evaluation period is about **$35 to $75**: 6 to 8 t
 
 ### What runs on Nebius today?
 
-Token Factory: the teacher runs there, and the live demo calls it for real. The GPU endpoint and the training job are scripted and tested offline, ready to run with `make nebius-plan` and `make nebius-up`; as of Oct 26, 2026 the adapters were trained on a borrowed GPU. The scripts follow the Nebius docs and CLI reference (read Oct 20 and 21, 2026) and are tested offline, and the lines that could not be checked are marked "verify on day 1" in the scripts. Run each with `DRY_RUN=1` first and compare with `nebius ... --help`.
+Token Factory: the teacher runs there, and the live gateway calls it for real. The GPU endpoint and the training job are scripted and tested offline, ready to run with `make nebius-plan` and `make nebius-up`; as of Oct 28, 2026 the adapters were trained on a borrowed GPU. The scripts follow the Nebius docs and CLI reference (read Oct 20 and 21, 2026) and are tested offline, and the lines that could not be checked are marked "verify on day 1" in the scripts. Run each with `DRY_RUN=1` first and compare with `nebius ... --help`.
 
-### Do I need a GPU to host the demo?
+### Do I need a GPU to host the gateway?
 
-No. The gateway does no inference, so the demo runs on a 2 vCPU / 8 GB CPU VM. In mock mode nothing calls a model; in live mode the teacher and the hosted fallback are paid per token on Token Factory. A GPU is needed only to serve the tuned student or to train it.
+No. The gateway does no inference, so it runs on a 2 vCPU / 8 GB CPU VM. The teacher and the hosted fallback are paid per token on Token Factory. A GPU is needed only to serve the tuned student or to train it.
 
 ### What happens if I forget to stop the endpoint?
 
 It bills for every hour it runs: about $32 a day at about $1.35 per GPU-hour (an estimate). `bash deploy/student_endpoint.sh status` shows its state, and the cost report's `idle_hours` shows paid hours in which no request reached the student.
 
-### Why would a live demo VM serve no student at all?
+### Why would a live VM serve no student at all?
 
 A new live ledger has no trained version, so every request is a cold start answered by the teacher. A student appears only after Night School trains and releases one on that ledger, and the stock VM image cannot run Night School because it lacks the `nebius` and `aws` CLIs. Until that is wired up, a live VM is honest but all-teacher.
 
@@ -568,16 +546,16 @@ The ledger is one SQLite file behind one lock, and the release gate is not built
 
 ### Is the edge guard enough security?
 
-It closes the paid API, the demo controls and the admin API to anyone without the token, and it is enough for a demo. For real clients use gateway API keys (`RATCHET_API_KEYS`) with quotas, and read the [security page](/guides/security/) and the [threat model](/reference/threat-model/).
+It closes the paid API and the admin API to anyone without the token, and it is enough for a small public gateway. For real clients use gateway API keys (`RATCHET_API_KEYS`) with quotas, and read the [security page](/guides/security/) and the [threat model](/reference/threat-model/).
 
 ## Related
 
 <FadeContent distance={16}>
 <PathGrid cols={3} label="Related guides">
-  <PathCard title="Quickstart" href="/guides/quickstart/" icon="start" eyebrow="No keys" tone="neutral" description="The same gateway in mock mode on your laptop." />
+  <PathCard title="Quickstart" href="/guides/quickstart/" icon="start" eyebrow="Your laptop" tone="neutral" description="The same gateway on your own machine, against Token Factory." />
   <PathCard title="Cost and savings" href="/guides/cost-and-savings/" icon="coin" eyebrow="When it pays" tone="neutral" description="Break-even, the cost report and when self-hosting does not pay." />
   <PathCard title="The big picture" href="/guides/big-picture/" icon="layers" eyebrow="Every part" tone="neutral" description="Every component and how a request moves between them." />
 </PathGrid>
 </FadeContent>
 
-Reference: the [demo VM guide](/reference/deploy-nebius-vm/), [deployment](/reference/deployment/) and the [runbook](/reference/runbook/).
+Reference: the [VM guide](/reference/deploy-nebius-vm/), [deployment](/reference/deployment/) and the [runbook](/reference/runbook/).

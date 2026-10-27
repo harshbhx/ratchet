@@ -45,7 +45,7 @@ The closest rivals are Inference.net, whose platform (Apr 14, 2026) retrains on 
 
 ## Where Ratchet is weaker today
 
-- No production traffic yet. Measured so far: two text-to-SQL exams and a tool-calling exam on adapters trained on a borrowed GPU (`evidence/`), a 20-request live smoke run and three recorded Scout runs, all answered by the teacher. Savings numbers are simulation (mock models).
+- No production traffic yet. Measured so far: two text-to-SQL exams and a tool-calling exam on adapters trained on a borrowed GPU (`evidence/`), a 20-request live smoke run and three recorded Scout runs, all answered by the teacher. Savings numbers are mock-mode run (mock models).
 - Single developer. Orchestra and Experiential Labs have two founders each and YC backing.
 - Experiential Labs already has open-source traction (about 10k stars, checked Oct 21, 2026).
 - Inference.net has funding and a managed training loop with evals against the live model (Apr 14, 2026).

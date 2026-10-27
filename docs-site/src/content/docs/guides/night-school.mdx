@@ -227,12 +227,10 @@ Both implement the same two interfaces, `Trainer.train(rows, base_model, name)` 
 
 | | Mock: `sim.mock_models.MockFleet` | Live: `ratchet.live.NebiusTrainer` + `LiveEvaluator` |
 |---|---|---|
-| Used by | The simulator, the mock gateway's demo days, the tests | `python -m ratchet.live night` |
+| Used by | The tests and the mock gateway | `python -m ratchet.live night` |
 | Training | Counts each row's template and remembers its texts; no GPU, no weights | Writes `train.jsonl`, syncs it to the bucket, runs a Nebius Serverless Job, hot-loads the adapter into vLLM |
 | Evaluation | A deterministic mock student | The real adapter on the student endpoint, plus <Who as="judge" /> for free text |
-| Bad deploys | `corrupt_on_deploy` breaks a version on purpose for the rollback demo | Real |
-
-Simulation numbers come from the mock fleet. In the README's reference run (simulation, mock models, seed 7, 2,000 tickets a day) the first student is live on day 3, and a deliberately corrupted v3 is rolled back automatically on day 4.
+| Bad deploys | `corrupt_on_deploy` breaks a version on purpose, to test the rollback | Real |
 
 ### After admit: the release states
 
@@ -273,44 +271,6 @@ stateDiagram-v2
   <li class="danger">Stopped</li>
   <li class="outline">Replaced</li>
 </ul>
-
-</figcaption>
-</figure>
-
-### A bad deploy, rolled back (simulation)
-
-The reference run breaks v3 on purpose (`--bad-deploy-version 3`): the mock fleet corrupts it only on the production endpoint, so it looks healthy in shadow and fails once it serves real traffic. Simulation, mock models, seed 7:
-
-<figure class="rt-diagram">
-
-```mermaid
-flowchart LR
-  subgraph d3["Day 3, night"]
-    direction TB
-    t3["v3 trained"] --> g3{{"Golden gate<br/>passes"}}
-  end
-  subgraph d4["Day 4"]
-    direction TB
-    sh["Shadow, staging<br/>v3 looks healthy"] --> c10["Canary 10%<br/>production: v3 corrupted"]
-    c10 --> bad{{"Audits disagree<br/>bound below 0.92"}}
-    bad --> rb["Rolled back at 10%<br/>v1 serves everyone"]
-  end
-  subgraph d6["Day 4 night to day 6"]
-    direction TB
-    t4["v4 trained<br/>into shadow"] --> live(["Day 6: v4 live"])
-  end
-  d3 ==> d4 ==> d6
-
-  class t3,t4 neutral
-  class g3,bad gate
-  class sh,c10 student
-  class rb danger
-  class live ok
-```
-
-<figcaption>
-
-**Reading this diagram.** Simulation, mock models, seed 7. Read left to right, one box per stretch of the run, and down inside each. v3 passed every check that does not need live traffic: the golden gate on day 3, then the shadow comparison on day 4. The canary is where its answers met real requests and real audits. While v3 served 1 request in 10, v1 stayed live for the rest; when the audits showed v3's precision could not reach the 0.92 floor, the gate rolled it back the same day, and v3 never reached 100% of traffic. The loop went on: v4 was trained that night and went live on day 6.
 
 </figcaption>
 </figure>
@@ -358,7 +318,6 @@ The live-mode variables (`RATCHET_DATA_DIR`, `RATCHET_SYNC_CMD`, `RATCHET_TRAIN_
 ```bash
 python -m ratchet.live night                                      # one live night (cron)
 python -m ratchet.admin flag training_paused on --reason "..."    # skip nights until turned off
-python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3   # nights with the mock fleet (simulation)
 ```
 
 ### Events
@@ -393,7 +352,7 @@ Big enough for the certificate to mean something. With about 200 golden rows, pr
 
 ### Has a real adapter been trained yet?
 
-Three, outside Night School: two text-to-SQL rounds and one tool-calling round, all trained on a borrowed GPU; the round-2 recipe was later retrained once by hand on Nebius AI Cloud (see [Text-to-SQL](/guides/text-to-sql/) and [Results](/guides/results/)). As of Oct 26, 2026, Night School's loop is tested in simulation and its live path offline, ready to run with `make nebius-up`; the first real night follows the day-1 checks.
+Three, outside Night School: two text-to-SQL rounds and one tool-calling round, all trained on a borrowed GPU; the round-2 recipe was later retrained once by hand on Nebius AI Cloud (see [Text-to-SQL](/guides/text-to-sql/) and [Results](/guides/results/)). As of Oct 26, 2026, Night School's loop is tested with mock models and its live path offline, ready to run with `make nebius-up`; the first real night follows the day-1 checks.
 
 ## Related
 

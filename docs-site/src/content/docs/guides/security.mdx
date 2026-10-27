@@ -34,7 +34,7 @@ The restaurant has a door to the street, and a doorman stands there (Caddy). Beh
 
 ## How it really works
 
-A request to a demo run from the Nebius VM kit crosses several boundaries (the public demo today is on Cloudflare; this page describes the VM kit). Each one has its own check.
+A request to a gateway run from the Nebius VM kit crosses several boundaries (the live gateway today is on Cloudflare; this page describes the VM kit). Each one has its own check.
 
 <figure class="rt-diagram">
 
@@ -156,17 +156,15 @@ flowchart TB
   P["<b>No key</b><br/>pages, health checks,<br/>/scout/* with its guard,<br/>the BOM public key"]
   A["<b>An API key</b><br/>/v1/*, its own lookups,<br/>feedback and receipts"]
   M["<b>An admin key</b><br/>/ratchet/admin/*, task<br/>writes, proofs, receipts"]
-  X["<b>Mock mode only</b><br/>/ratchet/demo/*"]
   D["<b>A dashboard key</b><br/>stats, cost, tasks,<br/>drift, replay, BOMs"]
-  P ~~~ X
+  P ~~~ A
   M -->|"also reads"| D
 
-  class X outline
 ```
 
 <figcaption>
 
-**Reading this diagram.** Each box is an access level from `ratchet/access.py`. An admin key can do everything a dashboard key can, which is the arrow. An API key is deliberately a different kind of key: it can spend money but cannot read the dashboard or reach admin. A route nobody has classified falls into the reader level, so it is private in live mode by default. The mock-only box answers 403 in live mode. The full table, with the `bom` and `metrics` levels, is under [Keys and who may call what](#keys-and-who-may-call-what).
+**Reading this diagram.** Each box is an access level from `ratchet/access.py`. An admin key can do everything a dashboard key can, which is the arrow. An API key is deliberately a different kind of key: it can spend money but cannot read the dashboard or reach admin. A route nobody has classified falls into the reader level, so it is private in live mode by default. The full table, with the `bom` and `metrics` levels, is under [Keys and who may call what](#keys-and-who-may-call-what).
 
 </figcaption>
 </figure>
@@ -210,26 +208,24 @@ Every route has one access level:
 |---|---|---|
 | `public` | Anyone | The pages, `/healthz`, `/livez`, `/readyz`, `/ratchet/bom/public-key`, `/scout/*` |
 | `api` | An API key when `RATCHET_API_KEYS` is set | `/v1/*` |
-| `dashboard` | Anyone with `RATCHET_PUBLIC_DASHBOARD=1` (the mock default); else an admin or dashboard key (the live default) | `/ratchet/stats`, `/ratchet/cost`, `/ratchet/redact`, `GET /ratchet/tasks` |
+| `dashboard` | Anyone with `RATCHET_PUBLIC_DASHBOARD=1` ; else an admin or dashboard key (the live default) | `/ratchet/stats`, `/ratchet/cost`, `/ratchet/redact`, `GET /ratchet/tasks` |
 | `bom` | As `dashboard`, or anyone with `RATCHET_PUBLIC_BOM=1` | `/ratchet/bom`, `/ratchet/versions/{id}/bom` |
 | `metrics` | As `dashboard`, or the metrics token | `/metrics` |
 | `admin` | An admin key; nobody in live mode without admin keys | `/ratchet/admin/*`, task writes |
-| `mock` | Anyone, in mock mode only | `/ratchet/demo/*` |
 
 A route the table does not know counts as `dashboard`, so a new endpoint is private in live mode until someone classifies it, and a test fails until they do. When a live dashboard is public, anonymous readers get client pseudonyms (`client-1`, ...), event details without URLs or error messages, and no dollar caps. `/docs` and `/openapi.json` are off in live mode. Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`; `RATCHET_CSP` adds a Content-Security-Policy.
 
 ### Live mode refuses to start open
 
-A live gateway with no `RATCHET_API_KEYS` stops at startup: `/v1/*` would answer anyone, on your Token Factory credits. To run without app keys you must set `RATCHET_ALLOW_UNAUTHENTICATED=1`, which says something in front of the gateway checks every caller: the Caddy guard or a private network. Mock mode ignores it.
+A live gateway with no `RATCHET_API_KEYS` stops at startup: `/v1/*` would answer anyone, on your Token Factory credits. To run without app keys you must set `RATCHET_ALLOW_UNAUTHENTICATED=1`, which says something in front of the gateway checks every caller: the Caddy guard or a private network.
 
 ### The Caddy edge guard
 
-With `RATCHET_API_GUARD=guarded` in `deploy/vm/.env`, Caddy answers 403 ("Forbidden: this path needs X-Ratchet-Admin-Token") on `/v1/*`, `/ratchet/demo/*` and `/ratchet/admin/*`, unless the request carries `X-Ratchet-Admin-Token` equal to `RATCHET_ADMIN_TOKEN`.
+With `RATCHET_API_GUARD=guarded` in `deploy/vm/.env`, Caddy answers 403 ("Forbidden: this path needs X-Ratchet-Admin-Token") on `/v1/*` and `/ratchet/admin/*`, unless the request carries `X-Ratchet-Admin-Token` equal to `RATCHET_ADMIN_TOKEN`.
 
 - The token must be hex and at least 32 characters (`openssl rand -hex 32`). If it is empty or shorter, the guarded paths are blocked for everyone, so a forgotten token cannot open the API.
 - Caddy strips the header before the request reaches the gateway, and its access log deletes it, because Caddy only redacts the cookie and authorization headers by default.
 - The pages, `/scout*`, `/dashboard`, `/ratchet/stats` and `/ratchet/bom` stay public at the edge. Whether the gateway answers the last two without a key is `RATCHET_PUBLIC_DASHBOARD`.
-- In mock mode the guard also disables the dashboard's demo buttons, which call `/ratchet/demo/*`. Use `open` for the mock demo and `guarded` in live mode.
 
 The guard is independent of the app's keys. Use either or both.
 
@@ -284,7 +280,7 @@ Rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY`, `RATCHET_ADMIN
 
 From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists today and what is planned.
 
-**Assets**: customer request text (stored examples, the training file in the bucket, and what adapters memorise), teacher outputs and their license provenance, the adapters the customer owns, the ledger, the API keys, the BOM signing key, the demo budget, and the release decisions that choose which model answers users.
+**Assets**: customer request text (stored examples, the training file in the bucket, and what adapters memorise), teacher outputs and their license provenance, the adapters the customer owns, the ledger, the API keys, the BOM signing key, the spend budget, and the release decisions that choose which model answers users.
 
 **Trust boundaries**: client to gateway (keys); gateway to Token Factory (HTTPS, bearer key); gateway to the vLLM endpoint (HTTPS, endpoint token); the cron host to the Nebius CLI (local credentials); job and endpoint to the bucket (a Nebius-managed mount); gateway to Tavily (search results are **untrusted web content**); internet to Caddy in the VM kit.
 
@@ -303,12 +299,12 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 | Stolen BOM signing key (T21) | Read from the environment only; only the public half is served | A secrets manager, signing on a separate machine |
 
 <Aside type="caution" title="What runs where today">
-As of Oct 26, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are scripted and tested offline, ready to run with `make nebius-up`; live mode runs on the public demo, where every request is a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
+As of Oct 28, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are scripted and tested offline, ready to run with `make nebius-up`; the live gateway answers every request with a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
 </Aside>
 
 ### The safety rules the loop never breaks
 
-The project keeps a list of rules that code and tests enforce. The ones about the learning loop and the demo, in plain words:
+The project keeps a list of rules that code and tests enforce. The ones about the learning loop and the live gateway, in plain words:
 
 <div class="rt-callout rt-callout--owned"><p><strong>The student never learns from its own answers.</strong> Training targets are teacher answers or customer-attested human labels, never student outputs, which avoids model collapse.</p></div>
 
@@ -318,10 +314,9 @@ The project keeps a list of rules that code and tests enforce. The ones about th
 - **No training while a release is in flight.** Nothing trains while a version is in shadow or canary.
 - **Precision is measured on held-out data.** The threshold is calibrated on even golden rows and precision measured on odd rows.
 - **A student failure never fails the request.** It falls back to the teacher. A teacher failure on the serving path returns a mapped status (400 or 429 for client causes, 502, 503 or 504 otherwise).
-- **Demo controls stay mock-only.** `/ratchet/demo/*` answers 403 in live mode.
 - **Model ids and prices are unverified until the day-1 check passes** with a real key.
 - **Pinned tasks never become training data** and never reach the student.
-- **The demo budget guard stays on in live mode.** Every Scout run goes through the guard before it starts and adds its spend after it ends, also on failure.
+- **The Scout budget guard stays on in live mode.** Every Scout run goes through the guard before it starts and adds its spend after it ends, also on failure.
 
 Others that matter for security: text is redacted before it is stored; API keys are never stored or logged; committed training sets and sealed receipts are append-only; an admin key typed into the dashboard stays in the page's memory; opt-outs only reduce storage; end-user identifiers are never stored or logged; and an erased example is gone for good. The repository maps every rule to its code and tests.
 
@@ -345,16 +340,16 @@ Others that matter for security: text is redacted before it is stored; API keys 
 | Variable | Default | Meaning |
 |---|---|---|
 | `RATCHET_API_KEYS` | empty | API keys, `name:key,...`; required to start in live mode |
-| `RATCHET_ADMIN_KEYS` | empty | Admin keys; without them the admin API is off in live mode, open in mock mode |
+| `RATCHET_ADMIN_KEYS` | empty | Admin keys; without them the admin API is off in live mode |
 | `RATCHET_DASHBOARD_KEYS` | empty | Read-only dashboard keys |
 | `RATCHET_METRICS_TOKEN` | empty | A scraper's token for `/metrics` |
-| `RATCHET_PUBLIC_DASHBOARD` | `1` mock, `0` live | Whether the dashboard API needs a key |
+| `RATCHET_PUBLIC_DASHBOARD` | `0` live | Whether the dashboard API needs a key |
 | `RATCHET_PUBLIC_BOM` | `0` | Keep the BOMs public while the dashboard is private |
 | `RATCHET_ALLOW_UNAUTHENTICATED` | `0` | Let live mode start without API keys, behind a guard |
-| `RATCHET_OPENAPI` | `1` mock, `0` live | Serve `/docs` and `/openapi.json` |
+| `RATCHET_OPENAPI` | `0` live | Serve `/docs` and `/openapi.json` |
 | `RATCHET_CSP` | empty | A Content-Security-Policy for every response |
 | `RATCHET_REDACT_PII` | `1` | Redact before storing |
-| `RATCHET_IP_RPM` | `0` mock, `120` live | Requests a minute per client address on a gateway without keys |
+| `RATCHET_IP_RPM` | `120` live | Requests a minute per client address on a gateway without keys |
 | `RATCHET_MAX_INFLIGHT` | `32` | Chat requests in flight before a 503 |
 | `RATCHET_IDEMPOTENCY_TTL_S` | `600` | How long an idempotent answer is kept |
 | `RATCHET_API_GUARD`, `RATCHET_ADMIN_TOKEN` | `open`, empty | Caddy only, read from `deploy/vm/.env` |
@@ -369,9 +364,9 @@ To report a vulnerability, see [SECURITY.md](https://github.com/harshbhx/ratchet
 
 ## Common questions
 
-### Is `/v1/chat/completions` open on the demo?
+### Is `/v1/chat/completions` open on the live gateway?
 
-In mock mode it calls no model and costs nothing, so the mock demo may leave it open. In live mode the VM guide requires app API keys, the Caddy guard, or both. A live gateway with neither refuses to start, unless someone sets `RATCHET_ALLOW_UNAUTHENTICATED=1` without the guard, which the guide says not to do.
+No. The VM guide requires app API keys, the Caddy guard, or both. A live gateway with neither refuses to start, unless someone sets `RATCHET_ALLOW_UNAUTHENTICATED=1` without the guard, which the guide says not to do.
 
 ### What can a leaked API key do?
 
@@ -387,7 +382,7 @@ Names and street addresses are not redacted. A rare-trigger backdoor may never b
 
 ### Can someone fake their IP to get around the Scout limit?
 
-Not in the Nebius VM kit: Caddy overwrites `X-Forwarded-For`, and the gateway trusts it only because port 8000 is not published. Not on the public demo either, which runs on Cloudflare Workers with Containers: the Worker overwrites `X-Forwarded-For` with the address Cloudflare saw (`CF-Connecting-IP`) before it passes a request to the container, and the demo caps spend whatever the address (the gateway at $2.50 a day, the demo key at $1.50 a day and Scout at $1.50 a day, set in `deploy/cloudflare-live/src/index.ts`, and Scout at 30 runs a day, the code default). Elsewhere, `RATCHET_TRUST_PROXY` is off by default. Many real addresses can still use up the public share early; the judges' reserve is held back from them.
+Not in the Nebius VM kit: Caddy overwrites `X-Forwarded-For`, and the gateway trusts it only because port 8000 is not published. Not on the live gateway either, which runs on Cloudflare Workers with Containers: the Worker overwrites `X-Forwarded-For` with the address Cloudflare saw (`CF-Connecting-IP`) before it passes a request to the container, and it caps spend whatever the address (the gateway at $2.50 a day, the site's key at $1.50 a day and Scout at $1.50 a day, set in `deploy/cloudflare-live/src/index.ts`, and Scout at 30 runs a day, the code default). Elsewhere, `RATCHET_TRUST_PROXY` is off by default. Many real addresses can still use up the public share early; the judges' reserve is held back from them.
 
 ### Could the gateway train on a closed model's answers by mistake?
 

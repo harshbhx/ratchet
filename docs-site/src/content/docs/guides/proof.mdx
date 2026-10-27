@@ -83,17 +83,17 @@ flowchart TB
 ## What exists today, and what has run for real
 
 <Aside type="caution" title="Read this before quoting a number">
-Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline, and shown by the mock gateway and the simulator. None of it has run on real production traffic.
+Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline with mock models. None of it has run on real production traffic.
 </Aside>
 
-| Link | In the repository | Shown by | Run on a real model |
+| Link | In the repository | Checked by | Run on a real model |
 |---|---|---|---|
 | Exam and `verify` | Standalone scripts in `scripts/` | The [Results](/guides/results/) page | Yes: the text-to-SQL and tool-calling adapters |
-| Signed BOM | `ratchet/bom.py` | Tests and the mock gateway | No |
-| Committed sets and proofs | `ratchet/proof.py`, `ratchet/merkle.py` | Tests and the mock gateway | No |
-| Certified precision | `ratchet/certificate.py`, `ratchet/stats.py` | Tests, seeded Monte Carlo runs and simulation | No |
-| Replay | `ratchet/replay.py` | Simulation (`python -m sim.simulate --db`) | No |
-| Savings receipts | `ratchet/receipts.py`, `ratchet/receipt.py` | Tests and simulation | No |
+| Signed BOM | `ratchet/bom.py` | Tests | No |
+| Committed sets and proofs | `ratchet/proof.py`, `ratchet/merkle.py` | Tests | No |
+| Certified precision | `ratchet/certificate.py`, `ratchet/stats.py` | Tests and seeded Monte Carlo runs | No |
+| Replay | `ratchet/replay.py` | Tests | No |
+| Savings receipts | `ratchet/receipts.py`, `ratchet/receipt.py` | Tests | No |
 
 ## The checks, one by one
 
@@ -243,7 +243,7 @@ It means the claims were not altered and the arithmetic follows from the inputs.
 
 ### Why is there no real BOM or receipt for the SQL adapter yet?
 
-The SQL run used standalone scripts and a borrowed GPU rather than a nightly Night School run on a gateway, so the BOM, proofs and receipts have so far only been exercised by tests and the simulator.
+The SQL run used standalone scripts and a borrowed GPU rather than a nightly Night School run on a gateway, so the BOM, proofs and receipts have so far only been exercised by tests.
 
 ## Related
 

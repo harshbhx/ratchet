@@ -27,7 +27,7 @@ Ratchet puts an apprentice next to the head chef. The apprentice cooks each dish
 </PlainWords>
 
 <Aside type="note" title="Built on NVIDIA Nemotron and Nebius">
-The teacher runs on Nebius Token Factory, and the round-2 adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job). The web front end and the live demo run on Cloudflare.
+Every model call on the live site runs on Nebius Token Factory, the adapter was [retrained on Nebius AI Cloud](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius), and the student was served from a Nebius Serverless Endpoint [in a measured test](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius).
 </Aside>
 
 <StatRow cols={3} label="Ratchet at a glance">
@@ -143,24 +143,17 @@ sequenceDiagram
 
 Ratchet also reports the bill honestly: savings per token and by GPU-hours actually paid, and a plain warning when a GPU endpoint costs more than it saves. See [Why it matters](/guides/why-it-matters/).
 
-## What is real today and what is simulated
+## What is real today
 
 | Part | Status |
 |---|---|
 | Gateway, cascade, ledger, Night School, release gate, Scout, dashboard | Built, with 1,934 tests that need no network and no GPU |
 | Teacher calls | <span class="rt-badge rt-badge--live">Real</span> Nemotron 3 Ultra on Nebius Token Factory. Real teacher calls built the text-to-SQL data on Oct 22, 2026 |
-| Student endpoint | **Served once, by hand, on a Nebius Serverless Endpoint for a speed test (27 Oct 2026, [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)); the endpoint script is tested offline, ready to run with `make nebius-up`.** The public demo is not connected to a student endpoint, so the teacher answers every request. If a trained version were live without a GPU endpoint, its calls would go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages would say so |
+| Student endpoint | **Served once, by hand, on a Nebius Serverless Endpoint for a speed test (27 Oct 2026, [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)); the endpoint script is tested offline, ready to run with `make nebius-up`.** The live gateway is not connected to a student endpoint, so the teacher answers every request. If a trained version were live without a GPU endpoint, its calls would go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages would say so |
 | A text-to-SQL adapter | The published adapters were trained on a borrowed GPU. The round-2 recipe was also retrained once on Nebius AI Cloud (a Serverless Job on one L40S, 27 Oct 2026); it scored 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance). The measured results of the published adapters are on [Results](/guides/results/) |
 | A tool-calling adapter | Trained on a borrowed GPU (not retrained on Nebius). Hard exam 136 of 150 (90.7%) against 94 of 150 (62.7%) untrained and 137 of 150 (91.3%) for Ultra; BFCL exam 241 of 300 (80.3%) against 232 (77.3%) untrained and 265 (88.3%) for Ultra. SQL stays the headline result. See [Results](/guides/results/) |
-| Savings and precision figures from `sim.simulate` and the story page | <span class="rt-badge rt-badge--sim">Simulation</span> Mock models show how the loop behaves, not real model quality |
 | Model ids and list prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
 | Token Factory Terms of Service §5(f) ("competing service") | **Open question.** Asked Nebius support in writing on Oct 19, 2026; no final answer. Not legal advice |
-
-<div class="rt-callout rt-callout--sim">
-
-**Simulation.** In the reference run (mock models, 2,000 tickets a day, a corrupted deploy of v3): the teacher answers everything on day 1, the student serves 98% of requests by day 3, the corrupted v3 is rolled back automatically on day 4, and on day 10 the cost is $0.147 per 1,000 requests against $1.093 for all-Ultra, 87% saved at unverified list prices.
-
-</div>
 
 ## Where to go next
 

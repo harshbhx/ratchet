@@ -442,7 +442,23 @@ NEBIUS_OVERCLAIMS = (
     "not on nebius",
     "outside nebius",
     "model you own",
+    "deployed on nebius",
+    "runs on nebius end to end",
 )
+
+# The headline (README, for-judges): links stripped to their text before the comparison.
+NEBIUS_HEADLINE = (
+    "Built on NVIDIA Nemotron and Nebius: every model call on the live site runs on Nebius Token Factory, "
+    "the adapter was retrained on Nebius AI Cloud, and the student was served from a Nebius Serverless Endpoint "
+    "in a measured test"
+)
+
+
+def _plain(text: str) -> str:
+    """Markdown with each [text](url) reduced to its text and the bold markers dropped."""
+    import re
+
+    return re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text).replace("**", "")
 
 
 @pytest.mark.req("NFR-70")
@@ -460,6 +476,11 @@ def test_nebius_claims_stay_within_what_ran():
         text = _read(rel).lower()
         for phrase in NEBIUS_OVERCLAIMS:
             assert phrase not in text, (rel, phrase)
+    for rel in ("README.md", "docs-site/src/content/docs/guides/for-judges.mdx"):
+        assert NEBIUS_HEADLINE in _plain(_read(rel)), rel
+    assert "Every model call on the live site runs on Nebius Token Factory" in _read(
+        "docs-site/src/content/docs/guides/what-is-ratchet.mdx"
+    )
     readme = _read("README.md")
     assert "borrowed gpu" in readme.lower()
     assert "Nebius AI Cloud" in readme and "L40S" in readme
@@ -477,3 +498,31 @@ def test_nebius_claims_stay_within_what_ran():
         assert "it has not run yet" not in text, rel
     # What is still unrun stays unclaimed.
     assert "the vm kit and the nightly loop's job have not" in _read("docs/WHERE_IT_RUNS.md").lower()
+
+
+def _prose(text: str) -> str:
+    """Public prose only: no code fences, inline code, link or image targets, HTML tags, or bare URLs and paths."""
+    import re
+
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    text = re.sub(r"`[^`]*`", " ", text)
+    text = re.sub(r"\]\([^)]*\)", "] ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"https?://\S+|[\w./-]*[/.][\w./-]*\.(?:png|gif|svg|md|mdx|jpg)", " ", text)
+    return text
+
+
+@pytest.mark.req("NFR-70")
+def test_public_text_has_no_demo_or_simulation_wording():
+    """The README and the docs site describe only what is real and live (a simulator stays a developer tool)."""
+    import re
+
+    files = ["README.md"] + sorted(
+        str(p.relative_to(ROOT)).replace("\\", "/") for p in (ROOT / "docs-site/src/content/docs").rglob("*.mdx")
+    )
+    bad = []
+    for rel in files:
+        for n, line in enumerate(_prose(_read(rel)).splitlines(), 1):
+            if re.search(r"\bdemos?\b|simulat", line, re.I):
+                bad.append((rel, n, line.strip()[:100]))
+    assert not bad, bad[:20]

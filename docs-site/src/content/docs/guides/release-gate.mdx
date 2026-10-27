@@ -250,13 +250,12 @@ It is the two-sided 95% interval; the rule uses its upper end, so a rollback nee
 | 19 of 20 | 95% | 99.1% | Advance |
 | 17 of 20 | 85% | 94.8% | Hold: below the floor, but not clearly |
 | 10 of 20 | 50% | 70.1% | Roll back |
-| 7 of 17 | 41.2% | 64.0% | Roll back (the simulator's and mock mode's `min_audits` is 15) |
 
-The last row is the reference run's corrupted v3: audited precision 41.2% at n = 17, rolled back on day 4 after serving 145 answers (simulation, mock models, seed 7). A plain point-estimate rule was not used because at 20 audits, a healthy canary at 96% true precision shows a point estimate below 92% about 19% of the time.
+A plain point-estimate rule was not used because at 20 audits, a healthy canary at 96% true precision shows a point estimate below 92% about 19% of the time.
 
 ## The anytime-valid rule (opt-in)
 
-The Wilson interval keeps its error rate for **one look** at a fixed sample. The gate looks after every request. When true precision sits exactly on the floor, checking Wilson after every audit falsely rolls back about 22% of such versions within 400 audits, against a nominal 2.5% (simulation, counts only, 2,000 seeded runs). And `min_audits` lets a broken deploy keep serving until it has 15 to 20 audits.
+The Wilson interval keeps its error rate for **one look** at a fixed sample. The gate looks after every request. When true precision sits exactly on the floor, checking Wilson after every audit falsely rolls back about 22% of such versions within 400 audits, against a nominal 2.5%. And `min_audits` lets a broken deploy keep serving until it has 15 to 20 audits.
 
 **Explained simply.** Think of a running bet against "quality is fine". You start with one coin. Before each audit you bet a little that the answer will be wrong. If quality really is fine, this bet cannot grow on average: it is a fair game or worse for you. So if your pile ever reaches 20 coins, that is strong evidence quality is not fine. Because a fair game cannot grow on average, it does not matter how often you look at your pile: checking after every single audit is allowed. That is what "anytime-valid" means.
 
@@ -274,16 +273,7 @@ The Wilson interval keeps its error rate for **one look** at a fixed sample. The
 
 Every event carries the counts, the e-value and its threshold, and an anytime-valid 95% confidence sequence, for example `v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 (anytime-valid, alpha 5%); 95% CS [0.041, 0.908]; traffic back to live v1`. Anyone can recompute those numbers from the two counts.
 
-| True precision (floor 0.92) | Sequential rule | Wilson after every audit |
-|---|---|---|
-| 0.92: false rollback within 400 audits | 2.9% to 3.5% | 22.1% to 22.6% |
-| 0.41: median audits to rollback | 4 | 20 |
-| 0.70: median audits to rollback | 18 | 20 |
-| 0.85: median audits to rollback | about 115 | about 35 |
-
-Simulation, counts only, from the gate's operating characteristics. The price is power against small drops: a version at 0.85 to 0.88 is caught later than by the Wilson rule, which catches it sooner only because it also rolls back good versions far more often. On the reference configuration, `python -m sim.simulate --bad-deploy-version 3 --compare-release` rolls the corrupted v3 back after 7 audits and 48 served answers under the sequential rule, against 17 audits and 145 answers under Wilson (simulation, mock models).
-
-The sequential canary is opt-in so the pinned reference runs do not move. The **live alert** already uses the e-process by default (`RATCHET_ALERT_EPROCESS=1`, threshold 100). The live-run harness's planned gate profile turns the sequential rule on (`RATCHET_SEQUENTIAL=1`, `RATCHET_CANARY_AUDIT_RATE=0.5`).
+The sequential canary is opt-in. The **live alert** already uses the e-process by default (`RATCHET_ALERT_EPROCESS=1`, threshold 100). The live-run harness's planned gate profile turns the sequential rule on (`RATCHET_SEQUENTIAL=1`, `RATCHET_CANARY_AUDIT_RATE=0.5`).
 
 ## The paired gate (opt-in)
 
@@ -295,7 +285,7 @@ The default regression check compares two point estimates within 0.02, but the c
 
 It rejects only a regression that is both large and significant: more than `tolerance` of the rows lost from coverage with `p_cov` below `RATCHET_REGRESSION_ALPHA` (0.05), more than `tolerance` of the rows newly answered wrong with `p_err` below it, or, with `RATCHET_MAX_NFR` below 1, a flip rate whose lower bound is above it. Without a paired record against the current live version it falls back to the default rule.
 
-In plain words: only rows where the two versions differ count, and four lost rows with none won is like four coin flips all landing heads, which happens one time in 16. In the reference run, v2 was rejected under the default rule for serving 70 of 74 golden rows against live's 74: four discordant rows, p = 0.0625, not significant at 5% (simulation, README). With the paired gate, v2 is admitted and the run takes another path (simulation, one seed).
+In plain words: only rows where the two versions differ count, and four lost rows with none won is like four coin flips all landing heads, which happens one time in 16.
 
 ## Per-task checks
 
@@ -389,8 +379,8 @@ Every decision writes an event (the `events` table, shown in the dashboard's rel
 | `conflict` | A candidate changed by another process while the gate decided |
 | `admin` | An operator's change, with the actor and the reason |
 
-<Aside type="caution" title="Only simulated releases so far">
-As of Oct 26, 2026, the release gate has decided only on mock models: every promotion and rollback quoted here is simulation. The public demo has no student endpoint yet, so no live canary has run. Live mode, the cron tick and the admin CLI are tested offline.
+<Aside type="caution" title="Not run on live traffic yet">
+As of Oct 26, 2026, the release gate is built and tested with mock models and offline tests. The live gateway has no student endpoint yet, so no live canary has run. Live mode, the cron tick and the admin CLI are tested offline.
 </Aside>
 
 ## For engineers
@@ -442,8 +432,7 @@ python -m ratchet.live tick                                      # run the gate 
 python -m ratchet.admin versions                                 # states, traffic, golden numbers, this stage's audits
 python -m ratchet.admin rollback 7 --reason "refund labels are wrong since 09:00"
 python -m ratchet.admin flag releases_frozen on --reason "holiday freeze"
-python -m sim.simulate --bad-deploy-version 3 --compare-release  # Wilson against the anytime-valid rule (simulation)
-RATCHET_MODE=mock RATCHET_SEQUENTIAL=1 uvicorn ratchet.gateway:app --port 8000   # the demo with the sequential canary
+RATCHET_MODE=mock RATCHET_SEQUENTIAL=1 uvicorn ratchet.gateway:app --port 8000   # a mock gateway with the sequential canary
 ```
 
 The state machine with every threshold is in [Architecture §5](/reference/architecture/#5-version-state-machine); what to do on each event is in the [runbook](/reference/runbook/), including [reading an e-value event](/reference/runbook/#reading-an-e-value-event) and [manual interventions](/reference/runbook/#manual-interventions).
@@ -452,7 +441,7 @@ The state machine with every threshold is in [Architecture §5](/reference/archi
 
 ### How many users get a bad canary's answers before it is rolled back?
 
-Some do: that is what a canary is. At 10%, roughly one request in ten can reach it, and only the ones the canary is confident on are served by it. Under the default rule it keeps serving until its stage has `min_audits` audits; in the reference simulation the corrupted v3 served 145 answers before its rollback, and 48 under the sequential rule (simulation, mock models, seed 7). A higher canary audit rate (`RATCHET_CANARY_AUDIT_RATE`) shortens that.
+Some do: that is what a canary is. At 10%, roughly one request in ten can reach it, and only the ones the canary is confident on are served by it. Under the default rule it keeps serving until its stage has `min_audits` audits. A higher canary audit rate (`RATCHET_CANARY_AUDIT_RATE`) shortens that.
 
 ### Why is the live version never rolled back automatically?
 

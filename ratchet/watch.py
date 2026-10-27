@@ -163,7 +163,7 @@ def api_key_for(spec: str, name: str) -> str | None:
 
 @dataclass(frozen=True)
 class WatchConfig:
-    """The watchdog's settings (docs/CONFIGURATION.md#demo-watchdog). Secrets are never in a `repr`."""
+    """The watchdog's settings (docs/CONFIGURATION.md#live-gateway-watchdog). Secrets are never in a `repr`."""
 
     enabled: bool = True
     client: str = "watchdog"

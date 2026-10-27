@@ -384,7 +384,7 @@ function environmentPage(sources, ids) {
     if (!where.size) {
       if (/^Mock-mode/i.test(current.title)) where.add('mock only');
       else if (/^(Live Night School|Live-run harness)/i.test(current.title)) where.add('live');
-      else if (/^(Deploy scripts|Demo VM)/i.test(current.title)) where.add('deploy kit');
+      else if (/^(Deploy scripts|Demo VM|VM )/i.test(current.title)) where.add('deploy kit');
       else where.add('both');
     }
     let meaning = get('Meaning') || get('Used in') || get('Feature that will read it');
@@ -453,8 +453,8 @@ const MAKE_NOTES = {
   test: 'Run the test suite (no network, no GPU).',
   lint: 'Lint, check formatting and check the requirements matrix. Run it with `make test` before every commit.',
   fmt: 'Format the code and apply safe lint fixes.',
-  sim: 'The 10-day simulation with a corrupted deploy of v3 (mock models).',
-  demo: 'The mock gateway with a 4-day warm-up on `http://localhost:8000`: `/`, `/scout` and `/dashboard`.',
+  sim: 'Developer tool: a multi-day run on mock models, used by the tests.',
+  demo: 'A mock gateway on `http://localhost:8000` (no keys, no GPU), for development.',
   day1: 'Live Token Factory checks before live mode (needs `NEBIUS_API_KEY`; costs cents).',
   'live-plan': 'Live-run harness: plan a run (requests per release stage, golden size, dollars per round). Free.',
   'live-smoke': 'Live-run harness: 20 requests and a few control calls, no nights. Costs cents.',
@@ -466,7 +466,7 @@ const MAKE_NOTES = {
 const CLI_GROUPS = [
   ['Run it in live mode', ['live', 'live-export', 'live-purge', 'config', 'cost', 'admin', 'importer', 'liverun']],
   ['Check the evidence offline', ['bom', 'stats', 'proof', 'receipt', 'replay']],
-  ['Demos and simulation', ['scout', 'simulate']],
+  ['Scout and developer tools', ['scout', 'simulate']],
   ['Build, train and check the repo', ['train', 'day1', 'reference-check', 'regen-sim']],
 ];
 
