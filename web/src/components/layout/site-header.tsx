@@ -209,7 +209,7 @@ function NavPill({ items, pathname, activeSection }: { items: readonly NavItem[]
             <li key={item.href}>
               <a ref={setRef} href={item.href} target="_blank" rel="noopener noreferrer" className={cn(itemClass(i), "group")} {...track(i)}>
                 {item.label}
-                <ArrowUpRight aria-hidden className="size-3 text-muted/80 transition-colors group-hover:text-ink" />
+                <ArrowUpRight aria-hidden className="size-4 text-muted/80 transition-colors group-hover:text-ink" />
                 <span className="sr-only"> (opens in a new tab)</span>
               </a>
             </li>

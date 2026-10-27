@@ -440,3 +440,8 @@ html.theme-reveal::view-transition-old(root) {
 html.theme-reveal::view-transition-new(root) {
   z-index: 2;
 }
+
+/* One stroke for every Lucide icon on the site. */
+.lucide {
+  stroke-width: 1.75;
+}

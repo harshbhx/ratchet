@@ -1,6 +1,7 @@
 import { useRef, type PointerEvent } from "react";
 import { Link } from "react-router";
-import { ArrowUpRight, BookOpen, Film } from "lucide-react";
+import { ArrowUpRight, BookOpen } from "lucide-react";
+import { GithubIcon, HuggingFaceIcon, YoutubeIcon } from "@/components/ui/brand-icons";
 import { Logo } from "@/components/ui/logo";
 import type { Stats } from "@/lib/api";
 import { videoHref } from "@/lib/real-model";
@@ -37,7 +38,7 @@ function FooterLink({ item }: { item: NavItem }) {
   return (
     <a href={item.href} target="_blank" rel="noopener noreferrer" className={LINK}>
       {item.label}
-      <ArrowUpRight aria-hidden className="size-3 shrink-0 opacity-0 transition-opacity group-hover/link:opacity-70 group-focus-visible/link:opacity-70" />
+      <ArrowUpRight aria-hidden className="size-4 shrink-0 opacity-0 transition-opacity group-hover/link:opacity-70 group-focus-visible/link:opacity-70" />
       <span className="sr-only"> (opens in a new tab)</span>
     </a>
   );
@@ -62,25 +63,6 @@ function GatewayStatus({ stats, error }: { stats: Stats | null; error: string | 
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", up ? "bg-good" : waking ? "bg-warn" : "bg-muted")} />
       {text}
     </p>
-  );
-}
-
-function GithubMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className={cn("size-4", className)} fill="currentColor">
-      <path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.17 1.18a10.9 10.9 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z" />
-    </svg>
-  );
-}
-
-function HfMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className={cn("size-4", className)} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M8.5 13.5c.8 1.4 2 2 3.5 2s2.7-.6 3.5-2" />
-      <circle cx="9" cy="9.8" r=".6" fill="currentColor" />
-      <circle cx="15" cy="9.8" r=".6" fill="currentColor" />
-    </svg>
   );
 }
 
@@ -129,7 +111,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
                 See the results
               </Link>
               <a href={HF_MODEL} target="_blank" rel="noopener noreferrer" className={cn(CTA, "border border-line-strong bg-surface text-ink hover:bg-surface-2")}>
-                Adapter on Hugging Face <ArrowUpRight aria-hidden className="size-3.5" />
+                Adapter on Hugging Face <ArrowUpRight aria-hidden className="size-4" />
                 <span className="sr-only"> (opens in a new tab)</span>
               </a>
             </div>
@@ -137,7 +119,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
         </div>
 
         <div className="grid gap-12 py-12 sm:py-16 lg:grid-cols-12 lg:gap-x-12">
-          <div className="flex flex-col gap-8 lg:col-span-4">
+          <div className="flex flex-col gap-8 lg:col-span-4 xl:col-span-3">
             <div className="max-w-xl">
             <Link to="/" aria-label="Ratchet home" className="inline-flex items-center rounded-lg">
               <Logo />
@@ -157,23 +139,23 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
             </div>
             <div className="mt-6 flex items-center gap-2">
               <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className={ICON} aria-label="GitHub (opens in a new tab)">
-                <GithubMark />
+                <GithubIcon />
               </a>
               <a href={HF_COLLECTION} target="_blank" rel="noopener noreferrer" className={ICON} aria-label="Hugging Face collection (opens in a new tab)">
-                <HfMark />
+                <HuggingFaceIcon />
               </a>
               <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className={ICON} aria-label="Documentation (opens in a new tab)">
-                <BookOpen className="size-4" aria-hidden />
+                <BookOpen className="size-5" aria-hidden />
               </a>
               {video && (
                 <a href={video} target="_blank" rel="noopener noreferrer" className={ICON} aria-label="Watch the video (opens in a new tab)">
-                  <Film className="size-4" aria-hidden />
+                  <YoutubeIcon />
                 </a>
               )}
             </div>
             </div>
           </div>
-          <nav aria-label="Footer" className="grid grid-cols-1 gap-x-8 gap-y-10 border-t border-line pt-10 sm:grid-cols-2 lg:col-span-8 lg:grid-cols-4 lg:border-t-0 lg:pt-1">
+          <nav aria-label="Footer" className="grid grid-cols-1 gap-x-8 gap-y-10 border-t border-line pt-10 sm:grid-cols-2 lg:col-span-8 lg:grid-cols-4 xl:col-span-9 lg:border-t-0 lg:pt-1">
             {FOOTER_COLUMNS.map((col) => (
               <div key={col.title}>
                 <h2 className="font-mono text-[12px] uppercase tracking-[0.14em] text-muted">{col.title}</h2>
@@ -202,7 +184,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
               <a href={REACT_BITS_PERMISSION} target="_blank" rel="noopener noreferrer" className={UL}>
                 confirmation
               </a>
-              .
+              . Icons: Lucide (ISC) and Simple Icons (CC0); the GitHub, Hugging Face and YouTube marks belong to their owners and only link to them.
             </p>
           </div>
           <ThemeToggle className="-my-1 shrink-0 self-start border border-line" />

@@ -57,7 +57,7 @@ export function BaseUrlDiff() {
           className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted transition-colors hover:bg-surface-2 hover:text-ink"
           aria-label="Copy the changed line"
         >
-          {done ? <Check className="size-3.5 text-good" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+          {done ? <Check className="size-4 text-good" aria-hidden /> : <Copy className="size-4" aria-hidden />}
           <span aria-live="polite">{done ? "Copied" : "Copy"}</span>
         </button>
       </figcaption>
@@ -123,7 +123,7 @@ export function Hero() {
         >
           <span className="rounded-full bg-owned px-2 font-medium text-white dark:text-[#06101f]">New</span>
           <span className="min-w-0 truncate">Adapter retrained on Nebius AI Cloud</span>
-          <ArrowRight aria-hidden className="size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
+          <ArrowRight aria-hidden className="size-4 shrink-0 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
         </Link>
         </motion.div>
         <SplitText
@@ -200,7 +200,7 @@ export function Hero() {
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"
                 >
-                  Watch the 3-minute video <ArrowUpRight className="size-3.5 text-muted" aria-hidden />
+                  Watch the 3-minute video <ArrowUpRight className="size-4 text-muted" aria-hidden />
                   <span className="sr-only"> (video, opens in a new tab)</span>
                 </a>
               )}
@@ -210,7 +210,7 @@ export function Hero() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 rounded-md font-medium text-ink-2 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink hover:decoration-ink"
               >
-                Read the code on GitHub <ArrowUpRight className="size-3.5 text-muted" aria-hidden />
+                Read the code on GitHub <ArrowUpRight className="size-4 text-muted" aria-hidden />
               </a>
             </motion.p>
             <motion.div {...enter(0.8)} className="mt-6">

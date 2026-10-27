@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import { ArrowUp, EyeOff, FileCode2, FileSignature, Receipt, ScrollText, Split, Target, Undo2, type LucideIcon } from "lucide-react";
+import { ArrowUp, Check, EyeOff, FileCode2, FileSignature, Receipt, ScrollText, Split, Target, Undo2, type LucideIcon } from "lucide-react";
 import { BentoGrid, bentoSpan } from "@/components/fx/bento-grid";
 import { GlowOrbs } from "@/components/fx/glow-orbs";
 import { SpotlightCard } from "@/components/fx/spotlight-card";
@@ -114,7 +114,9 @@ function ReceiptMini() {
       {["day 8", "day 9", "day 10"].map((d, i) => (
         <span key={d} className="flex items-center gap-2">
           {i > 0 && <Split className="size-3 rotate-90 text-line-strong" />}
-          <span className="rounded-md border border-line bg-bg-sunken/70 px-2 py-1 text-ink-2">{d} ✓</span>
+          <span className="inline-flex items-center gap-1 rounded-md border border-line bg-bg-sunken/70 px-2 py-1 text-ink-2">
+            {d} <Check className="size-4 text-good" aria-hidden />
+          </span>
         </span>
       ))}
     </div>

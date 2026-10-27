@@ -106,18 +106,18 @@ export function StageOneCard({ onChapter }: { onChapter: (id: string) => void })
                     it.link.href.startsWith("/") ? (
                       <Link to={it.link.href} className={linkClass}>
                         {it.link.label}
-                        <ChevronRight className="size-3 shrink-0 self-center text-muted" aria-hidden />
+                        <ChevronRight className="size-4 shrink-0 self-center text-muted" aria-hidden />
                       </Link>
                     ) : (
                       <a href={it.link.href} target="_blank" rel="noopener noreferrer" className={linkClass}>
                         {it.link.label}
-                        <ArrowUpRight className="size-3 shrink-0 self-center text-muted" aria-hidden />
+                        <ArrowUpRight className="size-4 shrink-0 self-center text-muted" aria-hidden />
                       </a>
                     )
                   ) : (
                     <button type="button" onClick={() => onChapter((it.link as { chapter: string }).chapter)} className={linkClass}>
                       {it.link.label}
-                      <ChevronRight className="size-3 shrink-0 self-center text-muted" aria-hidden />
+                      <ChevronRight className="size-4 shrink-0 self-center text-muted" aria-hidden />
                     </button>
                   ))}
               </p>

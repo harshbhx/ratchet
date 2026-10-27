@@ -1,4 +1,5 @@
-import { ArrowUpRight, BookOpen, Code, Film, Radio, Server } from "lucide-react";
+import { ArrowUpRight, BookOpen, Radio, Server } from "lucide-react";
+import { GithubIcon, YoutubeIcon } from "@/components/ui/brand-icons";
 import { RealBadge } from "@/components/ui/real-badge";
 import { entryById, type RealStatus } from "@/lib/real-model";
 import { LIVE_PATH } from "@/lib/utils";
@@ -134,10 +135,10 @@ const LIMITS = [
 
 export function LimitsChapter() {
   const links = [
-    { href: REAL.links.repo, label: "GitHub repository", icon: Code },
+    { href: REAL.links.repo, label: "GitHub repository", icon: GithubIcon },
     { href: REAL.links.docs, label: "Documentation", icon: BookOpen },
     { href: LIVE_PATH, label: "Live gateway (real Token Factory calls)", icon: Radio },
-    ...(JUDGES_VIDEO ? [{ href: JUDGES_VIDEO, label: "The video (2:59)", icon: Film }] : []),
+    ...(JUDGES_VIDEO ? [{ href: JUDGES_VIDEO, label: "The video (2:59)", icon: YoutubeIcon }] : []),
     // The one-command Nebius path (deploy/nebius/nebius.sh): scripted and tested offline, ready to run with make nebius-plan.
     {
       href: `${REAL.links.docs.replace(/\/?$/, "/")}reference/where-it-runs/`,
@@ -178,14 +179,14 @@ export function LimitsChapter() {
                   <l.icon className="size-4 shrink-0 text-muted" aria-hidden />
                   <span className="min-w-0">{l.label}</span>
                   <span className="hidden min-w-0 flex-1 truncate text-right font-mono text-[11.5px] text-muted sm:inline">{l.href.replace(/^https:\/\//, "").replace(/\?from=[\w-]+$/, "").replace(/\/$/, "")}</span>
-                  <ArrowUpRight className="size-3.5 shrink-0 text-muted" aria-hidden />
+                  <ArrowUpRight className="size-4 shrink-0 text-muted" aria-hidden />
                 </a>
                 )}
               </li>
             ))}
             {!JUDGES_VIDEO && (
               <li className="flex min-w-0 items-center gap-2.5 px-2 py-2 text-[14px]">
-                <Film className="size-4 shrink-0 text-muted" aria-hidden />
+                <YoutubeIcon className="size-4 text-muted" />
                 <span className="text-muted">The video: not published yet</span>
               </li>
             )}
