@@ -441,7 +441,7 @@ NEBIUS_OVERCLAIMS = (
 
 @pytest.mark.req("NFR-70")
 def test_nebius_claims_stay_within_what_ran():
-    """Training ran once on Nebius (27 Oct 2026); serving there, hosting the site or demo there and endorsements are not claimed."""
+    """Training ran once on Nebius (27 Oct 2026); serving there, hosting the site or demo there and endorsements are unclaimed."""
     for rel in ("README.md", "docs/WHERE_IT_RUNS.md", "web/src/data/real.json"):
         text = _read(rel).lower()
         for phrase in NEBIUS_OVERCLAIMS:
