@@ -18,6 +18,7 @@ You need Python 3.10 or newer, `git` and a Nebius Token Factory key.
 git clone https://github.com/harshbhx/ratchet.git && cd ratchet
 pip install -e ".[dev]"
 export NEBIUS_API_KEY=...        # your Token Factory key
+export RATCHET_API_KEYS=me:my-local-key-change-me   # live mode needs a key for /v1/*; pick your own
 mkdir -p data
 RATCHET_MODE=live RATCHET_DB=./data/ratchet.db uvicorn ratchet.gateway:app --port 8000
 ```
@@ -27,7 +28,7 @@ The gateway serves on `http://localhost:8000`. With no student endpoint, the tea
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="my-local-key-change-me")
 resp = client.chat.completions.create(
     model="ratchet",
     messages=[{"role": "user", "content": "I was charged twice this month."}],
@@ -60,7 +61,7 @@ python -m venv .venv
 pip install -e ".[dev]" ruff
 ```
 
-Windows has no `make`, so run the command `make install` stands for (the last line). In PowerShell, set variables with `$env:NEBIUS_API_KEY="..."; $env:RATCHET_MODE="live"` before `uvicorn`.
+Windows has no `make`, so run the command `make install` stands for (the last line). In PowerShell, set variables with `$env:NEBIUS_API_KEY="..."; $env:RATCHET_API_KEYS="me:my-local-key-change-me"; $env:RATCHET_MODE="live"; $env:RATCHET_DB="./data/ratchet.db"` (after `mkdir data`) before `uvicorn`.
 
 </TabItem>
 </Tabs>
@@ -77,6 +78,7 @@ The gateway speaks the OpenAI chat-completions format, so any OpenAI SDK works. 
 ```bash
 curl -s http://localhost:8000/v1/chat/completions \
   -H 'content-type: application/json' \
+  -H 'authorization: Bearer my-local-key-change-me' \
   -H 'X-Ratchet-Task: ticket-triage' \
   -d '{"model":"ratchet","messages":[
         {"role":"system","content":"You triage customer support tickets. Reply with JSON only ..."},
@@ -88,7 +90,7 @@ curl -s http://localhost:8000/v1/chat/completions \
 
 ```js
 import OpenAI from "openai";
-const client = new OpenAI({ baseURL: "http://localhost:8000/v1", apiKey: "unused" });
+const client = new OpenAI({ baseURL: "http://localhost:8000/v1", apiKey: "my-local-key-change-me" });
 const r = await client.chat.completions.create(
   { model: "ratchet", messages: [{ role: "user", content: "Where is my order #48213?" }] },
   { headers: { "X-Ratchet-Task": "ticket-triage" } },
@@ -116,7 +118,7 @@ Every answer is a standard `chat.completion` plus a `ratchet` block. The fields 
 
 ```bash
 export TAVILY_API_KEY=...
-python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1
+python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1 --api-key my-local-key-change-me
 ```
 
 Scout runs as an outside client against the gateway: a planner and a writer pinned to the teacher, a searcher, and many small triage and reader calls. It also takes `--api-key` and `--max-results` (default 4). See [Scout](/guides/scout/).
