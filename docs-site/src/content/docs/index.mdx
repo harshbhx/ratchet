@@ -6,134 +6,124 @@ editUrl: false
 tableOfContents: false
 head:
   - tag: title
-    content: 'Ratchet docs: rent intelligence today, own it tomorrow'
+    content: 'Ratchet docs: guides, API reference and evidence'
 hero:
-  layout: split-left
-  title: Rent intelligence today. Own it tomorrow.
-  tagline: <strong>Ratchet is an OpenAI-compatible gateway.</strong> A small student model answers first, the teacher answers when the student is unsure, and every night the student learns from the teacher's answers. You end up owning the LoRA adapter and its signed training lineage, learned only from teachers whose license allows it.
-  announcement:
-    text: Built on NVIDIA Nemotron and Nebius
-    link: /guides/for-judges/
+  title: Ratchet documentation
+  tagline: Ratchet is an OpenAI-compatible gateway that distills open teacher models into a small student. You end up with an adapter you own, learned only from open teachers, with a gated nightly release.
   actions:
-    - text: Start here
-      link: /guides/what-is-ratchet/
-      variant: default
     - text: Quickstart
       link: /guides/quickstart/
+      variant: default
+    - text: API reference
+      link: /api/http/
       variant: outline
     - text: For judges
       link: /guides/for-judges/
       variant: ghost
 ---
 
-import Section from '../../components/home/Section.astro';
-import RealToday from '../../components/home/RealToday.astro';
-import WhyStrip from '../../components/home/WhyStrip.astro';
-import LinkRow from '../../components/home/LinkRow.astro';
-import Stat from '../../components/Stat.astro';
-import StatRow from '../../components/StatRow.astro';
+import { Steps, Tabs, TabItem, Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import Band from '../../components/home/Band.astro';
+import RealStrip from '../../components/home/RealStrip.astro';
 import PathCard from '../../components/PathCard.astro';
 import PathGrid from '../../components/PathGrid.astro';
-import Flow from '../../components/Flow.astro';
-import FlowStep from '../../components/FlowStep.astro';
 import FadeContent from '../../components/ui/FadeContent.astro';
-import LogoLoop from '../../components/ui/LogoLoop.astro';
-import Closing from '../../components/home/Closing.astro';
 
-<Section id="proof" index="01" eyebrow="Facts you can check" title="Built to be checked, not taken on trust" lead="Every tile is a fact you can check in the repository. The measured results are on the Results page.">
-  <StatRow cols={3} label="Facts about Ratchet">
-    <Stat value={1934} label="tests in the suite" note="They run offline, with no network and no GPU." />
-    <Stat value={95} suffix="%" label="held-out precision floor" note="A new adapter must reach it on golden rows it never trained on." tone="owned" />
-    <Stat value="Open teachers only" label="license-clean, in code" note="A teacher's license must be on an allowlist; closed models are refused." />
-    <Stat value="Signed" label="bill of materials per adapter" note="Ed25519-signed, from the exact training and golden rows, with each teacher and license." tone="owned" />
-    <Stat value={4} count={false} label="release stages" note="Shadow, then 10%, 50% and 100% of traffic, with automatic rollback." />
-    <Stat value="Apache-2.0" label="open source" note="The gateway, Night School and the deploy kit." />
-  </StatRow>
-</Section>
+<Band id="start" eyebrow="Start here" title="From install to evidence in four steps" lead="The shortest route through the docs. Each step links to the page that covers it.">
+<Steps>
 
-<Section id="paths" index="02" eyebrow="Where to go" title="Pick a path" lead="Short guides first, then the reference. Every guide opens with one sentence and an everyday analogy.">
-  <FadeContent distance={16}>
-    <PathGrid cols={4} label="Guides">
-      <PathCard title="Start here" href="/guides/what-is-ratchet/" icon="book" eyebrow="Overview" description="The problem, the idea, how it differs, and what is real today." />
-      <PathCard title="Quickstart" href="/guides/quickstart/" icon="start" eyebrow="No keys" tone="neutral" description="Run the whole loop on your laptop in mock mode: no API keys, no GPU, no bill." />
-      <PathCard title="How it works" href="/guides/big-picture/" icon="loop" eyebrow="Concepts" tone="neutral" description="Every part and how they connect: one request, confidence, the ledger, Night School and the release gate." />
-      <PathCard title="Text-to-SQL adapter" href="/guides/text-to-sql/" icon="database" eyebrow="Worked example" description="A small model that writes SQLite queries, trained only on teacher answers that were run on a database." />
-      <PathCard title="Text-to-SQL adapter: results" href="/guides/results/" icon="chart" eyebrow="Measured" description="The exam on databases it never trained on: how it is scored, and what the run's results file says." />
-      <PathCard title="Run on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="One command" tone="neutral" description="One command prints every step to host Ratchet on Nebius, then runs them. Scripted and tested offline, ready to run." />
-      <PathCard title="API reference" href="/api/http/" icon="code" eyebrow="Reference" tone="neutral" description="Every HTTP route, generated from the gateway's OpenAPI schema, plus every setting and command." />
-      <PathCard title="For judges" href="/guides/for-judges/" icon="check" eyebrow="Hackathon" tone="neutral" description="Where the live gateway is, what to try in five minutes, and what each result rests on." />
-    </PathGrid>
-  </FadeContent>
-</Section>
+1. **Install the gateway.** You need Python 3.10 or newer, `git` and a Nebius Token Factory key. The [Quickstart](/guides/quickstart/#the-one-minute-path) has the commands for macOS, Linux and Windows.
 
-<Section id="today" index="03" eyebrow="Honest status" title="What is real today" lead="What runs today, what is ready to run, and where the numbers come from.">
-  <FadeContent distance={16}>
-    <RealToday
-      asOf="Status as of Oct 26, 2026. The For judges guide keeps the full list."
-      items={[
-        { status: 'done', title: 'Teacher calls on Nebius Token Factory (live gateway, recorded Scout runs)', text: 'NVIDIA Nemotron 3 Ultra built the training data and answers every request on the live gateway. A 20-request smoke run (23 Oct) and three recorded Scout runs are in the repository. They show the system working end to end and measure no savings.' },
-        { status: 'done', title: 'Text-to-SQL and tool-calling adapters, trained on a borrowed GPU', text: 'LoRA adapters on Nemotron 3 Nano 4B, trained from Ultra answers on a borrowed GPU. Scores on exams they never saw are on <a href="/guides/results/">Results</a>. SQL is the headline result; the tool-calling result is a second, smaller one.' },
-        { status: 'done', title: 'Round-2 adapter retrained on Nebius AI Cloud', text: 'The round-2 text-to-SQL recipe was retrained by hand on 27 Oct 2026 as a Nebius Serverless Job on one preemptible L40S, with checkpoints in Object Storage. The original adapters were trained on a borrowed GPU.' },
-        { status: 'next', title: 'The student on a Nebius endpoint', text: 'The student was served by hand, in two short sessions, on a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted (<a href="https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius">evidence</a>). The live gateway is not connected to it. The nightly training job and the gateway\'s connection to an endpoint are written and tested against fakes, ready to run with <code>make nebius-up</code>.' },
-      ]}
-    />
-  </FadeContent>
-</Section>
+2. **Send your first request.** The gateway speaks the OpenAI chat-completions format, so any OpenAI SDK works. Copy an example from the next section, or see the [API guide](/reference/api/#examples).
 
-<Section id="speeds" index="04" eyebrow="How it works" title="One loop, three speeds" lead="The same gateway runs three loops at different speeds. The student and the teacher wear the same colours on every page.">
-  <FadeContent distance={16}>
-    <Flow label="The three loops">
-      <FlowStep title="Every request" meta="milliseconds to seconds" tone="owned">
-        The student samples its answer three times. If the samples agree and the confidence reaches the version's threshold, its answer is served; if not, the teacher answers. A few served answers are audited by the teacher.
-      </FlowStep>
-      <FlowStep title="Every few minutes" meta="the release gate">
-        The gate reads the audits and moves a new version forward (shadow, then 10%, 50% and 100% of traffic) or rolls it back.
-      </FlowStep>
-      <FlowStep title="Every night" meta="Night School">
-        A fresh adapter is trained on the teacher's answers only, tested on a held-out golden set, and handed to the gate.
-      </FlowStep>
-    </Flow>
-  </FadeContent>
-</Section>
+3. **Read the `ratchet` block.** Every answer is a standard `chat.completion` plus a `ratchet` block that says who answered (`served_by`), how confident the student was and what the request cost. [The fields](/guides/quickstart/#send-your-own-request) are listed in the Quickstart.
 
-<Section id="why" index="05" eyebrow="Why it matters" title="Cheaper, yours, license-clean and safe to release" tint>
-  <a slot="aside" class="rt-button rt-button--outline" href="/guides/why-it-matters/">Why it matters</a>
-  <WhyStrip
-    items={[
-      { icon: 'coin', title: 'Cost', text: 'Pay the teacher only when the student is unsure. Savings are reported per token and by GPU-hours paid, and the report says when an endpoint costs more than it saves.', href: '/guides/cost-and-savings/' },
-      { icon: 'key', title: 'Ownership', tone: 'owned', text: 'You keep the LoRA adapter and its signed training lineage. The Nano base model keeps NVIDIA’s license.', href: '/guides/evidence/' },
-      { icon: 'scale', title: 'License-clean', text: 'Only teachers whose license allows training are accepted. Each stored example records its teacher and license.', href: '/guides/licenses/' },
-      { icon: 'gate', title: 'Safe releases', text: 'A new adapter passes a held-out exam, a shadow run and a 10%, 50%, 100% canary, with automatic rollback.', href: '/guides/release-gate/' },
-    ]}
-  />
-</Section>
+4. **Check the evidence.** The [Results](/guides/results/) page shows the exam scores on databases the adapter never trained on, and [Evidence you can check](/guides/evidence/) shows how to verify each claim yourself.
 
-<Section id="built-with" index="06" eyebrow="Built with" title="Open models and open tools">
-  <LogoLoop
-    label="Built with"
-    items={[
-      { label: 'NVIDIA Nemotron 3', note: 'Nano 4B, Ultra' },
-      { label: 'Nebius Token Factory', note: 'teacher' },
-      { label: 'vLLM', note: 'student server' },
-      { label: 'Hugging Face PEFT', note: 'LoRA' },
-      { label: 'TRL', note: 'training' },
-      { label: 'Transformers', note: 'models' },
-      { label: 'FastAPI', note: 'gateway' },
-      { label: 'SQLite', note: 'ledger' },
-      { label: 'Tavily', note: 'Scout search' },
-      { label: 'Starlight', note: 'these docs' },
-    ]}
-  />
-  <LinkRow
-    label="Ratchet links"
-    items={[
-      { label: 'Source on GitHub', href: 'https://github.com/harshbhx/ratchet', icon: 'repo' },
-      { label: 'Try it live', href: 'https://live.ratchet.dualmindlab.tech', icon: 'spark' },
-      { label: 'Story site', href: 'https://ratchet.dualmindlab.tech', icon: 'file' },
-      { label: 'Changelog', href: 'https://github.com/harshbhx/ratchet/blob/main/CHANGELOG.md', icon: 'file' },
-      { label: 'License', href: 'https://github.com/harshbhx/ratchet/blob/main/LICENSE', icon: 'scale' },
-    ]}
-  />
-</Section>
+</Steps>
+</Band>
 
-<Closing />
+<Band id="first-request" tint eyebrow="Your first request" title="Send a request to the local gateway" lead="These are the Quickstart's tested examples. The gateway runs on port 8000; replace the key with the one you chose.">
+<Tabs syncKey="first-request">
+<TabItem label="curl">
+
+```bash
+curl -s http://localhost:8000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer your-local-api-key-here' \
+  -H 'X-Ratchet-Task: ticket-triage' \
+  -d '{"model":"ratchet","messages":[
+        {"role":"user","content":"I was charged twice for my Pro plan this month. Order #48213."}]}'
+```
+
+</TabItem>
+<TabItem label="Python">
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="your-local-api-key-here")
+resp = client.chat.completions.create(
+    model="ratchet",
+    messages=[{"role": "user", "content": "I was charged twice this month."}],
+    extra_headers={"X-Ratchet-Task": "ticket-triage"},
+)
+print(resp.choices[0].message.content)
+print(resp.model_extra["ratchet"]["served_by"])  # teacher, until a trained student is serving
+```
+
+</TabItem>
+<TabItem label="Node">
+
+```js
+import OpenAI from "openai";
+const client = new OpenAI({ baseURL: "http://localhost:8000/v1", apiKey: "your-local-api-key-here" });
+const r = await client.chat.completions.create(
+  { model: "ratchet", messages: [{ role: "user", content: "Where is my order #48213?" }] },
+  { headers: { "X-Ratchet-Task": "ticket-triage" } },
+);
+```
+
+</TabItem>
+</Tabs>
+
+<Aside type="note" title="Real model calls">
+Every call here is a real model call and costs cents, and the gateway needs your Token Factory key. Prefer not to install anything? Use the live gateway at [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech). The [Quickstart](/guides/quickstart/) has the full setup.
+</Aside>
+</Band>
+
+<Band id="sections" eyebrow="Browse" title="Find your way around" lead="Each section opens with a short guide, with the reference behind it.">
+<FadeContent distance={12}>
+<PathGrid cols={4} label="Documentation sections">
+<PathCard title="Guides" href="/guides/what-is-ratchet/" icon="book" eyebrow="Learn" description="The problem, the idea and how the parts fit: one request, confidence, the ledger, Night School and the release gate." />
+<PathCard title="API" href="/api/http/" icon="code" eyebrow="Reference" tone="neutral" description="Every HTTP route, generated from the gateway's OpenAPI schema, plus the endpoint map." />
+<PathCard title="Reference" href="/reference/configuration/" icon="file" eyebrow="Reference" tone="neutral" description="Configuration, environment variables, the command line, the Python API and the architecture." />
+<PathCard title="Evidence and results" href="/guides/results/" icon="chart" eyebrow="Measured" description="The exam on databases the adapter never trained on, and how to check each claim yourself." />
+<PathCard title="Run it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="Scripted" tone="neutral" description="One command prints every step to run Ratchet on Nebius, then runs them. Tested offline." />
+<PathCard title="Security" href="/guides/security/" icon="shield" eyebrow="Safety" description="Who may call what, how spend is capped, what is logged and stored, and the threat model." />
+<PathCard title="FAQ" href="/guides/faq/" icon="spark" eyebrow="Help" tone="neutral" description="Short answers to the questions that come up most, with links to the full pages." />
+<PathCard title="For judges" href="/guides/for-judges/" icon="check" eyebrow="Hackathon" tone="neutral" description="Where the live gateway is, what to try in five minutes, and what each result rests on." />
+</PathGrid>
+</FadeContent>
+</Band>
+
+<Band id="today" tint eyebrow="Honest status" title="What is real today" lead="What ran, what was measured, and where each claim is checked.">
+<RealStrip
+asOf="Status as of Oct 26, 2026, with the retrain of Oct 27. The For judges guide keeps the full list."
+items={[
+{ badge: 'Live', variant: 'success', title: 'Every model call runs on Nebius Token Factory', text: 'NVIDIA Nemotron 3 Ultra answers every request on the live gateway and built the training data.', href: '/guides/for-judges/' },
+{ badge: 'Measured', variant: 'note', title: 'Exam scores on unseen databases', text: 'The text-to-SQL adapter is scored on databases it never trained on. The tool-calling result is a second, smaller one.', href: '/guides/results/' },
+{ badge: 'Done', variant: 'success', title: 'Retrained on Nebius AI Cloud', text: 'The round-2 text-to-SQL recipe was retrained by hand on 27 Oct 2026 on one preemptible L40S. The original adapters were trained on a borrowed GPU.', href: '/guides/host-on-nebius/' },
+{ badge: 'Speed test', variant: 'caution', title: 'Student endpoint speed tests', text: 'The student was served by hand on a Nebius Serverless Endpoint for speed tests, then deleted. The live gateway is not connected to it.', href: 'https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius' },
+]}
+/>
+</Band>
+
+<Band id="more" eyebrow="Keep going" title="Popular next pages">
+<CardGrid>
+<LinkCard title="What is Ratchet?" description="The idea in plain words, and what is real today." href="/guides/what-is-ratchet/" />
+<LinkCard title="One request's journey" description="What happens to a single request, step by step." href="/guides/request-journey/" />
+<LinkCard title="The release gate" description="Shadow, then 10%, 50% and 100% of traffic, with automatic rollback." href="/guides/release-gate/" />
+<LinkCard title="Source on GitHub" description="Apache-2.0: the gateway, Night School and the deploy kit." href="https://github.com/harshbhx/ratchet" />
+</CardGrid>
+</Band>

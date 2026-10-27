@@ -304,34 +304,44 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--rt-surface-2);
-  color: var(--rt-ink);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  background: color-mix(in srgb, var(--rt-owned-soft) 35%, var(--rt-surface-2));
+  color: var(--rt-ink-2);
+  font-size: 0.74rem;
+  font-weight: 550;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
   white-space: nowrap;
-  box-shadow: inset 0 -1px 0 var(--rt-line);
+  box-shadow: inset 0 -1px 0 var(--rt-line-strong);
   border-bottom: 0;
 }
 .sl-markdown-content td:not(:where(.not-content *)) {
   color: var(--rt-ink-2);
   min-width: 6.5rem;
+  overflow-wrap: break-word;
 }
+/* The first column labels the row. */
 .sl-markdown-content td:first-child:not(:where(.not-content *)) {
   color: var(--rt-ink);
+  font-weight: 560;
 }
-.sl-markdown-content tbody tr:nth-child(even) td:not(:where(.not-content *)) {
-  background: color-mix(in srgb, var(--rt-surface-2) 70%, var(--rt-surface));
-}
+/* Hairline dividers only; the hover tint below follows the row under the pointer. */
 .sl-markdown-content tbody tr:last-child td:not(:where(.not-content *)) {
   border-bottom: 0;
 }
 .sl-markdown-content tbody tr:hover td:not(:where(.not-content *)) {
   background: color-mix(in srgb, var(--rt-owned-soft) 70%, var(--rt-surface));
 }
-.sl-markdown-content td code:not(:where(.not-content *)) {
+.sl-markdown-content td code:not(:where(.not-content *)),
+.sl-markdown-content th code:not(:where(.not-content *)) {
   overflow-wrap: normal;
   word-break: normal;
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--rt-line);
+  border-radius: 0.4rem;
+  background: var(--rt-surface-2);
+  font-size: 0.82em;
+  text-transform: none;
+  letter-spacing: 0;
 }
 .sl-markdown-content table[data-more='end'] {
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
