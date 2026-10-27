@@ -1,7 +1,7 @@
 {
   "levels": [
     { "level": "public", "who": "Anyone" },
-    { "level": "api", "who": "An API key when keys are set; anyone on the open demo" },
+    { "level": "api", "who": "An API key when keys are set; anyone on the public gateway" },
     { "level": "dashboard", "who": "An admin or dashboard key in live mode; anyone in mock mode" },
     { "level": "bom", "who": "As dashboard, or anyone when bills of materials are made public" },
     { "level": "metrics", "who": "As dashboard, or a metrics scraper's token" },
@@ -52,8 +52,7 @@
         { "method": "GET", "path": "/readyz", "level": "public", "what": "Readiness: ledger, teacher and student checks" },
         { "method": "GET", "path": "/metrics", "level": "metrics", "what": "Prometheus metrics" },
         { "method": "POST", "path": "/ratchet/admin/versions/{vid}/rollback", "level": "admin", "what": "Roll a canary back, with a reason in the audit log" },
-        { "method": "PUT", "path": "/ratchet/tasks/{name}", "level": "admin", "what": "Register or change a task" },
-        { "method": "POST", "path": "/ratchet/demo/day", "level": "mock", "what": "Simulate a day of traffic and a night of training" }
+        { "method": "PUT", "path": "/ratchet/tasks/{name}", "level": "admin", "what": "Register or change a task" }
       ]
     }
   ],

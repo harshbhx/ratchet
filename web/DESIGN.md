@@ -15,7 +15,7 @@ Use this metaphor with restraint: a few deliberate moments, not on every heading
 ## Voice
 
 - Plain English, short sentences, concrete numbers. No hype words ("revolutionary", "seamless", "game-changing", "unleash", "supercharge", "magic").
-- Every number is either live from the API, or labelled **Simulation** with its source (`SIM_SOURCE` in `src/lib/sim.ts`), or a third-party fact with a link. Never invent numbers, customers, testimonials or logos.
+- Every number is either live from the API, measured (from `evidence/`), or a third-party fact with a link. Never invent numbers, customers, testimonials or logos. The site shows no simulation: no simulated charts, no scrubber, no recorded fallback.
 - Never draw company logos (NVIDIA, Nebius, OpenAI, Anthropic, Tavily, GitHub). Name them in text.
 
 ## Color has meaning
@@ -45,13 +45,12 @@ One function, `whoLabel` in `src/lib/who-model.ts`, gives every badge its words 
 
 While `student_serving.kind` is `hosted_fallback`: say "the student" or "the hosted Nano (untuned)", never "your adapter" (`studentCopy`; otherwise "Answered by your adapter", never "your model": the customer owns an adapter, not a model); hide the live version's golden precision and say "not covered by the certificate" instead (`precisionShown`); the dashboard header names the serving student (`servingLine`). Never call the teacher "rented" in a badge; name where it runs.
 
-### Live and simulation: the switch, the strip and the shared notice (FR-11.30, FR-11.31)
+### Live gateway: the strip and the last upstream calls (FR-11.30, FR-11.31)
 
-The demo VM serves a live gateway and a simulation ([ADR 0133](../docs/adr/0133-live-and-simulation-hosts.md)); `src/lib/surface-model.ts` (pure, tested in `tests/surface-model.test.mjs`) reads `/ratchet/stats` `links`, `demo` and `upstream`, and every field is optional so an older gateway just hides what needs it.
+`src/lib/surface-model.ts` (pure, tested in `tests/surface-model.test.mjs`) reads `/ratchet/stats` `upstream`, and every field is optional so an older gateway just hides what needs it.
 
-- **No header switch.** The header has no live or simulation chip. The surface a page is on shows in the footer's status line, and the menu's "Simulation demo" link (`links.sim`) opens the simulation. Labels on simulated numbers and charts stay (INV-20).
-- **Live strip.** In live mode, a row under the four numbers: "Last Token Factory call: 3 min ago · nvidia/Nemotron-3-Ultra-550b-a55b · 4.2 s" and the same for Tavily. A failure reads "failed 3 min ago (timeout)" or "(HTTP 429)", then "last success 40 min ago". With no call yet: "No Token Factory call since the gateway started N min ago". Never content, only a model id, a time and a status. Hidden in mock mode, where the strip already says "Simulation (mock models)". "Open the simulation" or "Open the live gateway" sits next to "Open the dashboard" when the link is known.
-- **Dashboard.** Live: the same last-call line in the header. Simulation: the notice "Shared simulation: every visitor sees and changes the same state. It resets after 2 h without activity, 30 simulated days or 200,000 requests." above the demo controls (only the limits that are set), and a note when a click reset it. A `demo_reset` event reads "Simulation reset".
+- **Live strip.** In live mode, a row under the four numbers: "Last Token Factory call: 3 min ago · nvidia/Nemotron-3-Ultra-550b-a55b · 4.2 s" and the same for Tavily. A failure reads "failed 3 min ago (timeout)" or "(HTTP 429)", then "last success 40 min ago". Never content, only a model id, a time and a status. A gateway on mock models (a local install) shows "Mock models" there instead.
+- **Dashboard.** The same last-call line in the header. There are no controls that run a day, break a release or start an outage: the dashboard only reads.
 
 ## Type and layout
 
@@ -71,7 +70,6 @@ The demo VM serves a live gateway and a simulation ([ADR 0133](../docs/adr/0133-
 - `src/pages/dashboard/drawer.tsx`: `Drawer`, `DrawerBody`, `DrawerFooter`, a side sheet for detail and editing (modal, focus kept inside, Escape and a click outside close it, focus returns to the opener).
 - `@/lib/hooks`: `useStats(intervalMs)`, `useTheme()`, `useCountUp()`, `useInterval()`.
 - `@/lib/utils`: `cn`, `fmtUsd`, `fmtPct`, `fmtInt`, `fmtMs`, `domainOf`, `safeHref`, `REPO_URL`, `DOCS_URL`.
-- `@/lib/sim`: the seed-7 simulation table (`SIM_DAYS`, `SIM_TOTAL`, `SIM_SOURCE`), the same run's cost report (`SIM_COST_REPORT`, a `CostReport`, so it renders with the code a live report uses) and the command that reproduces it (`SIM_COMMAND`). A test pins every number to a fresh run.
 - Libraries available: `motion/react` (animation; respect reduced motion; `MotionConfig reducedMotion="user"` is set globally), `lucide-react` (icons; there is no GitHub icon), `recharts` (charts), `react-router` v8 (`Link`, `NavLink`).
 
 ## Motion

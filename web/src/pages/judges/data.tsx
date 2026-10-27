@@ -49,8 +49,6 @@ export async function getText(path: string): Promise<Fetched<string>> {
   }
 }
 
-export type DemoAction = "day" | "break" | "outage";
-
 /** A request sent from this page's "Send a request" box, kept in memory for the cascade chapter. */
 export interface SentRequest {
   requestId: string;
@@ -66,15 +64,12 @@ interface JudgesState {
   addSent: (r: SentRequest) => void;
   stats: Stats | null;
   statsRead: Fetched<Stats>;
-  /** Simulation on the mock demo, measured on a live gateway, null while unknown. */
+  /** Measured on a live gateway, null while unknown. */
   status: RealStatus | null;
   mock: boolean;
-  /** Bumped whenever the gateway's state may have moved (a new stats read with more requests, a demo action). */
+  /** Bumped whenever the gateway's state may have moved (a new stats read with more requests, a sent request). */
   generation: number;
   refresh: () => Promise<void>;
-  busy: DemoAction | null;
-  /** Run a mock-only demo action, then read the stats again. Returns the line to show. */
-  act: (a: DemoAction) => Promise<{ ok: boolean; text: string }>;
 }
 
 const Ctx = createContext<JudgesState | null>(null);
@@ -85,31 +80,10 @@ export function useJudges(): JudgesState {
   return v;
 }
 
-const ACTION: Record<DemoAction, { path: string; done: (b: Record<string, unknown>) => string }> = {
-  day: {
-    path: "/ratchet/demo/day?workload=mixed&requests=1500",
-    done: (b) => {
-      const night = (b.night ?? {}) as { trained?: boolean; version?: number; reason?: string };
-      return night.trained && night.version
-        ? `Simulated day ${String(b.day ?? "")} ran; Night School trained v${night.version}.`
-        : `Simulated day ${String(b.day ?? "")} ran; no training tonight${night.reason ? ` (${String(night.reason).replace(/_/g, " ")})` : ""}.`;
-    },
-  },
-  break: {
-    path: "/ratchet/demo/break-next",
-    done: (b) => `The next trained student (${String(b.corrupt ?? "next version")}) will be deployed corrupted. Run a day to watch the gate catch it.`,
-  },
-  outage: {
-    path: "/ratchet/demo/student-outage?seconds=45",
-    done: (b) => `The student endpoint is down for ${String(b.seconds ?? 45)} s. Requests in that time go to the teacher.`,
-  },
-};
-
-/** Polls `/ratchet/stats` and runs the mock demo's actions, for every chapter on the page. */
+/** Polls `/ratchet/stats` for every chapter on the page. */
 export function JudgesProvider({ children }: { children: ReactNode }) {
   const [statsRead, setStatsRead] = useState<Fetched<Stats>>({ state: "loading" });
   const [generation, setGeneration] = useState(0);
-  const [busy, setBusy] = useState<DemoAction | null>(null);
   const lastRequests = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
@@ -137,25 +111,6 @@ export function JudgesProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  const act = useCallback(
-    async (a: DemoAction) => {
-      setBusy(a);
-      try {
-        const r = await getJson<Record<string, unknown>>(ACTION[a].path, { method: "POST" });
-        await refresh();
-        setGeneration((g) => g + 1);
-        if (r.state === "ok") return { ok: true, text: ACTION[a].done(r.data) };
-        if (r.state === "error" && r.status === 409) return { ok: false, text: "Another demo action is running. Try again in a moment." };
-        if (r.state === "error" && r.status === 403) return { ok: false, text: "Demo controls are on in mock mode only." };
-        if (r.state === "error" && r.status === 0) return { ok: false, text: "The gateway did not answer." };
-        return { ok: false, text: r.state === "error" && r.message ? r.message : "The action failed." };
-      } finally {
-        setBusy(null);
-      }
-    },
-    [refresh],
-  );
-
   const [sent, setSent] = useState<SentRequest[]>([]);
   const addSent = useCallback((r: SentRequest) => {
     setSent((xs) => [r, ...xs.filter((x) => x.requestId !== r.requestId)].slice(0, 8));
@@ -173,10 +128,8 @@ export function JudgesProvider({ children }: { children: ReactNode }) {
       mock: stats?.mode === "mock" && (stats.demo?.controls ?? true) !== false,
       generation,
       refresh,
-      busy,
-      act,
     }),
-    [sent, addSent, stats, statsRead, generation, refresh, busy, act],
+    [sent, addSent, stats, statsRead, generation, refresh],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

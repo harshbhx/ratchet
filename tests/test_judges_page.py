@@ -56,10 +56,10 @@ def _command_exists(cmd: str) -> bool:
 def test_whats_real_entries_have_evidence_and_a_way_to_check():
     data = json.loads(REAL.read_text(encoding="utf-8"))
     statuses = _statuses()
-    assert statuses == ["real", "measured", "simulation", "pending", "not-run"]
-    for key in ("repo", "docs", "demo"):
+    assert statuses == ["real", "measured", "pending", "not-run"]
+    for key in ("repo", "docs"):
         assert data["links"][key].startswith("https://"), key
-    assert "video" in data["links"]  # the slot for the demo video, null until it is published
+    assert "video" in data["links"]  # the slot for the video, null until it is published
 
     ids = [e["id"] for e in data["entries"]]
     assert len(ids) == len(set(ids)) and ids
@@ -92,7 +92,22 @@ def test_whats_real_keeps_the_seeded_facts():
     assert "borrowed GPU" in by_id["adapter-training"]["evidence"]
     assert by_id["exam-result"]["status"] in ("pending", "measured")
     assert by_id["gateway-live"]["status"] == "not-run" and by_id["scout-tavily"]["status"] == "real"
-    assert by_id["demo-numbers"]["status"] == "simulation"
+    assert "demo-numbers" not in by_id  # the simulation entry is gone: the site shows only real and live things
+
+    def strings(node, key=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                yield from strings(v, k)
+        elif isinstance(node, list):
+            for v in node:
+                yield from strings(v, key)
+        elif isinstance(node, str) and key not in ("id", "entry", "path", "href"):
+            yield node
+
+    # What the judges page prints from its data files says nothing about a simulation or a demo (ids may keep `live-demo`).
+    for f in (REAL, SURFACE):
+        for text in strings(json.loads(f.read_text(encoding="utf-8"))):
+            assert not re.search(r"simulat|\bdemo\b", text, re.I), (f.name, text[:80])
 
 
 @pytest.mark.req("INV-21")

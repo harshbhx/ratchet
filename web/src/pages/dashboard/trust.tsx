@@ -218,7 +218,7 @@ export function TrustPanel({ stats }: { stats: Stats }) {
           <span className="text-muted"> of {fmtInt(privacy.examples)} stored examples</span>
           <p className="mt-1">
             had identifiers replaced with placeholders ({fmtInt(privacy.placeholders)} in total) before they became training data.
-            {stats.mode === "mock" && privacy.redacted_examples === 0 && " The simulated traffic contains none; try the redactor below."}
+            {stats.mode === "mock" && privacy.redacted_examples === 0 && " The mock traffic contains none; try the redactor below."}
           </p>
         </Tile>
 

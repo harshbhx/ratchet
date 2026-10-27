@@ -881,100 +881,15 @@ def test_dashboard_admin_key_stays_in_memory():
 
 
 # ---------- web: the story page ----------
-SIM_TS = WEB / "src" / "lib" / "sim.ts"
 STORY = WEB / "src" / "pages" / "landing"
 REPO = WEB.parent
-# web/src/lib/sim.ts names -> the reference run's keys (`sim.simulate.run`: `days` and `totals`).
-SIM_DAY_KEYS = {
-    "student": "student_share",
-    "escalated": "escalation_rate",
-    "audit": "audit_agreement",
-    "costPer1k": "cost_per_1k",
-    "baselinePer1k": "baseline_per_1k",
-    "saved": "savings_pct",
-}
-SIM_TOTAL_KEYS = {"requests": "requests", "cost": "cost_usd", "baseline": "baseline_usd", "saved": "savings_pct"}
-
-
-def _ts_json(path: Path, name: str) -> Any:
-    """`export const <name>: T = {...};` up to its `// end <name>` line, read as strict JSON with every number kept as
-    ("int" | "float", its source text), so a check can hold it to the precision it is written with."""
-    src = path.read_text(encoding="utf-8")
-    m = re.search(rf"^export const {name}(?:: [^=]+)? = (\{{.*?^\}});\n// end {name}$", src, re.M | re.S)
-    assert m, f"{path.name} has no `export const {name} = {{...}};` followed by `// end {name}`"
-    return json.loads(m.group(1), parse_float=lambda s: ("float", s), parse_int=lambda s: ("int", s))
-
-
-def _number_off(literal: tuple[str, str], have: Any) -> bool:
-    """True unless `have` rounds to the literal at the literal's own precision (an int literal: the nearest whole)."""
-    kind, text = literal
-    if have is None or isinstance(have, bool) or not isinstance(have, (int, float)):
-        return True
-    if kind == "int" and isinstance(have, int):
-        return have != int(text)
-    decimals = len(text.split(".")[1]) if kind == "float" and "." in text and "e" not in text.lower() else 0
-    return abs(have - float(text)) > 0.5 * 10**-decimals + 1e-9 * max(1.0, abs(have))
-
-
-def _page_vs_run(page: Any, run: Any, where: str = "") -> list[str]:
-    """Every leaf the page holds that the run does not have, or has with another value."""
-    if isinstance(page, dict):
-        if not isinstance(run, dict):
-            return [f"{where}: the run has {run!r}, not an object"]
-        out = []
-        for k, v in page.items():
-            path = f"{where}.{k}" if where else k
-            out += _page_vs_run(v, run[k], path) if k in run else [f"{path}: not in the run's report"]
-        return out
-    if isinstance(page, tuple):
-        return [f"{where}: the page says {page[1]}, the run has {run!r}"] if _number_off(page, run) else []
-    return [] if page == run else [f"{where}: the page says {page!r}, the run has {run!r}"]
-
-
-def _ts_numbers(text: str) -> dict[str, tuple[str, str]]:
-    """`key: 0.44` pairs of a one-line TypeScript object, numbers as ("float" | "int", text); null as ("null", "null")."""
-    pairs = re.findall(r"(\w+): (null|-?\d+(?:\.\d+)?)\b", text)
-    return {k: ("null", v) if v == "null" else ("float" if "." in v else "int", v) for k, v in pairs}
 
 
 @pytest.mark.req("FR-7.23", "NFR-11", "INV-20")
-def test_story_simulation_numbers_match_reference_run(reference_run, sim_reference):
-    """Every simulation number the story page prints (web/src/lib/sim.ts) is the reference run's, at the precision it
-    is written with: the honest bill's cost report (`SIM_COST_REPORT`, the student priced per token and by GPU-hours,
-    the break-even, the crossover, the recommendation and its explanation word for word), "Watch it learn"'s days and
-    totals, the command the page says reproduces them, and the GPU-hour line that command prints. A change to the
-    simulator or the cost report that moves any of them fails here instead of leaving the page stale."""
-    import os
-    import shlex
-
-    from sim.simulate import parser, table
-
-    report = _ts_json(SIM_TS, "SIM_COST_REPORT")
-    assert report["recommendation"] == "hosted_fallback" and report["views"]["gpu_hours"]["savings_usd"][1].startswith("-")
-    assert _page_vs_run(report, reference_run["cost"]) == []
-
-    src = SIM_TS.read_text(encoding="utf-8")
-    days = [_ts_numbers(line) for line in src.splitlines() if line.strip().startswith("{ day:")]
-    assert [int(d["day"][1]) for d in days] == [d["day"] for d in reference_run["days"]]
-    bad = [
-        f"day {d['day'][1]} {k}: page {d[k][1]}, run {run[want]!r}"
-        for d, run in zip(days, reference_run["days"], strict=True)
-        for k, want in SIM_DAY_KEYS.items()
-        if ((run[want] is not None) if d[k][0] == "null" else _number_off(d[k], run[want]))
-    ]
-    assert bad == []
-    totals = _ts_numbers(_ts_literal(SIM_TS, "SIM_TOTAL"))
-    assert sorted(totals) == sorted(SIM_TOTAL_KEYS)
-    assert [k for k, want in SIM_TOTAL_KEYS.items() if _number_off(totals[k], reference_run["totals"][want])] == []
-
-    # The command the page prints reproduces exactly the reference run's inputs.
-    argv = shlex.split(json.loads(_ts_literal(SIM_TS, "SIM_COMMAND")))
-    assert argv[:3] == ["python", "-m", "sim.simulate"]
-    assert vars(parser().parse_args([*argv[3:], "--out", os.devnull])) == vars(sim_reference.reference_args())
-    # The line it prints is the one web/tests/story-model.test.mjs pins `simulateLine` to.
-    line = next(x for x in table(reference_run).splitlines() if x.startswith("by GPU-hours"))
-    assert f'"{line}"' in (WEB / "tests" / "story-model.test.mjs").read_text(encoding="utf-8"), line
-
+def test_story_bill_matches_the_cost_report():
+    """The honest bill prints only a cost report the gateway sent (no reference run is baked into the page): the web
+    source holds no simulation numbers file, and the four answers the chapter lists are the report's own."""
+    assert not (WEB / "src" / "lib" / "sim.ts").exists()
     # The four answers the chapter lists are the report's, in its order, and "more than half" idle is its threshold.
     from ratchet.cost import IDLE_SHARE, RECOMMENDATIONS
 

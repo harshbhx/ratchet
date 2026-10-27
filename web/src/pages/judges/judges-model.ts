@@ -24,8 +24,8 @@ export function unavailable(path: string, status: number, message: string): Unav
   }
   if (status === 404 || status === 405) return { kind: "missing", text: `Not available in this build: ${path} answered ${status}.` };
   if (status === 401 || status === 403) {
-    if (/mock mode/i.test(message)) return { kind: "mock-only", text: "Demo controls are on in mock mode only; this gateway is live." };
-    return { kind: "locked", text: `This gateway asks for a key to read ${path} (${status}). The open demo needs none.` };
+    if (/mock mode/i.test(message)) return { kind: "mock-only", text: "That action is available in mock mode only; this gateway is live." };
+    return { kind: "locked", text: `This gateway asks for a key to read ${path} (${status}). The public gateway needs none.` };
   }
   if (status === 409) return { kind: "failed", text: message ? `Not yet: ${message}.` : `${path} answered 409.` };
   return { kind: "failed", text: message ? `The gateway answered ${status}: ${message}` : `The gateway answered ${status}.` };
@@ -57,7 +57,7 @@ export const ROUTE_WORDS: Record<string, string> = {
   task_disabled: "teacher: task disabled",
   student_disabled: "teacher: student turned off",
   passthrough: "passed through (embeddings)",
-  demo_split: "student: demo split, picked at random (not by confidence)",
+  demo_split: "student: random split, picked at random (not by confidence)",
 };
 
 export function routeWords(route: string | null | undefined): string {

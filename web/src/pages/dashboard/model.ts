@@ -176,7 +176,7 @@ export const EVENT_LABEL: Record<string, string> = {
   endpoint: "Endpoint",
   fault: "Fault injected",
   warmup: "Warm-up",
-  demo_reset: "Simulation reset",
+  demo_reset: "Reset",
 };
 
 /**

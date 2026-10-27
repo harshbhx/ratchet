@@ -6,18 +6,13 @@ import { TextGenerate } from "@/components/fx/text-generate";
 import { ButtonA, ButtonLink } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container } from "@/components/ui/section";
-import type { Mode } from "@/lib/api";
-import { DEMO_URL, DOCS_URL, LIVE_URL, REPO_URL } from "@/lib/utils";
+import { DOCS_URL, LIVE_URL, REPO_URL } from "@/lib/utils";
 import { LogoMark } from "@/components/ui/logo";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
 
 const QUICKSTART = `pip install -e ".[dev]"
 
-# the full loop in simulation (mock models)
-python -m sim.simulate --days 10 \\
-  --requests 2000 --bad-deploy-version 3
-
-# the gateway, with a trained student
+# the gateway on mock models, offline
 RATCHET_MODE=mock \\
 RATCHET_MOCK_WARMUP_DAYS=4 \\
   uvicorn ratchet.gateway:app --port 8000
@@ -31,12 +26,7 @@ const PROOF = [
   { value: "Apache‑2.0", label: "the code", sub: "model weights keep their own licenses" },
 ];
 
-/**
- * `mode` from the page's stats poll: Night School runs on the simulation, not on the live gateway, so on the live site the
- * closing card sends a reader to the simulation's dashboard for versions, gates and rollbacks.
- */
-export function OpenSource({ mode = null }: { mode?: Mode | null }) {
-  const sim = mode === "mock";
+export function OpenSource() {
   return (
     <Chapter id="run" className="border-t border-line bg-bg-sunken/60 pb-16 sm:pb-20 lg:pb-24">
       <Container>
@@ -48,8 +38,8 @@ export function OpenSource({ mode = null }: { mode?: Mode | null }) {
               lead={
                 <>
                   <Lead>
-                    Apache-2.0. No keys and no GPU needed to see the whole loop: mock mode runs the gateway, Night School, the gates and Scout on
-                    your laptop.
+                    Apache-2.0. No keys and no GPU needed to try the code: mock mode runs the gateway, Night School, the gates and Scout on
+                    your laptop. Night School is built and tested, and has not run on live traffic.
                   </Lead>
                   <Lead>
                     Model weights keep their own licenses: Nemotron Nano under the NVIDIA Nemotron Open Model License, Nemotron 3 Ultra under
@@ -82,11 +72,7 @@ export function OpenSource({ mode = null }: { mode?: Mode | null }) {
             <CodeBlock title="quick start · terminal" copy={QUICKSTART} className="bg-surface shadow-card">
               {tok.k("pip")} install -e {tok.s('".[dev]"')}
               {"\n\n"}
-              {tok.c("# the full loop in simulation (mock models)")}
-              {"\n"}
-              {tok.k("python")} -m sim.simulate --days 10 \{"\n"}
-              {"  "}--requests 2000 --bad-deploy-version 3{"\n\n"}
-              {tok.c("# the gateway, with a trained student")}
+              {tok.c("# the gateway on mock models, offline")}
               {"\n"}
               RATCHET_MODE=mock \{"\n"}
               RATCHET_MOCK_WARMUP_DAYS=4 \{"\n"}
@@ -104,23 +90,18 @@ export function OpenSource({ mode = null }: { mode?: Mode | null }) {
               <LogoMark className="mx-auto mb-7 size-12" />
               <TextGenerate
                 as="h2"
-                text="Your traffic is already teaching. Keep what it learns."
+                text="Your traffic can teach. Keep what it learns."
                 className="mx-auto max-w-[22ch] text-balance text-3xl font-semibold tracking-[-0.03em] text-ink sm:text-[2.75rem] sm:leading-[1.08]"
               />
               <p className="mx-auto mt-5 max-w-[52ch] text-pretty text-[17px] leading-relaxed text-ink-2">
-                {sim
-                  ? "Run Scout and watch each call get routed. Then open the dashboard to see every version, gate and rollback."
-                  : "Run Scout and watch each call get routed. Then open the simulation's dashboard to see every version, gate and rollback, with mock models: Night School does not run on the live demo."}
+                Run Scout and watch each call get routed. Then open the dashboard to see the gateway's own traffic, costs and releases.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
                 <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="lg">
-                  Try the live demo <ArrowUpRight aria-hidden />
-                </ButtonA>
-                <ButtonA href={sim ? DEMO_URL : `${DEMO_URL}/dashboard`} target="_blank" rel="noopener noreferrer" size="lg" variant="outline">
-                  {sim ? "Open the simulation" : "Open the simulation's dashboard"} <ArrowUpRight aria-hidden />
+                  Try the live gateway <ArrowUpRight aria-hidden />
                 </ButtonA>
                 <MovingBorderLink to="/scout">
-                  Try the Scout demo <ArrowRight aria-hidden />
+                  Try Scout live <ArrowRight aria-hidden />
                 </MovingBorderLink>
                 <Magnet>
                   <ButtonLink to="/dashboard" variant="outline" size="lg">

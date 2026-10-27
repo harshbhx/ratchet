@@ -105,8 +105,7 @@ function RealBill({ stats }: { stats: Stats | null }) {
       <RealCostTiles stats={stats} />
       <p className="mt-3 text-[12px] leading-relaxed text-muted">
         Measured: the labelling bills are the teacher's logged tokens at list price (estimates, not invoices), and the per-call prices are
-        list prices from the hosted-Nano calibration run. Live: the demo's own counter, refreshed with the page's stats. The ten-day
-        simulation is further down, labelled Simulation.
+        list prices from the hosted-Nano calibration run. Live: this gateway's own counter, refreshed with the page's stats.
       </p>
     </div>
   );

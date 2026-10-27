@@ -8,7 +8,7 @@ import { cn, fmtInt, fmtPct } from "@/lib/utils";
 import { eventLabel, eventTone, STATE_TONE, stateLabel } from "@/pages/dashboard/model";
 import { useGatewayText, useGateway, useJudges } from "./data";
 import { latestGlobalPeriod, parseLeaves, routeTotals, routeWords, shortHash, stageOf, studentRoute } from "./judges-model";
-import { Chapter, Facts, Loading, Panel, SimLink, TryIt, Unavailable } from "./ui";
+import { Chapter, Facts, Loading, Panel, Unavailable } from "./ui";
 
 // ---------- the loop in one picture ----------
 
@@ -122,7 +122,6 @@ export function CascadeChapter() {
           the version's calibrated threshold, the request escalates to the teacher. Every request records the route it took.
         </p>
       }
-      tryIt={<TryIt actions={["day"]} note="A simulated day sends 1,500 requests (support tickets and Scout research calls, the mix the demo warms up with) through the cascade, then runs one night of training." />}
     >
       {!stats ? (
         statsRead.state === "error" ? <Unavailable path="/ratchet/stats" read={statsRead} /> : <Loading what="the gateway's stats" />
@@ -136,13 +135,13 @@ export function CascadeChapter() {
               },
               { label: "Its threshold", value: serving?.threshold != null ? serving.threshold.toFixed(2) : "–" },
               { label: "Requests so far", value: fmtInt(stats.totals.requests) },
-              { label: stats.mode === "mock" ? "Simulated day" : "Day", value: fmtInt(stats.day) },
+              { label: "Day", value: fmtInt(stats.day) },
             ]}
           />
           <div className="grid min-w-0 gap-4 lg:grid-cols-2">
             <Panel title="Routes, all days" aside={status && <RealBadge status={status} />}>
               {routes.length === 0 ? (
-                <p className="text-[13.5px] text-muted">{stats.mode === "mock" ? "No requests yet. Run a simulated day." : "No requests yet on this live demo."}</p>
+                <p className="text-[13.5px] text-muted">No requests yet on this gateway.</p>
               ) : (
                 <ul className="space-y-2.5">
                   {routes.map((r) => (
@@ -236,7 +235,6 @@ export function LedgerChapter() {
           license that allows training on it. Requests are logged as metadata only. Student answers are never training targets.
         </p>
       }
-      tryIt={<TryIt actions={["day"]} />}
     >
       {!stats ? (
         statsRead.state === "error" ? <Unavailable path="/ratchet/stats" read={statsRead} /> : <Loading what="the ledger" />
@@ -319,12 +317,6 @@ export function ReleaseChapter() {
           to the last good version on its own.
         </p>
       }
-      tryIt={
-        <TryIt
-          actions={["break", "day"]}
-          note="Inject a bad deploy, then run simulated days: the next version Night School trains deploys corrupted, fails its audits and is rolled back. No training runs while a release is in flight, so this can take a few days."
-        />
-      }
     >
       {!stats ? (
         statsRead.state === "error" ? <Unavailable path="/ratchet/stats" read={statsRead} /> : <Loading what="the versions" />
@@ -346,14 +338,9 @@ export function ReleaseChapter() {
             <Panel title="Versions" aside={status && <RealBadge status={status} />}>
               {versions.length === 0 ? (
                 <p className="text-[13.5px] text-muted">
-                  {stats?.mode === "live" ? (
-                    <>
-                      No version on this live demo: Night School does not run here, so the teacher answers every request. Releases and rollbacks run on
-                      the <SimLink hash="release">simulation demo</SimLink>.
-                    </>
-                  ) : (
-                    "No version yet: every request goes to the teacher until the first night."
-                  )}
+                  {stats?.mode === "live"
+                    ? "No version on this live gateway: the nightly loop is built and tested but has not run on live traffic, so the teacher answers every request."
+                    : "No version yet: every request goes to the teacher until the first night."}
                 </p>
               ) : (
                 <div className="overflow-x-auto">

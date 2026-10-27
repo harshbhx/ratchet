@@ -6,7 +6,7 @@ import { RealBadge } from "@/components/ui/real-badge";
 import { cn, fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { getJson, useGateway, useJudges } from "./data";
 import { alarmProgress, focusVersion, latestGlobalPeriod, nusdToUsd, shortHash, type Fetched } from "./judges-model";
-import { Chapter, Command, Facts, Loading, Meter, Panel, SimLink, TryIt, Unavailable } from "./ui";
+import { Chapter, Command, Facts, Loading, Meter, Panel, Unavailable } from "./ui";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
@@ -68,20 +68,14 @@ export function CertificateChapter() {
           model's license and the evaluation. Its certificate is an exact (Clopper-Pearson) lower bound on precision, measured on held-out rows only.
         </p>
       }
-      tryIt={<TryIt actions={["day"]} note="A day that trains a new version adds a new bill of materials and certificate." />}
     >
       {!stats ? (
         statsRead.state === "error" ? <Unavailable path="/ratchet/stats" read={statsRead} /> : <Loading what="the versions" />
       ) : versions.length === 0 ? (
         <p className="text-[13.5px] text-muted">
-          {stats?.mode === "mock" ? (
-            "No version yet. Run a simulated day to train the first one."
-          ) : (
-            <>
-              No version on this live demo: Night School does not run here, so the teacher answers every request. Every version, gate and rollback
-              runs on the <SimLink hash="certificate">simulation demo</SimLink>.
-            </>
-          )}
+          {stats?.mode === "mock"
+            ? "No version yet."
+            : "No version on this live gateway: the nightly loop is built and tested but has not run on live traffic, so the teacher answers every request."}
         </p>
       ) : (
         <div className="space-y-4">
@@ -228,20 +222,18 @@ export function ProofChapter() {
           <div className="mt-5 rounded-xl border border-dashed border-line-strong bg-bg-sunken/60 p-3 sm:p-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="mr-1 text-[12.5px] font-medium text-ink-2">
-                Try it <span className="font-normal text-muted">(simulation)</span>
+                Try it <span className="font-normal text-muted">(mock models)</span>
               </span>
               <Button size="sm" onClick={() => void run()} disabled={busy}>
                 {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden /> : <Link2 aria-hidden />} Prove a stored example
               </Button>
             </div>
             <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
-              Takes a committed example from the demo (its prompt, never its answer) and asks for its proof. On a live gateway the proof route needs
+              Takes a committed example from this gateway (its prompt, never its answer) and asks for its proof. On a live gateway the proof route needs
               an admin key.
             </p>
           </div>
-        ) : (
-          <TryIt actions={[]} />
-        )
+        ) : undefined
       }
     >
       <div aria-live="polite" className="space-y-3">
@@ -319,7 +311,6 @@ export function ReceiptsChapter() {
           those rows alone, and the hash of the day before. Anyone with the rows can recompute it.
         </p>
       }
-      tryIt={<TryIt actions={["day"]} note="Each simulated day ends the one before it, which seals that day's receipt." />}
     >
       {list.state === "error" ? (
         <Unavailable path="/ratchet/receipts" read={list} />
@@ -413,7 +404,6 @@ export function WatchChapter() {
           1%. The teacher watch re-checks stored labels when a request repeats, and stops training if the teacher itself starts to change its answers.
         </p>
       }
-      tryIt={<TryIt actions={["day"]} note="More traffic grows both: the streams below and the teacher's re-checks." />}
     >
       <div className="grid min-w-0 gap-4 lg:grid-cols-2">
         <Panel title="Drift alarm" aside={status && <RealBadge status={status} />}>

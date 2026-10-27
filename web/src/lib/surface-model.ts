@@ -1,4 +1,4 @@
-// Which surface this page is on (live or the simulation), the other one's link, and the last real upstream call, from
+// Which surface this page is on (live or mock), the other one's link, and the last real upstream call, from
 // /ratchet/stats (FR-11.30, FR-11.31). Pure, so web/tests/surface-model.test.mjs runs it without a browser. Every field is
 // optional: an older gateway sends none of these blocks and the pages simply hide what depends on them.
 
@@ -69,18 +69,4 @@ export function lastCallLine(call: UpstreamCall): string {
   const why = call.reason === "http" && call.status != null ? `HTTP ${call.status}` : (call.reason ?? "error").replace("_", " ");
   const earlier = call.last_ok_age_s != null ? `, last success ${fmtAge(call.last_ok_age_s)}` : "";
   return `failed ${fmtAge(call.age_s)} (${why})${earlier}`;
-}
-
-/** The notice above the demo controls on the shared simulation; null on the live gateway. Only the limits that are set appear. */
-export function sharedNotice(demo: DemoInfo | null | undefined): string | null {
-  if (!demo?.shared) return null;
-  const limits: string[] = [];
-  if (demo.idle_reset_s) limits.push(`${demo.idle_reset_s >= 3600 ? `${+(demo.idle_reset_s / 3600).toFixed(1)} h` : `${Math.round(demo.idle_reset_s / 60)} min`} without activity`);
-  if (demo.max_days) limits.push(`${demo.max_days} simulated days`);
-  if (demo.max_requests) limits.push(`${demo.max_requests.toLocaleString("en-US")} requests`);
-  const base = "Shared simulation: every visitor sees and changes the same state.";
-  if (!limits.length) return base;
-  const [first, ...rest] = limits;
-  const tail = rest.length ? [first, ...rest.slice(0, -1)].join(", ") + ` or ${rest[rest.length - 1]}` : first;
-  return `${base} It resets after ${tail}.`;
 }

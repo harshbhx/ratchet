@@ -9,7 +9,7 @@
 import type { DayStats, LedgerEvent, TaskStats } from "@/lib/api";
 import { parseCircuit, type BreakerState, type Tone } from "./model";
 
-/** The outage drill's `fault` event (gateway.demo_student_outage): `student endpoint down for 60 s (demo fault injection)`. */
+/** The outage drill's `fault` event (gateway.demo_student_outage): `student endpoint down for 60 s (fault injection)`. */
 export const OUTAGE_RE = /^student endpoint down for (\d+) s\b/;
 /** The wait a failed probe set (`half_open->open for 60 s after a failed probe (ConnectError)`). */
 export const WAIT_RE = /^for (\d+(?:\.\d+)?) s after a failed probe/;

@@ -26,7 +26,7 @@ import { ChapterRail } from "./rail";
 /**
  * The story page: a hero, then ten chapters told in scroll order, with three interludes that are not chapters (why it
  * is different, the request explorer, the integration tabs). One stats poll feeds every live number on the page (the
- * live strip, the honest bill, the trust chapter); without a gateway they fall back to labelled simulation or hide.
+ * live strip, the honest bill, the trust chapter); without a gateway they hide.
  * The same poll tells the badges which student answers now (FR-7.40).
  */
 export default function LandingPage() {
@@ -54,7 +54,7 @@ export default function LandingPage() {
         <Stack />
         <Integrate />
         <RunOnNebius />
-        <OpenSource mode={stats?.mode ?? null} />
+        <OpenSource />
       </div>
     </WhoProvider>
   );

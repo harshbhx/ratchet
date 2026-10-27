@@ -5,7 +5,7 @@ import { retryWaking, useWaking } from "@/lib/waking-store";
 import { bannerText } from "@/lib/waking-model";
 
 /**
- * The live demo sleeps when idle; while it starts, this says so under the header. A polite status, not an alert: the page
+ * The live gateway sleeps when idle; while it starts, this says so under the header. A polite status, not an alert: the page
  * updates by itself when /healthz answers. After about 90 s it says it is taking longer and offers a Retry.
  */
 export function WakingBanner() {

@@ -91,7 +91,7 @@ export function useChapters(): ChapterControl | null {
 
 const ChapterIdContext = createContext<string | null>(null);
 
-/** The id of the chapter a component is drawn in (its "Try it" strip links to the same chapter on the simulation demo). */
+/** The id of the chapter a component is drawn in. */
 export function useChapterId(): string | null {
   return useContext(ChapterIdContext);
 }

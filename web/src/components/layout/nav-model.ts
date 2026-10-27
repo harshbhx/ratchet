@@ -2,7 +2,7 @@
 // list it, one line in FOOTER_COLUMNS); the header's pill, the phone menu and the footer render from these lists.
 // No JSX here, so a test can import it.
 import type { ChapterId } from "@/pages/landing/shared";
-import { DEMO_URL, DOCS_URL, REPO_URL } from "@/lib/utils";
+import { DOCS_URL, REPO_URL } from "@/lib/utils";
 
 /** `section`: an anchor on the story page; `route`: a page of this app; `external`: another site, opened in a new tab. */
 export type NavKind = "section" | "route" | "external";
@@ -56,7 +56,6 @@ export const FOOTER_COLUMNS: readonly { title: string; items: readonly NavItem[]
       { label: "Scout", href: "/scout", kind: "route" },
       { label: "Dashboard", href: "/dashboard", kind: "route" },
       { label: "For judges", href: "/judges", kind: "route" },
-      { label: "Simulation demo", href: DEMO_URL as `https://${string}`, kind: "external" },
     ],
   },
   {

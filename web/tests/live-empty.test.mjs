@@ -11,7 +11,7 @@ const { breakerViews, fallbackTotals, latestStandIns, resilienceEvents } = await
 const { liveVersion, inFlight, cumulativeSaved, armedFault } = await import("../src/pages/dashboard/model.ts");
 const { gatewayStatus } = await import("../src/lib/real-model.ts");
 const { servingLine, hostedServing } = await import("../src/lib/who-model.ts");
-const { sharedNotice, lastCall } = await import("../src/lib/surface-model.ts");
+const { lastCall } = await import("../src/lib/surface-model.ts");
 const { routeTotals } = await import("../src/pages/judges/judges-model.ts");
 
 const rec = (n) => JSON.parse(readFileSync(new URL(`./fixtures/live-empty/${n}.json`, import.meta.url), "utf8"));
@@ -26,14 +26,13 @@ test("the recorded gateway is live and empty", () => {
   assert.equal(rec("kpis").simulated, false);
 });
 
-test("mode drives the badges: live is measured, never simulation", () => {
+test("mode drives the badges: live is measured, mock has no badge", () => {
   assert.equal(gatewayStatus(stats.mode), "measured");
-  assert.equal(gatewayStatus("mock"), "simulation");
+  assert.equal(gatewayStatus("mock"), null);
   assert.equal(gatewayStatus(undefined), null);
 });
 
-test("an empty live gateway has no shared-demo notice and no student serving", () => {
-  assert.equal(sharedNotice(stats.demo), null);
+test("an empty live gateway has no upstream calls and no student serving", () => {
   assert.equal(lastCall(stats.upstream, "token_factory"), null);
   assert.equal(lastCall(stats.upstream, "tavily"), null);
   assert.equal(hostedServing(stats.student_serving), false);
@@ -57,17 +56,4 @@ test("the dashboard's pure helpers take empty arrays", () => {
   assert.equal(latestStandIns(stats.days), null);
   assert.equal(fallbackTotals(stats.tasks).degraded ?? 0, 0);
   assert.deepEqual(routeTotals(stats.tasks), []);
-});
-
-test("the demo pipeline link shows on a live gateway with no trained version", async () => {
-  const { showPipelineLink, PIPELINE_LINK } = await import("../src/pages/dashboard/pipeline-link-model.ts");
-  assert.equal(showPipelineLink(stats), true);
-  assert.equal(showPipelineLink({ ...stats, mode: "mock" }), false);
-  // Traffic alone trains no student on the live gateway (Night School does not run there): the link stays until a version exists.
-  assert.equal(showPipelineLink({ ...stats, totals: { ...stats.totals, requests: 5 } }), true);
-  assert.equal(showPipelineLink({ ...stats, days: [{}], totals: { ...stats.totals, requests: 5 } }), true);
-  assert.equal(showPipelineLink({ ...stats, versions: [{}] }), false);
-  assert.equal(showPipelineLink({ ...stats, days: [{}], versions: [{}] }), false);
-  assert.equal(showPipelineLink(null), false);
-  assert.ok(!/simulation/i.test(PIPELINE_LINK.title + PIPELINE_LINK.line));
 });

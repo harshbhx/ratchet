@@ -70,7 +70,7 @@ export function isEmptyReport(r: CostReport): boolean {
 
 /**
  * How the report counted idle time and the student answers given without endpoint uptime (`idle_granularity`, ADR 0023):
- * "in hours" on a live ledger, "on days" on the simulator's clock. A report without the field counted whole days.
+ * "in hours" on a live ledger, "on days". A report without the field counted whole days.
  */
 export function idleBuckets(r: { idle_granularity?: string }): "in hours" | "on days" {
   return r.idle_granularity === "hour" ? "in hours" : "on days";

@@ -86,7 +86,7 @@ function isCostReport(x: unknown): x is CostReport {
 
 /**
  * GET /ratchet/cost, fetched again whenever `key` changes (pass the stats poll's `updatedAt`, so the report follows
- * every poll and demo action without a second timer). A newer response always wins over an older one.
+ * every poll and action without a second timer). A newer response always wins over an older one.
  */
 export function useCostReport(key: number | null): CostState {
   const [state, setState] = useState<CostState>({ report: null, error: null, missing: false, loading: true });
@@ -142,7 +142,7 @@ function isRegistry(x: unknown): x is TaskRegistry {
 
 /**
  * GET /ratchet/tasks, fetched again whenever `key` changes (the stats poll's `updatedAt`, so it follows every poll,
- * demo action and task write without a second timer). A newer response always wins over an older one.
+ * action and task write without a second timer). A newer response always wins over an older one.
  */
 export function useTaskRegistry(key: number | null): RegistryState {
   const [state, setState] = useState<RegistryState>({ registry: null, error: null, missing: false, loading: true });

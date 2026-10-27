@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import { ArrowUpRight, FlaskConical } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { Eyebrow, H2, Lead } from "@/components/ui/section";
 import { Badge } from "@/components/ui/badge";
 import { BlurText } from "@/components/fx/blur-text";
@@ -123,14 +123,6 @@ export function ExtLink({ href, children, className }: { href: string; children:
       {children}
       <ArrowUpRight aria-hidden className="size-3 shrink-0 translate-y-[1px] self-center text-muted" />
     </a>
-  );
-}
-
-export function SimBadge({ children = "Simulation", className }: { children?: ReactNode; className?: string }) {
-  return (
-    <Badge tone="outline" className={className}>
-      <FlaskConical aria-hidden /> {children}
-    </Badge>
   );
 }
 

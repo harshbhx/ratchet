@@ -1,4 +1,4 @@
-import { ArrowUpRight, BookOpen, Code, Film, MonitorPlay, Radio, Server } from "lucide-react";
+import { ArrowUpRight, BookOpen, Code, Film, Radio, Server } from "lucide-react";
 import { RealBadge } from "@/components/ui/real-badge";
 import { entryById, type RealStatus } from "@/lib/real-model";
 import { LIVE_URL } from "@/lib/utils";
@@ -9,8 +9,7 @@ const COMMANDS: { title: string; why: string; cmd: string }[] = [
   { title: "Get the code", why: "Apache-2.0, public.", cmd: "git clone https://github.com/harshbhx/ratchet && cd ratchet" },
   { title: "Install", why: "Python 3.10 or later; no GPU and no API key needed.", cmd: 'pip install -e ".[dev]"' },
   { title: "Run the tests", why: "No network, no GPU; about two minutes.", cmd: "make test" },
-  { title: "Run the demo locally", why: "The mock gateway with this page at /judges.", cmd: "make demo" },
-  { title: "Replay the reference simulation", why: "The story page's numbers come from this run.", cmd: "python -m sim.simulate --days 10 --requests 2000 --bad-deploy-version 3" },
+  { title: "Run the gateway locally", why: "A gateway on mock models with this page at /judges.", cmd: "RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000" },
   { title: "Verify a bill of materials", why: "Fetch one from a gateway first (Certificate chapter).", cmd: "python -m ratchet.bom verify bom.json --public-key <published key>" },
   { title: "Recompute the exam numbers", why: "The raw answers are in evidence/text2sql-exam2 (and round1, round2).", cmd: "python scripts/measure_adapter.py verify --raw evidence/text2sql-exam2/answers/raw_v2.jsonl --results evidence/text2sql-exam2/results/results_v2.json --golden evidence/text2sql-exam2/data/golden.jsonl --dbs evidence/text2sql-exam2/data/dbs.json" },
   { title: "Check every requirement maps to code and tests", why: "The traceability check CI runs.", cmd: "python scripts/reqtrace.py --check" },
@@ -23,7 +22,7 @@ export function CheckChapter() {
       title="Check it yourself"
       lead={
         <p>
-          Most of what is on this page can be checked from a fresh clone, without a GPU or an API key. The live demo and Hugging Face links check themselves. Each command has a copy button. The full list, with the output to expect and
+          Most of what is on this page can be checked from a fresh clone, without a GPU or an API key. The live gateway and Hugging Face links check themselves. Each command has a copy button. The full list, with the output to expect and
           what none of it proves, is{" "}
           <a
             href="https://docs.ratchet.dualmindlab.tech/reference/verify/"
@@ -83,7 +82,7 @@ export function SponsorsChapter() {
     },
     {
       name: "Tavily",
-      role: "Search for Scout, the multi-agent research demo on top of the gateway.",
+      role: "Search for Scout, the multi-agent research app on top of the gateway.",
       parts: [{ text: "Scout with real Tavily searches", status: statusOf("scout-tavily") }],
     },
   ];
@@ -126,20 +125,18 @@ export function SponsorsChapter() {
 
 const LIMITS = [
   "The adapters are small (Nemotron 3 Nano 4B, LoRA) and the published ones were trained on a borrowed GPU; the round-2 recipe was also retrained once on Nebius AI Cloud. At a 95% precision bar the text-to-SQL student answers 1 of 86 questions on exam 1 and none on exam 2, so it does not replace the teacher.",
-  "The main site's dashboard and chapters read the live gateway: its numbers come from real Token Factory calls, its teacher answers every request, and its ledger lives in the container's /tmp, so a restart empties it. Every number on the separate simulation demo comes from mock models (simulation).",
-  "The gateway's live mode runs on Nebius Token Factory (a smoke run and the live demo). The public demo has no student endpoint yet, so the teacher answers every request; the student was served once, by hand, on a Nebius endpoint for a speed test (then deleted), the nightly loop's jobs are scripted and tested offline, ready to run with make nebius-plan, and the nightly loop itself is still simulated. The web front end and the live demo run on Cloudflare.",
-  "Scout's recorded live runs were all answered by the teacher; no trained student has served a Scout call. The Scout demo page runs on a mock research world unless the gateway is live.",
+  "The main site's dashboard and chapters read the live gateway: its numbers come from real Token Factory calls, its teacher answers every request, and its ledger lives in the container's /tmp, so a restart empties it.",
+  "The gateway's live mode runs on Nebius Token Factory (a smoke run and the live gateway). The live gateway has no student endpoint yet, so the teacher answers every request; the student was served once, by hand, on a Nebius endpoint for a speed test (then deleted), the nightly loop's jobs are built and tested offline, ready to run with make nebius-plan, and the nightly loop has not run on live traffic. The web front end and the live gateway run on Cloudflare.",
+  "Scout's live runs were all answered by the teacher; no trained student has served a Scout call. The Scout page runs on a mock research world unless the gateway is live.",
   "The ledger is a single SQLite file, written by one gateway process.",
-  "The simulation demo is shared: every visitor sees and changes the same simulated state.",
 ];
 
 export function LimitsChapter() {
   const links = [
     { href: REAL.links.repo, label: "GitHub repository", icon: Code },
     { href: REAL.links.docs, label: "Documentation", icon: BookOpen },
-    { href: LIVE_URL, label: "Live demo (real Token Factory calls)", icon: Radio },
-    { href: REAL.links.demo, label: "Simulation demo (mock models)", icon: MonitorPlay },
-    ...(JUDGES_VIDEO ? [{ href: JUDGES_VIDEO, label: "The demo video (2:59)", icon: Film }] : []),
+    { href: LIVE_URL, label: "Live gateway (real Token Factory calls)", icon: Radio },
+    ...(JUDGES_VIDEO ? [{ href: JUDGES_VIDEO, label: "The video (2:59)", icon: Film }] : []),
     // The one-command Nebius path (deploy/nebius/nebius.sh): scripted and tested offline, ready to run with make nebius-plan.
     {
       href: `${REAL.links.docs.replace(/\/?$/, "/")}reference/where-it-runs/`,
@@ -177,7 +174,7 @@ export function LimitsChapter() {
             {!JUDGES_VIDEO && (
               <li className="flex min-w-0 items-center gap-2.5 px-2 py-2 text-[14px]">
                 <Film className="size-4 shrink-0 text-muted" aria-hidden />
-                <span className="text-muted">The demo video: not published yet</span>
+                <span className="text-muted">The video: not published yet</span>
               </li>
             )}
           </ul>
