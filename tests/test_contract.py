@@ -850,14 +850,18 @@ def test_resilience_panel_contract(gw_env, monkeypatch):
 @pytest.mark.req("FR-7.21", "INV-13", "INV-18")
 def test_dashboard_admin_key_stays_in_memory():
     """An admin key typed into the dashboard stays in the page's memory (invariant 18): no file
-    under web/src writes it to storage, a cookie or a URL, the only browser storage the app uses is the theme, and the
-    client sends the key only as an Authorization header."""
+    under web/src writes it to storage, a cookie or a URL, the only browser storage the app uses is the theme and the
+    companions' flags (one file), and the client sends the key only as an Authorization header."""
     src = Path(__file__).resolve().parents[1] / "web" / "src"
     storage = re.compile(r"localStorage|sessionStorage|indexedDB|document\.cookie|caches\.open")
     users = sorted(p.relative_to(src).as_posix() for p in src.rglob("*.ts*") if storage.search(p.read_text(encoding="utf-8")))
-    assert users == ["lib/hooks.ts"], users  # the theme toggle
+    # The theme toggle, and Nano and Ultra's hide flag and this visit's lessons
+    # (components/companions/companion-storage.ts): no keys, no personal data.
+    assert users == ["components/companions/companion-storage.ts", "lib/hooks.ts"], users
     hooks = (src / "lib" / "hooks.ts").read_text(encoding="utf-8")
     assert re.findall(r"localStorage\.setItem\(([^,]+),", hooks) == ['"ratchet-theme"']
+    companions = (src / "components" / "companions" / "companion-storage.ts").read_text(encoding="utf-8")
+    assert sorted(re.findall(r'_KEY = "([^"]+)"', companions)) == ["ratchet-companions-hidden", "ratchet-companions-session"]
 
     holders = [p for p in src.rglob("*.ts*") if "adminKey" in p.read_text(encoding="utf-8")]
     assert holders, "no file holds the admin key: the scan below would prove nothing"
