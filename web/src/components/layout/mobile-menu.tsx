@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, type MouseEvent, type ReactNode, type RefObje
 import { createPortal } from "react-dom";
 import { Link } from "react-router";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUpRight, X } from "lucide-react";
+import { ArrowUpRight, Sparkles, X } from "lucide-react";
+import { startSiteTour } from "@/components/tour/site-tour";
 import { Logo } from "@/components/ui/logo";
 import { useTheme } from "@/lib/hooks";
 import { DUR, EASE } from "@/lib/motion";
@@ -189,6 +190,16 @@ export function MobileMenu({
             </nav>
           </div>
           <div className="shrink-0 border-t border-line bg-bg px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                startSiteTour();
+              }}
+              className="mb-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-full border border-line-strong bg-surface text-[15px] font-medium text-ink transition-colors hover:bg-surface-2 focus-visible:rounded-full"
+            >
+              <Sparkles aria-hidden /> Take the 60-second tour
+            </button>
             <div className="flex items-center gap-3">
               <LiveButton state={gateway} pathname={pathname} size="lg" className="flex-1" />
               <SheetThemeToggle />

@@ -112,7 +112,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
       />
 
       <div className="mx-auto w-full max-w-[1960px] px-4 sm:px-6 lg:px-10">
-        <div className="relative mt-12 overflow-hidden rounded-3xl border border-line bg-surface/90 p-6 shadow-card sm:p-8">
+        <div data-tour="check-numbers" className="relative mt-12 overflow-hidden rounded-3xl border border-line bg-surface/90 p-6 shadow-card sm:p-8">
           <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-50 [mask-image:linear-gradient(to_left,black,transparent_65%)]" />
           <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="max-w-xl">
@@ -140,7 +140,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
               <Logo />
             </Link>
             <p className="mt-5 text-balance text-[22px] font-semibold leading-snug tracking-[-0.025em] text-ink">{TAGLINE}</p>
-            <p className="mt-3 inline-flex max-w-full items-center rounded-full border border-line bg-surface/80 px-3 py-1 text-[12.5px] font-medium text-ink-2">{BUILT_ON}</p>
+            <p data-tour="built-on" className="mt-3 inline-flex max-w-full items-center rounded-full border border-line bg-surface/80 px-3 py-1 text-[12.5px] font-medium text-ink-2">{BUILT_ON}</p>
             </div>
             <div className="max-w-md">
             <p className="text-pretty text-[13px] leading-relaxed text-muted">

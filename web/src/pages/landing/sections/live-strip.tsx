@@ -57,7 +57,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   ];
 
   return (
-    <section aria-labelledby="live-title" className="relative">
+    <section data-tour="live-strip" aria-labelledby="live-title" className="relative">
       <Container>
         <motion.div {...rise(0.1, 14)} className="relative overflow-hidden rounded-[22px] border border-line bg-surface/85 shadow-card backdrop-blur-md">
           <div aria-hidden className="edge-light pointer-events-none absolute inset-x-0 top-0 h-px opacity-80" />

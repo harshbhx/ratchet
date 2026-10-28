@@ -446,3 +446,133 @@ html.theme-reveal::view-transition-new(root) {
 .lucide {
   stroke-width: 1.75;
 }
+
+/* Avatars (components/avatar): a blink every few seconds, a slow breath, thinking dots, a drifting z, a waving arm. All stop under reduced motion. */
+.av-blink {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: av-blink 5.2s infinite;
+}
+@keyframes av-blink {
+  0%, 94%, 100% { transform: scaleY(1); }
+  97% { transform: scaleY(0.08); }
+}
+.av-bob {
+  animation: av-bob 3.6s ease-in-out infinite;
+}
+@keyframes av-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.6px); }
+}
+.av-dot {
+  animation: av-dot 1.2s ease-in-out infinite;
+}
+@keyframes av-dot {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+.av-z {
+  animation: av-z 2.8s ease-in-out infinite;
+}
+@keyframes av-z {
+  0% { opacity: 0; transform: translate(0, 4px); }
+  40% { opacity: 1; }
+  100% { opacity: 0; transform: translate(6px, -8px); }
+}
+.av-wave {
+  animation: av-wave 0.9s ease-in-out infinite;
+}
+@keyframes av-wave {
+  0%, 100% { transform: rotate(-12deg); }
+  50% { transform: rotate(22deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .av-blink, .av-bob, .av-dot, .av-z, .av-wave { animation: none; }
+}
+
+/* The guided tour's panel (Driver.js popover), in the site's glass style. */
+.driver-popover.ratchet-tour {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  padding: 16px;
+  max-width: min(360px, calc(100vw - 24px));
+  min-width: min(300px, calc(100vw - 24px));
+  box-shadow: var(--shadow), 0 24px 60px -20px rgb(0 0 0 / 0.45);
+  font-family: var(--font-sans);
+}
+.driver-popover.ratchet-tour::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--beam-angle), transparent 0 62%, var(--owned) 80%, var(--rented) 92%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: beam-spin 8s linear infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .driver-popover.ratchet-tour::before { animation: none; }
+}
+.driver-popover.ratchet-tour .driver-popover-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.driver-popover.ratchet-tour .driver-popover-description {
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.driver-popover.ratchet-tour .driver-popover-description a {
+  color: var(--owned-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.driver-popover.ratchet-tour .driver-popover-arrow-side-left.driver-popover-arrow { border-left-color: var(--surface); }
+.driver-popover.ratchet-tour .driver-popover-arrow-side-right.driver-popover-arrow { border-right-color: var(--surface); }
+.driver-popover.ratchet-tour .driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: var(--surface); }
+.driver-popover.ratchet-tour .driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: var(--surface); }
+.driver-popover.ratchet-tour .driver-popover-close-btn {
+  color: var(--muted);
+  border-radius: 9999px;
+  width: 28px;
+  height: 28px;
+  top: 10px;
+  right: 10px;
+}
+.driver-popover.ratchet-tour .driver-popover-close-btn:hover { color: var(--ink); background: var(--surface-2); }
+.driver-popover.ratchet-tour .driver-popover-footer { margin-top: 14px; align-items: center; flex-wrap: wrap; row-gap: 10px; }
+.driver-popover.ratchet-tour .driver-popover-progress-text { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.driver-popover.ratchet-tour .driver-popover-footer-btns, .driver-popover.ratchet-tour .driver-popover-navigation-btns { margin-left: auto; display: flex; gap: 8px; }
+.driver-popover.ratchet-tour .rt-dots { display: inline-flex; gap: 5px; }
+.driver-popover.ratchet-tour .rt-dots i { width: 6px; height: 6px; border-radius: 9999px; background: var(--line-strong); }
+.driver-popover.ratchet-tour .rt-dots i.on { background: var(--owned); }
+.driver-popover.ratchet-tour .driver-popover-footer button,
+.driver-popover.ratchet-tour .rt-back {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  border-radius: 9999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  text-shadow: none;
+}
+.driver-popover.ratchet-tour .driver-popover-next-btn { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.driver-popover.ratchet-tour .driver-popover-footer button:hover { opacity: 0.9; }
+.driver-popover.ratchet-tour .driver-popover-footer button:focus-visible,
+.driver-popover.ratchet-tour .driver-popover-close-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rt-avatars { display: flex; align-items: flex-end; gap: 10px; margin: -4px 0 8px; min-height: 64px; }
+.rt-say { font-size: 12.5px; line-height: 1.4; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 6px 10px; max-width: 14rem; }

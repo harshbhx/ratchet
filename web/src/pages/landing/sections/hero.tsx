@@ -1,12 +1,13 @@
 import { Suspense, lazy, useRef, useState, type PointerEvent } from "react";
 import { motion } from "motion/react";
 import { Link } from "react-router";
-import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, Play, ShieldCheck, Undo2 } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, Play, ShieldCheck, Sparkles, Undo2 } from "lucide-react";
 import { signal } from "@/components/companions/companion-bus";
 import { ShinyText } from "@/components/fx/shiny-text";
 import { SplitText } from "@/components/fx/split-text";
 import { TiltCard } from "@/components/fx/tilt-card";
 import { Button, ButtonA, ButtonLink } from "@/components/ui/button";
+import { startSiteTour } from "@/components/tour/site-tour";
 import { tok } from "@/components/ui/code-block";
 import { LogoMark } from "@/components/ui/logo";
 import { Container } from "@/components/ui/section";
@@ -152,6 +153,7 @@ export function Hero() {
             <motion.div {...enter(0.66)} data-companion-avoid className="mt-6 flex flex-wrap items-center gap-3">
               <ButtonLink
                 to={LIVE_PATH}
+                data-tour="try-live"
                 size="lg"
                 className="btn-shine h-12 w-full px-7 shadow-[0_10px_30px_-10px_color-mix(in_srgb,var(--owned)_65%,transparent)] hover:shadow-[0_14px_40px_-8px_color-mix(in_srgb,var(--owned)_80%,transparent)] min-[440px]:w-auto"
               >
@@ -168,6 +170,9 @@ export function Hero() {
                 Read the docs <ArrowUpRight aria-hidden />
                 <span className="sr-only"> (opens in a new tab)</span>
               </ButtonA>
+              <Button type="button" variant="subtle" size="lg" onClick={startSiteTour} className="h-12 w-full min-[440px]:w-auto">
+                <Sparkles aria-hidden /> Take the 60-second tour
+              </Button>
               <Button
                 type="button"
                 variant="subtle"
