@@ -9,7 +9,7 @@ export interface Rect {
 }
 
 /** Elements the characters keep clear of: the hero buttons, the live request form, the closing call to action. */
-export const AVOID_SELECTOR = "[data-companion-avoid], #closing-cta a, #closing-cta button, a.btn-shine, nav[aria-label=\"Chapters\"], button[aria-label=\"Copy the changed line\"]";
+export const AVOID_SELECTOR = "[data-companion-avoid], #closing-cta a, #closing-cta button, a.btn-shine, nav[aria-label=\"Chapters\"], main .sticky, button[aria-label=\"Copy the changed line\"]";
 
 export function intersects(a: Rect, b: Rect, pad = 0): boolean {
   return a.left < b.right + pad && a.right > b.left - pad && a.top < b.bottom + pad && a.bottom > b.top - pad;

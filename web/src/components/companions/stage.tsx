@@ -10,7 +10,7 @@ import { Character } from "./character";
 import { Companion } from "./companion";
 import { COMPANION_EVENT, signal, type CompanionSignal } from "./companion-bus";
 import { baseLook, isNight, isPhone, isTyping, motionPlan, type Look, type Who } from "./companion-model";
-import { readSession, readSound, writeSession, writeSound, type Session } from "./companion-storage";
+import { readSession, writeSession, type Session } from "./companion-storage";
 import type { GamePhase } from "./game";
 import { LESSON_TOTAL, earn, lessonsComplete, lessonsForSection, type LessonId } from "./lessons";
 import { createBurst } from "./physics";
@@ -20,9 +20,7 @@ import { holdDelay, isEmptyTarget, pressKind, type ElLike } from "./comehere";
 import { HIDE_CLIP, HIDE_MS, addScroll, canHide, endHide, newSeek, startHide } from "./hideseek";
 import { QUIZ_LINES, type QuizRow } from "./quiz-model";
 import type { QuizPhase } from "./quiz";
-import { armSoundForNextGesture, play, setSoundOn as audioSet, speak } from "./sound";
 import { charRect } from "./perch";
-import { Volume2, VolumeX } from "lucide-react";
 import { AVOID_SELECTOR, chooseSlot, type Slot } from "./placement";
 import { CALM_DUOS, DUO_LINES, EASTER_EGG, WATCHED_SECTIONS, liveReaction, pokeReaction, sectionReactions, shouldReact, type DuoMove, type Poke } from "./reactions";
 import { ProgressRing, Sheet } from "./sheet";
@@ -34,7 +32,7 @@ import { useActor } from "./actor";
 
 const FACTS = factsFromExams(parseExams(examsText));
 const DOCK = { w: 64, h: 64 };
-const RING = { w: 92, h: 44 };
+const RING = { w: 44, h: 44 };
 /** The character rectangles (the SVG is 120 by 130): Nano 84 wide on a desktop, 48 on a phone; Ultra 108 and 60. */
 const SIZES = {
   desktop: { nano: { w: 84, h: 91 }, ultra: { w: 108, h: 117 } },
@@ -68,7 +66,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const [squinting, setSquinting] = useState(false);
   const [shadesDown, setShadesDown] = useState(false);
   const [capOn, setCapOn] = useState(false);
-  const [soundOn, setSoundState] = useState(readSound);
   const [quizAuto, setQuizAuto] = useState(0);
   const [hiding, setHiding] = useState(false);
   const [fit, setFit] = useState<Record<Who, number>>({ nano: 1, ultra: 1 });
@@ -145,7 +142,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
 
   const say = useCallback((who: Who, text: string, ms = readMs(text), action?: "quiz") => {
     setSpeech({ who, text, action });
-    speak(text, who, reduce);
     setLiveText(text);
     window.clearTimeout(speechTimer.current);
     speaking.current = true;
@@ -183,7 +179,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     // The meter is full: Nano graduates a level, cap on for a few seconds. This is what he learned from this page; the real student
     // still has to pass the gate, and the caption says so.
     setCapOn(true);
-    play("jingle");
     window.setTimeout(() => setCapOn(false), 8000);
     window.setTimeout(() => {
       runLines([
@@ -207,7 +202,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
       if (done && !cur.graduated) celebrate();
       else {
         act("nano", { pop: "+1", glow: true }, 1700);
-        play("chime");
       }
     },
     [celebrate, act],
@@ -320,7 +314,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
         return;
       }
       earnLesson("hello");
-      play("pop");
       const t = Date.now();
       const a = actors[who];
       if (pokes.current.push(t)) {
@@ -349,7 +342,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     (who: Who) => {
       if (!plan.physics) return;
       act(who, { pose: "jump", expr: "happy" }, 750);
-      play("boop");
       void actors[who].hop(who === "nano" ? 48 : 36);
     },
     [act, actors, plan.physics],
@@ -365,7 +357,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const onThrow = useCallback(
     (who: Who) => {
       dragging.current = false;
-      play("boop");
       act(who, { expr: "laughing" }, 1800);
       if (Math.random() < 0.5) say(who, THROWN[who][Math.floor(Math.random() * THROWN[who].length)]!);
     },
@@ -743,18 +734,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const roamRef = useRef(roam);
   roamRef.current = roam;
 
-  // ---------- sound (opt-in) ----------
-  useEffect(() => {
-    audioSet(soundOn);
-    return soundOn ? armSoundForNextGesture() : undefined;
-  }, [soundOn]);
-  const onSound = useCallback((next: boolean) => {
-    writeSound(next);
-    setSoundState(next);
-    audioSet(next, true); // this click is the gesture that lets the audio context start
-    if (next) window.setTimeout(() => play("pop"), 60);
-  }, []);
-
   // ---------- quiz ----------
   const openQuiz = useCallback(() => {
     setSheet(true);
@@ -791,7 +770,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
       earnLesson(fresh);
       say("nano", "Noted. Thank you!", 2200);
     } else {
-      play("pop");
       say("nano", "Already in my notes.", 2000);
     }
   }, [earnLesson, say]);
@@ -852,7 +830,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
         const w = who();
         if (roamRef.current.goTo(w, { x: e.clientX, y: e.clientY })) {
           act(w, { expr: "wave" }, 1500);
-          play("pop");
         }
       }
     };
@@ -885,7 +862,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     roamRef.current.unpin("nano");
     if (how === "found") {
       earnLesson("hello");
-      play("tick");
       act("nano", { expr: "laughing", pop: "sparkle" }, 2400);
       say("nano", "You found me!", 2600);
     } else {
@@ -904,13 +880,16 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     const id = window.setInterval(() => {
       const now = Date.now();
       if (hidingRef.current) return;
+      // Only when the reader has stopped for a while, not just paused.
+      if (now - lastScroll.current < 4000) return;
       if (!canHide(seek.current, now, { busy: busy() || duoBusy.current || speaking.current, roaming: true })) return;
       // Only sometimes: a third of the checks, three seconds apart, once the reader has stopped.
       if (Math.random() > 0.34) return;
       if (!roamRef.current.hide("nano")) return;
       seek.current = startHide(seek.current, now);
       setHiding(true);
-      act("nano", { expr: "idle" });
+      // A hint that it is a game: a question mark over his head, and his antenna wiggles (see companions.css).
+      act("nano", { expr: "idle", pop: "?" });
       hideTimer.current = window.setTimeout(() => foundRef.current("timeout"), HIDE_MS);
     }, 3000);
     return () => {
@@ -1078,8 +1057,16 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
         key={who}
         style={{ x: r.px, y: r.py, width: size.w, height: size.h, marginLeft: -size.w / 2, marginTop: -size.h, clipPath: hidden ? `inset(0 0 ${HIDE_CLIP * 100}% 0)` : undefined }}
         data-place={place[who]}
-        className={`pointer-events-none fixed left-0 top-0 z-40 ${sheet || !visible[who] ? "invisible" : ""}`}
+        data-hiding={hidden ? "true" : undefined}
+        className={`pointer-events-none fixed left-0 top-0 z-[35] ${sheet || !visible[who] ? "invisible" : ""}`}
       >
+        {!hidden && ["gutter", "gap", "floor"].includes(place[who]) && (
+          <div
+            aria-hidden
+            className="absolute left-1/2 h-[3px] -translate-x-1/2 rounded-full bg-line-strong/80 shadow-[0_2px_6px_rgb(0_0_0/0.14)]"
+            style={{ bottom: -1, width: Math.max(size.w * 1.2, 56) }}
+          />
+        )}
         <AnimatePresence>
           {speech?.who === who && !hidden && (
             <Bubble
@@ -1160,18 +1147,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
           <AnimatePresence>
             {speech && !speakerShownOnRoamer && <Bubble key={speech.text} who={speech.who} text={speech.text} reduce={reduce} align={slot.side === "left" ? "left" : "right"} />}
           </AnimatePresence>
-          {ringOnly && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={soundOn}
-              aria-label={soundOn ? "Sound on. Turn sound off." : "Sound off. Turn sound on."}
-              onClick={() => onSound(!soundOn)}
-              className="pointer-events-auto absolute left-0 top-0 flex size-11 items-center justify-center rounded-full border border-line-strong bg-surface text-ink-2 shadow-card hover:text-ink"
-            >
-              {soundOn ? <Volume2 className="size-[18px]" aria-hidden /> : <VolumeX className="size-[18px]" aria-hidden />}
-            </button>
-          )}
           <button
             type="button"
             onClick={() => setSheet(true)}
@@ -1238,8 +1213,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
           onSend={send}
           quizAuto={quizAuto}
           onQuizPhase={onQuizPhase}
-          soundOn={soundOn}
-          onSound={onSound}
         />
       )}
     </div>

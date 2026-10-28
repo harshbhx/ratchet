@@ -100,13 +100,20 @@ export const MIN_FIT = 0.7;
  * A place in the gutter beside the content: the whole character, not clipped, drawn a little smaller if the gutter is narrow. Nano takes the
  * right gutter and Ultra the left. None when the gutter would need him smaller than MIN_FIT.
  */
-export function gutterCandidates(who: Who, vp: { w: number; h: number }, size: Size, g: Gutters): Cand[] {
+export function gutterCandidates(who: Who, vp: { w: number; h: number }, size: Size, g: Gutters, edgeYs: number[] = []): Cand[] {
   const side = who === "nano" ? g.right : g.left;
   const scale = Math.min(1, (side - 14) / size.w);
   if (scale < MIN_FIT) return [];
   const x = who === "nano" ? vp.w - side / 2 : side / 2;
+  // He stands at the level of a real edge on the page (a card's top, a section's top line) so he reads as standing on something;
+  // only with no edge in view does he stand on the grid.
+  const rows: number[] = [];
+  for (const y of [...edgeYs].sort((a, b) => a - b)) if (!rows.some((r) => Math.abs(r - y) < 24)) rows.push(Math.round(y));
+  if (!rows.length) for (let y = 130; y <= vp.h - 10; y += 56) rows.push(y);
   const out: Cand[] = [];
-  for (let y = 130; y <= vp.h - 10; y += 56) out.push({ id: `gutter:${y}`, kind: "gutter", x, y, scale: Math.round(scale * 100) / 100 });
+  for (const y of rows) {
+    if (y >= 130 && y <= vp.h - 10) out.push({ id: `gutter:${y}`, kind: "gutter", x, y, scale: Math.round(scale * 100) / 100 });
+  }
   return out;
 }
 
@@ -192,7 +199,7 @@ export function perchCost(c: Cand, who: Who, ctx: Ctx): number {
   let txt = 0;
   for (const z of zones.cta) cta += overlapArea(r, z);
   for (const z of zones.text) txt += overlapArea(r, z);
-  if (cta / area > 0.02 || txt / area > (peek ? 0.2 : 0.06)) return Number.POSITIVE_INFINITY;
+  if (cta / area > 0.004 || txt / area > (peek ? 0.2 : 0.06)) return Number.POSITIVE_INFINITY;
   let cost = cta * 0.5 + txt * 0.2;
   const prefY = vp.h * (ctx.prefRatio ?? (who === "nano" ? 0.64 : 0.46));
   cost += Math.abs(c.y - prefY) * 0.3;
@@ -244,7 +251,7 @@ export function gatherPair(vp: { w: number; h: number }, size: { nano: Size; ult
       let txt = 0;
       for (const z of zones.cta) cta += overlapArea(r, z);
       for (const z of zones.text) txt += overlapArea(r, z);
-      if (cta / area > 0.02 || txt / area > 0.06) ok = false;
+      if (cta / area > 0.004 || txt / area > 0.06) ok = false;
       cost += cta * 0.5 + txt * 0.2;
     }
     if (ok && cost < bestCost - 1) {

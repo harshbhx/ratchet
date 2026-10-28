@@ -1,11 +1,9 @@
 // The only browser storage the companions use, all of it in a try/catch, none of it personal: whether the visitor hid them
 // (kept), and this visit's lessons and the sections already commented on (one browser session, and the lessons only for today).
-import { SOUND_DEFAULT, soundFromStored } from "./sound-model";
 import { LESSON_TOTAL, dayStamp, normalizeLessons, type LessonState } from "./lessons";
 
 const HIDDEN_KEY = "ratchet-companions-hidden";
 const SESSION_KEY = "ratchet-companions-session";
-const SOUND_KEY = "ratchet-companions-sound";
 
 export interface Session {
   lessons: LessonState;
@@ -26,24 +24,6 @@ export function writeHidden(hidden: boolean): void {
   try {
     if (hidden) localStorage.setItem(HIDDEN_KEY, "1");
     else localStorage.removeItem(HIDDEN_KEY);
-  } catch {
-    /* storage blocked */
-  }
-}
-
-/** Sound is opt-in: off unless the visitor turned it on (remembered). */
-export function readSound(): boolean {
-  try {
-    return soundFromStored(localStorage.getItem(SOUND_KEY));
-  } catch {
-    return SOUND_DEFAULT;
-  }
-}
-
-export function writeSound(on: boolean): void {
-  try {
-    if (on) localStorage.setItem(SOUND_KEY, "1");
-    else localStorage.removeItem(SOUND_KEY);
   } catch {
     /* storage blocked */
   }

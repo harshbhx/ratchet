@@ -1,9 +1,9 @@
 // Hide and seek. Now and then, after the reader has scrolled a long way, Nano ducks behind the top edge of a card with only his antenna
-// and the top of his head showing. Finding him (a click) is a lesson. At most twice a visit, with a long gap between, and never while
+// and the top of his head showing. Finding him (a click) is a lesson. Once a visit at most, only when the reader has stopped, and never while
 // something else is going on. The scheduler and the choice of a hiding place are arithmetic; the page does the rest. Pure.
 import { charRect, overlapArea, type Cand, type Item, type Size, type Zones } from "./perch";
 
-export const MAX_HIDES = 2;
+export const MAX_HIDES = 1;
 export const MIN_GAP_MS = 90_000;
 /** How far the reader must have scrolled (px, either way) since the last hide before another can start. */
 export const FAR_PX = 2800;
@@ -49,11 +49,13 @@ export function endHide(s: SeekState, now: number): SeekState {
  * Where to hide: behind the top edge of a card in view, a little in from its corners. His feet are `HIDE_CLIP` of his height below the
  * card's top edge, so the part that shows is above it. The place must be clear of text and calls to action. `rng` picks among the fits.
  */
-export function hideSpot(items: Item[], vp: { w: number; h: number }, size: Size, zones: Zones, rng: () => number = Math.random): Cand | null {
+export function hideSpot(items: Item[], vp: { w: number; h: number }, size: Size, zones: Zones, rng: () => number = Math.random, titleYs: number[] = []): Cand | null {
   const fits: Cand[] = [];
   for (const it of items) {
     const { left, right, top } = it.rect;
     if (top < 150 || top > vp.h - 110 || right - left < size.w + 100) continue;
+    // Never right under a section's title: it would read as a mistake, not a game.
+    if (titleYs.some((y) => top - y < 200 && top - y > -80)) continue;
     const x = left + 50 + rng() * (right - left - 100);
     const c: Cand = { id: `hide:${it.id}`, kind: "card", x, y: top + size.h * HIDE_CLIP };
     // Only the part above the card shows; that part must not stand on text or a call to action.
@@ -61,7 +63,7 @@ export function hideSpot(items: Item[], vp: { w: number; h: number }, size: Size
     const area = Math.max(1, (shown.right - shown.left) * (shown.bottom - shown.top));
     const cta = zones.cta.reduce((n, z) => n + overlapArea(shown, z), 0);
     const txt = zones.text.reduce((n, z) => n + overlapArea(shown, z), 0);
-    if (cta / area <= 0.02 && txt / area <= 0.06) fits.push(c);
+    if (cta / area <= 0.004 && txt / area <= 0.06) fits.push(c);
   }
   return fits.length ? fits[Math.floor(rng() * fits.length)]! : null;
 }

@@ -20,7 +20,6 @@ const scenesMod = await import("../src/components/companions/scenes.ts");
 const quizMod = await import("../src/components/companions/quiz-model.ts");
 const comehere = await import("../src/components/companions/comehere.ts");
 const seekMod = await import("../src/components/companions/hideseek.ts");
-const soundMod = await import("../src/components/companions/sound-model.ts");
 const { parseExams } = await import("../src/lib/exams-model.ts");
 
 const exams = parseExams(readFileSync(new URL("../src/data/exams.json", import.meta.url), "utf8"));
@@ -348,14 +347,14 @@ test("the routing picture: catch, three tries, unsure, pass to Ultra, no model o
 // ---------- storage ----------
 test("the companions' browser storage lives in one file, behind try/catch, with the registered keys", () => {
   const src = new URL("../src/components/companions/", import.meta.url);
-  const files = ["companion-storage.ts", "companion-bus.ts", "companion-host.tsx", "stage.tsx", "sheet.tsx", "companion.tsx", "character.tsx", "actor.ts", "quiz.tsx", "quiz-model.ts", "sound.ts", "sound-model.ts", "comehere.ts", "hideseek.ts", "roaming.ts"];
+  const files = ["companion-storage.ts", "companion-bus.ts", "companion-host.tsx", "stage.tsx", "sheet.tsx", "companion.tsx", "character.tsx", "actor.ts", "quiz.tsx", "quiz-model.ts", "comehere.ts", "hideseek.ts", "roaming.ts"];
   for (const f of files) {
     const text = readFileSync(new URL(f, src), "utf8");
     const uses = /localStorage|sessionStorage|indexedDB|document\.cookie/.test(text);
     assert.equal(uses, f === "companion-storage.ts", f);
   }
   const text = readFileSync(new URL("companion-storage.ts", src), "utf8");
-  assert.deepEqual([...text.matchAll(/_KEY = "([^"]+)"/g)].map((m) => m[1]).sort(), ["ratchet-companions-hidden", "ratchet-companions-session", "ratchet-companions-sound"]);
+  assert.deepEqual([...text.matchAll(/_KEY = "([^"]+)"/g)].map((m) => m[1]).sort(), ["ratchet-companions-hidden", "ratchet-companions-session"]);
   assert.equal((text.match(/\btry\b/g) ?? []).length, (text.match(/\bcatch\b/g) ?? []).length);
 });
 
@@ -698,7 +697,7 @@ test("he only comes to a place he may stand: on screen, off call-to-action, off 
 });
 
 // ---------- hide and seek ----------
-test("hide and seek: only after a long scroll, at most twice a visit, with a gap, never while busy", () => {
+test("hide and seek: only after a long scroll, once a visit at most, never while busy", () => {
   const ok = { busy: false, roaming: true };
   let st = seekMod.newSeek();
   assert.equal(seekMod.canHide(st, 1e6, ok), false, "not before the reader has scrolled far");
@@ -714,11 +713,9 @@ test("hide and seek: only after a long scroll, at most twice a visit, with a gap
   st = seekMod.endHide(st, 1e6 + 30000);
   st = seekMod.addScroll(st, 5000);
   assert.equal(seekMod.canHide(st, 1e6 + 40000, ok), false, "a long gap between hides");
-  assert.equal(seekMod.canHide(st, 1e6 + 30000 + seekMod.MIN_GAP_MS, ok), true);
-  st = seekMod.endHide(seekMod.startHide(st, 2e6), 2e6 + 5000);
-  st = seekMod.addScroll(st, 5000);
-  assert.equal(st.hides, 2);
-  assert.equal(seekMod.canHide(st, 9e6, ok), false, "twice is the most");
+  assert.equal(seekMod.MAX_HIDES, 1);
+  assert.equal(st.hides, 1);
+  assert.equal(seekMod.canHide(st, 9e6, ok), false, "once is the most: rarer, so it reads as a game");
 });
 
 test("the hiding place is behind a card's top edge, with room, clear of text and calls to action", () => {
@@ -733,37 +730,10 @@ test("the hiding place is behind a card's top edge, with room, clear of text and
   assert.equal(seekMod.hideSpot(cards, vp, NANO, text, rng), null, "text just above the card: nowhere to peek");
   assert.equal(seekMod.hideSpot([], vp, NANO, noZones, rng), null);
   assert.ok(seekMod.HIDE_CLIP > 0.5 && seekMod.HIDE_CLIP < 0.8);
-});
-
-// ---------- sound: opt-in, quiet, short ----------
-test("sound is off by default, and only an explicit stored 1 turns it on", () => {
-  assert.equal(soundMod.SOUND_DEFAULT, false);
-  assert.deepEqual([null, undefined, "", "0", "true", "yes"].map(soundMod.soundFromStored), [false, false, false, false, false, false]);
-  assert.equal(soundMod.soundFromStored("1"), true);
-  const src = readFileSync(new URL("../src/components/companions/sound.ts", import.meta.url), "utf8");
-  assert.match(src, /fromGesture/, "the audio context is created from a user gesture");
-  assert.doesNotMatch(src, /\.mp3|\.wav|\.ogg|new Audio\(|fetch\(/, "no audio files: Web Audio only");
-  assert.match(src, /document\.hidden/, "muted while the tab is hidden");
-});
-
-test("the cues are quiet and short; the blips follow the words, are capped, and Nano sounds higher and quicker", () => {
-  for (const [name, notes] of Object.entries(soundMod.CUES)) {
-    for (const n of notes) assert.ok(n.g <= 0.08 && n.t + n.d <= 0.7, `${name}: ${JSON.stringify(n)}`);
-  }
-  assert.deepEqual(Object.keys(soundMod.CUES).sort(), ["boop", "chime", "jingle", "pop", "tick"]);
-  const long = "word ".repeat(40);
-  for (const who of ["nano", "ultra"]) {
-    const b = soundMod.blipPlan(long, who, false);
-    assert.ok(b.blips.length <= soundMod.BLIP_MAX_COUNT && b.total <= soundMod.BLIP_MAX_S + 0.01, `${who}: ${b.blips.length} blips, ${b.total}s`);
-    assert.equal(soundMod.blipPlan(long, who, true).blips.length, 1, "reduced motion: one blip a line");
-    assert.equal(soundMod.blipPlan("", who, false).blips.length, 0);
-  }
-  const n = soundMod.blipPlan("That is a fair question", "nano", false);
-  const u = soundMod.blipPlan("That is a fair question", "ultra", false);
-  assert.equal(n.blips.length, 5);
-  assert.ok(n.blips[0].f > u.blips[0].f * 2, "Nano is higher");
-  assert.ok(n.blips[1].t - n.blips[0].t < u.blips[1].t - u.blips[0].t, "and quicker");
-  assert.deepEqual(soundMod.blipPlan("Same line", "nano", false), soundMod.blipPlan("Same line", "nano", false), "a line always sounds the same");
+  // Never right under a section's title.
+  const underTitle = [card("t", 100, 300, 1100)];
+  assert.equal(seekMod.hideSpot(underTitle, vp, NANO, noZones, rng, [240]), null, "a card just under a title");
+  assert.ok(seekMod.hideSpot(underTitle, vp, NANO, noZones, rng, [20]), "a title far above does not matter");
 });
 
 // ---------- room beside the content ----------
@@ -800,4 +770,26 @@ test("the gaps between blocks of text, and the peek beside a section title", () 
   const plain = { ...title, id: "peek:300" };
   const ctx = { vp: { w: 390, h: 844 }, size: { w: 48, h: 52 }, zones: noZones };
   assert.ok(perch.perchCost(title, "nano", ctx) < perch.perchCost(plain, "nano", ctx), "alongside a title is preferred");
+});
+
+// ---------- standing on something, under the header ----------
+test("in the gutter he stands at the level of a real edge on the page, not on an arbitrary grid line", () => {
+  const vp = { w: 1280, h: 800 };
+  const g = { left: 96, right: 96 };
+  const edges = [300, 305, 520, 90, 790];
+  const c = perch.gutterCandidates("nano", vp, NANO, g, edges);
+  assert.deepEqual(c.map((x) => x.y), [300, 520, 790], "near-duplicate edges merge; edges under the header line or off the screen are dropped");
+  assert.ok(c.every((x) => x.kind === "gutter"));
+  assert.ok(perch.gutterCandidates("nano", vp, NANO, g).length > 5, "with no edge in view he stands on the grid");
+});
+
+test("nothing stands above the line under the header: perches and destinations obey the header's real bottom", () => {
+  const vp = { w: 1280, h: 800 };
+  const cand = { id: "x", kind: "gutter", x: 1232, y: 200 };
+  const ctx = { vp, size: NANO, zones: noZones };
+  assert.ok(perch.perchCost(cand, "nano", ctx) < Infinity, "default line: 72px");
+  assert.equal(perch.perchCost(cand, "nano", { ...ctx, top: 120 }), Infinity, "a taller header pushes the line down: his head would touch it");
+  assert.ok(perch.perchCost({ ...cand, y: 240 }, "nano", { ...ctx, top: 120 }) < Infinity);
+  assert.equal(comehere.validDestination({ x: 640, y: 150 }, NANO, noZones, vp, 120), false);
+  assert.equal(comehere.validDestination({ x: 640, y: 300 }, NANO, noZones, vp, 120), true);
 });

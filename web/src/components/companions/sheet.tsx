@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { motion } from "motion/react";
-import { EyeOff, Play, RotateCcw, Send, Volume2, VolumeX, X } from "lucide-react";
+import { EyeOff, Play, RotateCcw, Send, X } from "lucide-react";
 import type { Actor } from "./actor";
 import { Companion } from "./companion";
 import type { Look, Who } from "./companion-model";
@@ -161,8 +161,6 @@ export interface SheetProps {
   /** Bumped by "Quiz me" in Nano's bubble: the sheet opens and starts a question. */
   quizAuto: number;
   onQuizPhase: (p: QuizPhase, row: QuizRow) => void;
-  soundOn: boolean;
-  onSound: (on: boolean) => void;
 }
 
 /** The companion sheet: a dialog with a focus trap (Tab stays inside, Esc closes, focus returns to what opened it). */
@@ -264,16 +262,6 @@ export function Sheet(p: SheetProps) {
         <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
           <button type="button" onClick={p.onHide} className="inline-flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[13px] text-muted hover:text-ink">
             <EyeOff className="size-4" aria-hidden /> Hide Nano &amp; Ultra
-          </button>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={p.soundOn}
-            onClick={() => p.onSound(!p.soundOn)}
-            className="inline-flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[13px] text-muted hover:text-ink"
-          >
-            {p.soundOn ? <Volume2 className="size-4" aria-hidden /> : <VolumeX className="size-4" aria-hidden />}
-            Sound {p.soundOn ? "on" : "off"}
           </button>
         </div>
       </motion.div>

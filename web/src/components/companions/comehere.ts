@@ -56,7 +56,7 @@ export function validDestination(p: { x: number; y: number }, size: Size, zones:
   let txt = 0;
   for (const z of zones.cta) cta += overlapArea(r, z);
   for (const z of zones.text) txt += overlapArea(r, z);
-  return cta / area <= 0.02 && txt / area <= 0.06;
+  return cta / area <= 0.004 && txt / area <= 0.06;
 }
 
 /** Where he stands while following: beside the pointer like a pet at heel (left of it, else right, else just below), else where he was. */

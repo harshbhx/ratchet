@@ -94,6 +94,8 @@ export function useRoaming(o: RoamingOpts) {
   /** Until when each is held where he is (called over, hiding, following the pointer): no new perch before then. */
   const pinned = useRef<Record<Who, number>>({ nano: 0, ultra: 0 });
   const followState = useRef<{ zones: Zones; last: Pt } | null>(null);
+  /** The first pixel below the header (its real rect: the pill floats) and anything else fixed at the top. */
+  const topRef = useRef(72);
 
   /** Read every rectangle the choice needs, once. */
   const readWorld = useCallback(() => {
@@ -118,12 +120,26 @@ export function useRoaming(o: RoamingOpts) {
       if (el.closest('nav[aria-label="Chapters"]')) continue;
       text.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
     }
+    // The header's own rectangles are a hard no-go zone, and nothing may stand above the line under them.
+    let headerBottom = 0;
+    for (const el of Array.from(document.querySelectorAll("header > *"))) {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0 || r.bottom <= 0) continue;
+      cta.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+      headerBottom = Math.max(headerBottom, r.bottom);
+    }
+    topRef.current = Math.max(72, headerBottom + 10);
+    const edgeYs: number[] = items.map((i) => i.rect.top);
+    for (const el of Array.from(document.querySelectorAll("main section[id]")).slice(0, 80)) {
+      const r = el.getBoundingClientRect();
+      if (r.top > 0 && r.top < vp.h) edgeYs.push(r.top);
+    }
     const headerYs: number[] = [];
     for (const el of Array.from(document.querySelectorAll("main h1, main h2")).slice(0, 60)) {
       const r = el.getBoundingClientRect();
       if (r.bottom > 0 && r.top < vp.h) headerYs.push(r.bottom + 4);
     }
-    return { vp, items, zones: { cta, text } as Zones, headerYs };
+    return { vp, items, zones: { cta, text } as Zones, headerYs, edgeYs, top: topRef.current };
   }, []);
 
   const setBase = useCallback((who: Who, sy: number) => {
@@ -131,8 +147,8 @@ export function useRoaming(o: RoamingOpts) {
     if (!a) return;
     const r = O.current.roamers[who];
     r.bx.set(a.x);
-    // Following the page, but never off the screen: in a fast scroll he rides the edge until he jumps to a perch that is in view.
-    r.by.set(a.follow ? Math.min(window.innerHeight - 8, Math.max(100, a.y - (sy - a.sy0))) : a.y);
+    // Following the page, but never off the screen or up under the header: in a fast scroll he rides the edge until he jumps to a perch.
+    r.by.set(a.follow ? Math.min(window.innerHeight - 8, Math.max(topRef.current + O.current.sizes[who].h + 4, a.y - (sy - a.sy0))) : a.y);
   }, []);
 
   const apply = useCallback(
@@ -212,7 +228,7 @@ export function useRoaming(o: RoamingOpts) {
       if (!opt.enabled || opt.hold() || document.hidden) return;
       const sy = window.scrollY;
       const now = performance.now();
-      const { vp, items, zones, headerYs } = readWorld();
+      const { vp, items, zones, headerYs, edgeYs, top } = readWorld();
       const gutters = gutterOf(vp, [...items.map((i) => i.rect), ...zones.text]);
       const tops: Array<{ id: string; top: number; bottom: number }> = [];
       for (const el of Array.from(document.querySelectorAll("main section[id], #closing-cta, footer"))) {
@@ -243,14 +259,19 @@ export function useRoaming(o: RoamingOpts) {
         const otherPt = placed[other] ?? (anchors.current[other] ? { x: opt.roamers[other].px.get(), y: opt.roamers[other].py.get() } : null);
         const cands = [
           ...candidatesFromItems(items, w),
-          ...gutterCandidates(w, vp, opt.sizes[w], gutters),
+          ...gutterCandidates(w, vp, opt.sizes[w], gutters, edgeYs),
           ...gapCandidates(w, vp, opt.sizes[w], zones.text),
           ...floorCandidates(w, vp),
-          ...peekCandidates(w, vp, headerYs),
+          ...(opt.phone ? peekCandidates(w, vp, headerYs) : []),
         ];
-        const best = choosePerch(cands, w, { vp, size: opt.sizes[w], zones, other: opt.phone ? null : otherPt, current: anchors.current[w]?.id, prefRatio: prefRatio(w, sceneIdx) }, wander === w ? 0.9 : 0);
+        const best = choosePerch(cands, w, { vp, size: opt.sizes[w], zones, other: opt.phone ? null : otherPt, current: anchors.current[w]?.id, prefRatio: prefRatio(w, sceneIdx), top }, wander === w ? 0.9 : 0);
         // Nothing is clear of text: tuck into the gutter at the edge, head and hands in view, rather than cover anything.
-        const cand = best ? best.cand : bestPeek(w, vp, opt.sizes[w], zones, anchors.current[w]?.id);
+        // On a phone, with no room, he peeks from the edge. On a desktop he is never half-hidden or half-off-screen: with no clear place he is simply not out.
+        const cand = best ? best.cand : opt.phone ? bestPeek(w, vp, opt.sizes[w], zones, anchors.current[w]?.id) : null;
+        if (!cand) {
+          opt.onVisible(w, false);
+          continue;
+        }
         opt.onVisible(w, true);
         placed[w] = cand;
         apply(w, cand, fast && w === "nano", sy, vp);
@@ -374,7 +395,7 @@ export function useRoaming(o: RoamingOpts) {
       const opt = O.current;
       if (!opt.enabled || opt.hold()) return false;
       const { vp, zones } = readWorld();
-      if (!validDestination(pt, opt.sizes[who], zones, vp)) return false;
+      if (!validDestination(pt, opt.sizes[who], zones, vp, topRef.current)) return false;
       pinned.current[who] = 0;
       apply(who, { id: `come:${Math.round(pt.x)}:${Math.round(pt.y)}`, x: pt.x, y: pt.y, kind: "floor" }, false, window.scrollY, vp);
       pinned.current[who] = performance.now() + 9000;
@@ -435,8 +456,8 @@ export function useRoaming(o: RoamingOpts) {
     (who: Who) => {
       const opt = O.current;
       if (!opt.enabled || opt.phone) return null;
-      const { vp, items, zones } = readWorld();
-      const spot = hideSpot(items, vp, opt.sizes[who], zones);
+      const { vp, items, zones, headerYs } = readWorld();
+      const spot = hideSpot(items, vp, opt.sizes[who], zones, Math.random, headerYs);
       if (!spot) return null;
       pinned.current[who] = 0;
       apply(who, spot, false, window.scrollY, vp);
