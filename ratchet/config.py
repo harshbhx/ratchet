@@ -335,7 +335,6 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_SAMPLES",
             "RATCHET_SCOUT_DAILY_BUDGET_USD",
             "RATCHET_SCOUT_MAX_RESULTS",
-            "RATCHET_SCOUT_RECORDINGS_DIR",
             "RATCHET_SCOUT_MAX_RUNS_PER_DAY",
             "RATCHET_SCOUT_RUNS_PER_HOUR",
             "RATCHET_SIM_URL",
@@ -880,8 +879,6 @@ class Settings:
     scout_runs_per_hour: int = field(default_factory=lambda: _int("RATCHET_SCOUT_RUNS_PER_HOUR", "6"))
     scout_max_runs_per_day: int = field(default_factory=lambda: _int("RATCHET_SCOUT_MAX_RUNS_PER_DAY", "30"))
     scout_max_results: int = field(default_factory=lambda: _int("RATCHET_SCOUT_MAX_RESULTS", "4"))
-    # Recorded live runs (FR-10.40, ADR 0140): a folder of recordings the gateway lists and serves read-only. Empty = off.
-    scout_recordings_dir: str = field(default_factory=lambda: _env("RATCHET_SCOUT_RECORDINGS_DIR", ""))
     # Judge access (ADR 0120): runs per UTC day held back for hackathon judges, unlocked by a code sent once by POST
     # (`POST /scout/judge`) and then carried by a signed cookie. Empty code = off. The judge budget defaults to the judges'
     # share of the run cap. Read with `scout_policy()`, which never echoes the code.
@@ -1874,8 +1871,8 @@ class Settings:
                 error(
                     "RATCHET_API_KEYS",
                     "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
-                    "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
-                    "VM's Caddy guard: RATCHET_API_GUARD=guarded and a RATCHET_ADMIN_TOKEN of 32+ characters) checks every "
+                    "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the VM's "
+                    "Caddy guard: RATCHET_API_GUARD=guarded and a RATCHET_ADMIN_TOKEN of 32+ characters) checks every "
                     "caller",
                 )
             elif (problem := self.guard_problem()) is not None:

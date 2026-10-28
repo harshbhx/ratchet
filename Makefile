@@ -19,7 +19,7 @@ trace:
 reference:
 	python scripts/reference_check.py
 
-# The public demo as a judge sees it, from outside (never part of test or lint): make demo-check URL=https://<domain> ARGS=--chat
+# The live gateway as a judge sees it, from outside (never part of test or lint): make demo-check URL=https://<domain> ARGS=--chat
 demo-check:
 	python scripts/demo_check.py $(URL) $(ARGS)
 

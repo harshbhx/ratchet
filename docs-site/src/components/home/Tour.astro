@@ -1,0 +1,380 @@
+---
+/**
+ * The docs home's guided tour (Driver.js, MIT). Opt-in only: it starts from the "Take the tour" button, from a link to
+ * /?tour=1, or from the one-time hint's button; it never starts by itself. Driver.js is loaded only when the tour starts.
+ * A step whose element is missing or hidden at the current width is left out. Where a step asks the reader to do something
+ * (open search, switch a tab, open the theme toggle) it moves on when they do it; Next always works too.
+ */
+import RtIcon from '../RtIcon.astro';
+---
+
+<aside class="rt-tourhint rt-ui" data-rt-tour-hint hidden aria-label="Guided tour">
+  <span class="rt-tourhint__ico" aria-hidden="true"><RtIcon name="compass" size={18} /></span>
+  <p class="rt-tourhint__text"><strong>New here?</strong> Take the 45-second tour.</p>
+  <button type="button" class="rt-tourhint__go" data-rt-tour-start>Start</button>
+  <button type="button" class="rt-tourhint__x" data-rt-tour-dismiss aria-label="Dismiss the tour hint"><RtIcon name="x" size={16} /></button>
+</aside>
+
+<script>
+  const KEY = 'rt-tour-seen';
+  const read = () => {
+    try {
+      return localStorage.getItem(KEY) === '1';
+    } catch {
+      return false;
+    }
+  };
+  const remember = () => {
+    try {
+      localStorage.setItem(KEY, '1');
+    } catch {
+      /* private mode: the hint just shows again next time */
+    }
+  };
+
+  const hint = document.querySelector<HTMLElement>('[data-rt-tour-hint]');
+  const hideHint = () => {
+    if (hint) hint.hidden = true;
+    remember();
+  };
+  if (hint && !read()) window.setTimeout(() => (hint.hidden = false), 1200);
+  hint?.querySelector('[data-rt-tour-dismiss]')?.addEventListener('click', hideHint);
+
+  const visible = (el: Element | null): el is HTMLElement => {
+    if (!(el instanceof HTMLElement)) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+  };
+  const $ = (s: string) => document.querySelector(s);
+  const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let running = false;
+  async function start() {
+    if (running) return;
+    running = true;
+    hideHint();
+    // Driver.js and its stylesheet are fetched only now, when the reader starts the tour.
+    const [{ driver }, css] = await Promise.all([import('driver.js'), import('driver.js/dist/driver.css?url')]);
+    if (!document.querySelector('link[data-rt-driver-css]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = css.default;
+      link.dataset.rtDriverCss = '';
+      document.head.append(link);
+      await new Promise((r) => {
+        link.onload = link.onerror = () => r(null);
+      });
+    }
+
+    type Step = {
+      sel: string;
+      title: string;
+      text: string;
+      side?: 'top' | 'bottom' | 'left' | 'right';
+      /** Called when the step is shown; returns a cleanup. `next` moves the tour on. */
+      wait?: (el: HTMLElement, next: () => void) => () => void;
+    };
+    const steps: Step[] = [
+      {
+        sel: '[data-rt-open-search]',
+        title: 'Search the docs',
+        text: 'Press Ctrl or Cmd K, or click here. Search covers every page and runs in your browser. Open it to continue.',
+        side: 'bottom',
+        wait: (_el, next) => {
+          const dlg = document.querySelector<HTMLDialogElement>('site-search dialog');
+          if (!dlg) return () => {};
+          const mo = new MutationObserver(() => {
+            if (dlg.open) {
+              // The search dialog sits above the tour; move on once it closes.
+              dlg.addEventListener('close', () => window.setTimeout(next, 150), { once: true });
+            }
+          });
+          mo.observe(dlg, { attributes: true, attributeFilter: ['open'] });
+          return () => mo.disconnect();
+        },
+      },
+      {
+        sel: '.header-nav, .nav-bar',
+        title: 'Sections',
+        text: 'Docs, Guides and API are one click away. On any guide the sidebar lists every section: Start here, How it works, Scout, Run it, Security, API and reference, Help.',
+        side: 'bottom',
+      },
+      {
+        sel: '.rt-dhero__actions a[href="/guides/quickstart/"]',
+        title: 'Quickstart',
+        text: 'The shortest route in: install the gateway, send a request and read the ratchet block in the answer.',
+        side: 'bottom',
+      },
+      {
+        sel: '.rt-win__tabs',
+        title: 'The first request',
+        text: 'The same request in curl, Python and Node. Switch to Python to continue.',
+        side: 'left',
+        wait: (_el, next) => {
+          const py = document.getElementById('rt-tab-py');
+          const on = () => window.setTimeout(next, 250);
+          py?.addEventListener('click', on, { once: true });
+          return () => py?.removeEventListener('click', on);
+        },
+      },
+      {
+        sel: '',
+        title: 'Copy page, on every page',
+        text: 'Under each guide title, Copy page gives the page as Markdown or as a prompt. Its panel can open the page in Claude, ChatGPT or Perplexity, and links to llms.txt, every page as plain text for AI tools.',
+      },
+      {
+        sel: '#today',
+        title: 'What is real today',
+        text: 'What ran, what was measured, and where each claim is checked. Every line links to its evidence.',
+        side: 'top',
+      },
+      {
+        sel: 'starlight-theme-lucode-select button',
+        title: 'Light or dark',
+        text: 'Switch the theme and watch it open as a circle from the button. Click it to continue.',
+        side: 'bottom',
+        wait: (el, next) => {
+          const on = () => window.setTimeout(next, 750);
+          el.addEventListener('click', on, { once: true });
+          return () => el.removeEventListener('click', on);
+        },
+      },
+      {
+        sel: '',
+        title: 'That is the tour',
+        text: 'Start with the <a href="/guides/quickstart/">Quickstart</a>, or read <a href="/guides/for-judges/">For judges</a> for what each result rests on.',
+      },
+    ];
+
+    // Leave out a step whose element is not on this page or not visible at this width.
+    const live = steps.filter((s) => !s.sel || visible($(s.sel)));
+    let cleanup: () => void = () => {};
+    const animate = !reduce();
+    const d = driver({
+      animate,
+      smoothScroll: animate,
+      showProgress: true,
+      progressText: '{{current}} / {{total}}',
+      nextBtnText: 'Next',
+      prevBtnText: 'Back',
+      doneBtnText: 'Done',
+      showButtons: ['previous', 'next'],
+      allowClose: true,
+      overlayOpacity: 0.55,
+      stagePadding: 8,
+      stageRadius: 12,
+      popoverClass: 'rt-tour',
+      steps: live.map((s, i) => ({
+        element: s.sel || undefined,
+        popover: { title: s.title, description: s.text, side: s.side, align: 'center' as const },
+        onHighlightStarted: (el?: Element) => {
+          cleanup();
+          cleanup = s.wait && el instanceof HTMLElement ? s.wait(el, () => d.isActive() && d.getActiveIndex() === i && d.moveNext()) : () => {};
+        },
+      })),
+      onPopoverRender: (pop) => {
+        if (pop.wrapper.querySelector('.rt-tour-skip')) return;
+        const skip = document.createElement('button');
+        skip.type = 'button';
+        skip.className = 'rt-tour-skip';
+        skip.textContent = 'Skip';
+        skip.addEventListener('click', () => d.destroy());
+        pop.footerButtons.prepend(skip);
+      },
+      onDestroyed: () => {
+        cleanup();
+        running = false;
+      },
+    });
+    d.drive();
+  }
+
+  document.querySelectorAll('[data-rt-tour-start]').forEach((b) => b.addEventListener('click', start));
+  if (new URLSearchParams(location.search).get('tour') === '1') {
+    history.replaceState(null, '', location.pathname);
+    window.setTimeout(start, 400);
+  }
+</script>
+
+<style is:global>
+  /* The tour's panel in the docs' own look (Driver.js ships only a structure). */
+  .driver-popover.rt-tour {
+    min-width: 17rem;
+    max-width: min(22rem, calc(100vw - 1.5rem));
+    padding: 1rem 1.05rem 0.9rem;
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 1rem;
+    background: var(--rt-surface);
+    color: var(--rt-ink-2);
+    box-shadow: var(--rt-shadow-lift);
+    font-family: var(--rt-font-sans);
+  }
+  .driver-popover.rt-tour::before {
+    content: '';
+    position: absolute;
+    inset: 0 1rem auto 1rem;
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--rt-owned), var(--rt-rented));
+  }
+  .rt-tour .driver-popover-title {
+    margin: 0.2rem 0 0.35rem;
+    color: var(--rt-ink);
+    font-family: var(--rt-font-sans);
+    font-size: 1rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  .rt-tour .driver-popover-description {
+    color: var(--rt-ink-2);
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
+  .rt-tour .driver-popover-description a {
+    color: var(--rt-owned-ink);
+    text-underline-offset: 3px;
+  }
+  .rt-tour .driver-popover-footer {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.9rem;
+  }
+  .rt-tour .driver-popover-progress-text {
+    margin-right: auto;
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.75rem;
+  }
+  .rt-tour .driver-popover-footer button {
+    min-height: 2rem;
+    padding: 0 0.8rem;
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 999px;
+    background: var(--rt-surface-2);
+    color: var(--rt-ink);
+    font: 550 0.8rem var(--rt-font-sans);
+    text-shadow: none;
+    cursor: pointer;
+  }
+  .rt-tour .driver-popover-footer button:hover {
+    border-color: var(--rt-owned);
+  }
+  .rt-tour .driver-popover-next-btn {
+    border-color: transparent !important;
+    background: var(--rt-ink) !important;
+    color: var(--rt-bg) !important;
+  }
+  .rt-tour .rt-tour-skip {
+    border-color: transparent !important;
+    background: transparent !important;
+    color: var(--rt-muted) !important;
+  }
+  .rt-tour .driver-popover-footer button:focus-visible {
+    outline: 2px solid var(--rt-focus);
+    outline-offset: 2px;
+  }
+  .driver-popover.rt-tour .driver-popover-arrow {
+    border-width: 6px;
+  }
+  .driver-popover.rt-tour .driver-popover-arrow-side-bottom.driver-popover-arrow-align-center {
+    border-bottom-color: var(--rt-surface);
+  }
+  .driver-popover.rt-tour .driver-popover-arrow-side-top.driver-popover-arrow-align-center {
+    border-top-color: var(--rt-surface);
+  }
+  .driver-popover.rt-tour .driver-popover-arrow-side-left.driver-popover-arrow-align-center {
+    border-left-color: var(--rt-surface);
+  }
+  .driver-popover.rt-tour .driver-popover-arrow-side-right.driver-popover-arrow-align-center {
+    border-right-color: var(--rt-surface);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .driver-popover.rt-tour,
+    .driver-overlay,
+    .driver-active-element {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+
+  /* The one-time hint: small, in a corner, never in the way. */
+  .rt-tourhint {
+    position: fixed;
+    z-index: 40;
+    right: 1rem;
+    bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: calc(100vw - 2rem);
+    padding: 0.55rem 0.5rem 0.55rem 0.75rem;
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 0.9rem;
+    background: var(--rt-surface);
+    box-shadow: var(--rt-shadow-lift);
+    animation: rt-hint-in 0.35s var(--rt-ease) both;
+  }
+  .rt-tourhint[hidden] {
+    display: none;
+  }
+  @keyframes rt-hint-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rt-tourhint {
+      animation: none;
+    }
+  }
+  .rt-tourhint__ico {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.6rem;
+    background: var(--rt-owned-soft);
+    color: var(--rt-owned-ink);
+  }
+  .rt-tourhint .rt-tourhint__text {
+    margin: 0;
+    color: var(--rt-ink-2);
+    font-size: 0.85rem;
+  }
+  .rt-tourhint__text strong {
+    color: var(--rt-ink);
+  }
+  .rt-tourhint__go {
+    min-height: 2rem;
+    padding: 0 0.8rem;
+    border: 0;
+    border-radius: 999px;
+    background: var(--rt-ink);
+    color: var(--rt-bg);
+    font: 600 0.8rem var(--rt-font-sans);
+    cursor: pointer;
+  }
+  .rt-tourhint__x {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--rt-muted);
+    cursor: pointer;
+  }
+  .rt-tourhint__go:focus-visible,
+  .rt-tourhint__x:focus-visible {
+    outline: 2px solid var(--rt-focus);
+    outline-offset: 2px;
+  }
+  @media print {
+    .rt-tourhint {
+      display: none !important;
+    }
+  }
+</style>
