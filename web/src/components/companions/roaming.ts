@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { animate, useMotionValue, useTransform, type MotionValue } from "motion/react";
 import type { Actor } from "./actor";
 import type { Look, Who } from "./companion-model";
-import { PERCH_SELECTOR, TEXT_SELECTOR, bestPeek, prefRatio, candidatesFromItems, choosePerch, floorCandidates, gatherPair, gathers, needsRepick, peekCandidates, travelPlan, type Item, type Move, type Pt, type Size, type Zones } from "./perch";
+import { followPoint, validDestination } from "./comehere";
+import { HIDE_MS, hideSpot } from "./hideseek";
+import { PERCH_SELECTOR, TEXT_SELECTOR, bestPeek, prefRatio, candidatesFromItems, choosePerch, floorCandidates, gapCandidates, gatherPair, gathers, gutterCandidates, gutterOf, needsRepick, peekCandidates, travelPlan, type Item, type Move, type Pt, type Size, type Zones } from "./perch";
 import { AVOID_SELECTOR, type Rect } from "./placement";
 import { SCENE_SECTIONS, currentSection } from "./scenes";
 import { FAST, pushSample, repickEveryMs, shouldAutoJump, velocity, type Sample } from "./scroll";
@@ -39,6 +41,9 @@ interface Anchor {
   follow: boolean;
 }
 
+/** Perches that belong to the page and move up the screen with it; the gutter, the floor and the edge belong to the screen. */
+const FOLLOWS = new Set(["card", "heading", "gap"]);
+
 export interface RoamingOpts {
   enabled: boolean;
   phone: boolean;
@@ -54,8 +59,8 @@ export interface RoamingOpts {
   onVisible: (who: Who, v: boolean) => void;
   /** The section the reader is at (landing page). */
   onScene: (id: string) => void;
-  /** What kind of place each stands on: a card, a heading, the floor, or peeking from the edge. */
-  onPlace: (who: Who, kind: string) => void;
+  /** What kind of place each stands on (a card, the gutter, a gap, the floor, peeking from the edge) and how much smaller he is drawn to fit. */
+  onPlace: (who: Who, kind: string, scale: number) => void;
   /** The page has stopped moving. */
   onSettle: () => void;
   /** True while something (the sheet, a drag) means they should hold still. */
@@ -86,6 +91,40 @@ export function useRoaming(o: RoamingOpts) {
   const lastJump = useRef(0);
   const meeting = useRef(false);
   const token = useRef<Record<Who, number>>({ nano: 0, ultra: 0 });
+  /** Until when each is held where he is (called over, hiding, following the pointer): no new perch before then. */
+  const pinned = useRef<Record<Who, number>>({ nano: 0, ultra: 0 });
+  const followState = useRef<{ zones: Zones; last: Pt } | null>(null);
+
+  /** Read every rectangle the choice needs, once. */
+  const readWorld = useCallback(() => {
+    const opt = O.current;
+    const vp = { w: window.innerWidth, h: window.innerHeight };
+    const items: Item[] = [];
+    for (const el of Array.from(document.querySelectorAll(PERCH_SELECTOR)).slice(0, 3000)) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > vp.h || r.width < 110 || r.height < 20) continue;
+      items.push({ id: `p${idOf(el)}`, kind: el.tagName === "H2" ? "heading" : "card", rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } });
+    }
+    const cta: Rect[] = Array.from(document.querySelectorAll(AVOID_SELECTOR))
+      .map((e) => e.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.bottom > 0 && r.top < vp.h)
+      .map((r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom }));
+    cta.push(...opt.extraZones());
+    const text: Rect[] = [];
+    for (const el of Array.from(document.querySelectorAll(TEXT_SELECTOR)).slice(0, 4000)) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > vp.h || r.width < 8 || r.height > 420) continue;
+      // The chapter rail is page chrome with its own no-go zone, not content: it must not make the gutter look narrow.
+      if (el.closest('nav[aria-label="Chapters"]')) continue;
+      text.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+    }
+    const headerYs: number[] = [];
+    for (const el of Array.from(document.querySelectorAll("main h1, main h2")).slice(0, 60)) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > 0 && r.top < vp.h) headerYs.push(r.bottom + 4);
+    }
+    return { vp, items, zones: { cta, text } as Zones, headerYs };
+  }, []);
 
   const setBase = useCallback((who: Who, sy: number) => {
     const a = anchors.current[who];
@@ -97,12 +136,12 @@ export function useRoaming(o: RoamingOpts) {
   }, []);
 
   const apply = useCallback(
-    (who: Who, cand: { id: string; x: number; y: number; kind: string }, fast: boolean, sy: number, vp: { w: number; h: number }) => {
+    (who: Who, cand: { id: string; x: number; y: number; kind: string; scale?: number }, fast: boolean, sy: number, vp: { w: number; h: number }) => {
       const opt = O.current;
       const r = opt.roamers[who];
       const prev = anchors.current[who];
-      const next: Anchor = { id: cand.id, x: cand.x, y: cand.y, sy0: sy, follow: cand.kind !== "floor" && cand.kind !== "peek" };
-      opt.onPlace(who, cand.kind);
+      const next: Anchor = { id: cand.id, x: cand.x, y: cand.y, sy0: sy, follow: FOLLOWS.has(cand.kind) };
+      opt.onPlace(who, cand.kind, (cand as { scale?: number }).scale ?? 1);
       const restLean = cand.kind === "peek" ? (who === "nano" ? -15 : 15) : 0;
       if (prev && prev.id === cand.id) {
         // The same perch, re-measured: keep it where it is, no walk.
@@ -167,31 +206,14 @@ export function useRoaming(o: RoamingOpts) {
   );
 
   const pick = useCallback(
-    (whos: Who[], fast: boolean, wander?: Who) => {
+    (all: Who[], fast: boolean, wander?: Who) => {
+      let whos = all;
       const opt = O.current;
       if (!opt.enabled || opt.hold() || document.hidden) return;
-      const vp = { w: window.innerWidth, h: window.innerHeight };
       const sy = window.scrollY;
       const now = performance.now();
-      // Read every rectangle once.
-      const items: Item[] = [];
-      for (const el of Array.from(document.querySelectorAll(PERCH_SELECTOR)).slice(0, 3000)) {
-        const r = el.getBoundingClientRect();
-        if (r.bottom < 0 || r.top > vp.h || r.width < 110 || r.height < 20) continue;
-        items.push({ id: `p${idOf(el)}`, kind: el.tagName === "H2" ? "heading" : "card", rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } });
-      }
-      const cta: Rect[] = Array.from(document.querySelectorAll(AVOID_SELECTOR))
-        .map((e) => e.getBoundingClientRect())
-        .filter((r) => r.width > 0 && r.bottom > 0 && r.top < vp.h)
-        .map((r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom }));
-      cta.push(...opt.extraZones());
-      const text: Rect[] = [];
-      for (const el of Array.from(document.querySelectorAll(TEXT_SELECTOR)).slice(0, 4000)) {
-        const r = el.getBoundingClientRect();
-        if (r.bottom < 0 || r.top > vp.h || r.width < 8 || r.height > 420) continue;
-        text.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
-      }
-      const zones: Zones = { cta, text };
+      const { vp, items, zones, headerYs } = readWorld();
+      const gutters = gutterOf(vp, [...items.map((i) => i.rect), ...zones.text]);
       const tops: Array<{ id: string; top: number; bottom: number }> = [];
       for (const el of Array.from(document.querySelectorAll("main section[id], #closing-cta, footer"))) {
         const id = el.tagName === "FOOTER" ? "footer" : el.id;
@@ -203,6 +225,8 @@ export function useRoaming(o: RoamingOpts) {
       const sceneIdx = Math.max(0, (SCENE_SECTIONS as readonly string[]).indexOf(sceneNow));
       opt.onScene(sceneNow);
       const docH = document.documentElement.scrollHeight;
+      whos = whos.filter((w) => now >= pinned.current[w]);
+      if (!whos.length) return;
       for (const w of whos) lastPick.current[w] = now;
 
       const pair = !opt.phone && gathers(sy, vp.h, docH) ? gatherPair(vp, { nano: opt.sizes.nano, ultra: opt.sizes.ultra }, zones) : null;
@@ -217,7 +241,13 @@ export function useRoaming(o: RoamingOpts) {
         if (!whos.includes(w)) continue;
         const other = w === "nano" ? "ultra" : "nano";
         const otherPt = placed[other] ?? (anchors.current[other] ? { x: opt.roamers[other].px.get(), y: opt.roamers[other].py.get() } : null);
-        const cands = [...candidatesFromItems(items, w), ...floorCandidates(w, vp), ...peekCandidates(w, vp)];
+        const cands = [
+          ...candidatesFromItems(items, w),
+          ...gutterCandidates(w, vp, opt.sizes[w], gutters),
+          ...gapCandidates(w, vp, opt.sizes[w], zones.text),
+          ...floorCandidates(w, vp),
+          ...peekCandidates(w, vp, headerYs),
+        ];
         const best = choosePerch(cands, w, { vp, size: opt.sizes[w], zones, other: opt.phone ? null : otherPt, current: anchors.current[w]?.id, prefRatio: prefRatio(w, sceneIdx) }, wander === w ? 0.9 : 0);
         // Nothing is clear of text: tuck into the gutter at the edge, head and hands in view, rather than cover anything.
         const cand = best ? best.cand : bestPeek(w, vp, opt.sizes[w], zones, anchors.current[w]?.id);
@@ -226,7 +256,7 @@ export function useRoaming(o: RoamingOpts) {
         apply(w, cand, fast && w === "nano", sy, vp);
       }
     },
-    [apply],
+    [apply, readWorld],
   );
 
   // Scroll, resize and a slow heartbeat.
@@ -248,6 +278,7 @@ export function useRoaming(o: RoamingOpts) {
         const a = anchors.current[w];
         if (a) setBase(w, sy);
         const stale = !a || (a.follow && needsRepick(a.y - (sy - a.sy0), vh));
+        if (now < pinned.current[w]) continue;
         if (stale || now - lastPick.current[w] >= repickEveryMs(w, v)) whos.push(w);
       }
       if (meeting.current && v > 120) release();
@@ -337,7 +368,94 @@ export function useRoaming(o: RoamingOpts) {
     });
   }, []);
 
+  /** Called over: walk to a point the reader pointed at, if it is a place he may stand. Returns false when it is not. */
+  const goTo = useCallback(
+    (who: Who, pt: Pt) => {
+      const opt = O.current;
+      if (!opt.enabled || opt.hold()) return false;
+      const { vp, zones } = readWorld();
+      if (!validDestination(pt, opt.sizes[who], zones, vp)) return false;
+      pinned.current[who] = 0;
+      apply(who, { id: `come:${Math.round(pt.x)}:${Math.round(pt.y)}`, x: pt.x, y: pt.y, kind: "floor" }, false, window.scrollY, vp);
+      pinned.current[who] = performance.now() + 9000;
+      return true;
+    },
+    [apply, readWorld],
+  );
+
+  /** Pressed and held: he follows the pointer like a pet at heel. */
+  const followStart = useCallback(
+    (who: Who) => {
+      const r = O.current.roamers[who];
+      const { zones } = readWorld();
+      travel.current[who]?.stop();
+      token.current[who]++;
+      const here = { x: r.px.get(), y: r.py.get() };
+      anchors.current[who] = { id: "follow", x: here.x, y: here.y, sy0: window.scrollY, follow: false };
+      r.bx.set(here.x);
+      r.by.set(here.y);
+      r.ox.set(0);
+      r.oy.set(0);
+      pinned.current[who] = Number.POSITIVE_INFINITY;
+      followState.current = { zones, last: here };
+      O.current.onPlace(who, "floor", 1);
+      O.current.onMove(who, "walk");
+    },
+    [readWorld],
+  );
+
+  const followMove = useCallback((who: Who, pt: Pt) => {
+    const st = followState.current;
+    if (!st) return;
+    const r = O.current.roamers[who];
+    const vp = { w: window.innerWidth, h: window.innerHeight };
+    const at = followPoint(pt, st.last, O.current.sizes[who], st.zones, vp);
+    if (at === st.last) return;
+    r.lean.set(Math.max(-8, Math.min(8, (at.x - st.last.x) * 0.4)));
+    st.last = at;
+    const a = anchors.current[who];
+    if (a) {
+      a.x = at.x;
+      a.y = at.y;
+    }
+    animate(r.bx, at.x, { type: "spring", stiffness: 130, damping: 20 });
+    animate(r.by, at.y, { type: "spring", stiffness: 130, damping: 20 });
+  }, []);
+
+  const followEnd = useCallback((who: Who) => {
+    followState.current = null;
+    pinned.current[who] = performance.now() + 6000;
+    const r = O.current.roamers[who];
+    animate(r.lean, 0, { type: "spring", stiffness: 260, damping: 14 });
+    O.current.onMove(who, null);
+  }, []);
+
+  /** Duck behind the top edge of a card. Returns where, or null when no card has room. */
+  const hide = useCallback(
+    (who: Who) => {
+      const opt = O.current;
+      if (!opt.enabled || opt.phone) return null;
+      const { vp, items, zones } = readWorld();
+      const spot = hideSpot(items, vp, opt.sizes[who], zones);
+      if (!spot) return null;
+      pinned.current[who] = 0;
+      apply(who, spot, false, window.scrollY, vp);
+      pinned.current[who] = performance.now() + HIDE_MS + 800;
+      return spot;
+    },
+    [apply, readWorld],
+  );
+
+  /** Free him to move again. */
+  const unpin = useCallback(
+    (who: Who) => {
+      pinned.current[who] = 0;
+      pick([who], false);
+    },
+    [pick],
+  );
+
   const repick = useCallback(() => pick(O.current.phone ? [O.current.active] : ["nano", "ultra"], false), [pick]);
   const wander = useCallback((who: Who) => pick([who], false, who), [pick]);
-  return { meet, release, repick, wander };
+  return { meet, release, repick, wander, goTo, followStart, followMove, followEnd, hide, unpin };
 }

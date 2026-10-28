@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { motion } from "motion/react";
-import { EyeOff, Play, RotateCcw, Send, X } from "lucide-react";
+import { EyeOff, Play, RotateCcw, Send, Volume2, VolumeX, X } from "lucide-react";
 import type { Actor } from "./actor";
 import { Companion } from "./companion";
 import type { Look, Who } from "./companion-model";
 import { GAME_STEPS, MAX_QUESTION, cleanQuestion, nextPhase, phaseCaption, phaseMs, thoughtBubbles, type GamePhase } from "./game";
 import { LESSONS, LESSON_TOTAL, type LessonState } from "./lessons";
+import { QuizCard, type QuizPhase } from "./quiz";
+import type { QuizRow } from "./quiz-model";
 import { Sparkles } from "./sparkles";
 import { cn } from "@/lib/utils";
 
@@ -156,6 +158,11 @@ export interface SheetProps {
   onJump: (w: Who) => void;
   onPhase: (p: GamePhase, q: string) => void;
   onSend: (q: string) => void;
+  /** Bumped by "Quiz me" in Nano's bubble: the sheet opens and starts a question. */
+  quizAuto: number;
+  onQuizPhase: (p: QuizPhase, row: QuizRow) => void;
+  soundOn: boolean;
+  onSound: (on: boolean) => void;
 }
 
 /** The companion sheet: a dialog with a focus trap (Tab stays inside, Esc closes, focus returns to what opened it). */
@@ -226,6 +233,7 @@ export function Sheet(p: SheetProps) {
             </p>
           </div>
           <RoutingGame reduce={p.reduce} looks={p.looks} actors={p.actors} live={p.live} onPhase={p.onPhase} onPoke={p.onPoke} onJump={p.onJump} onSend={p.onSend} />
+          <QuizCard reduce={p.reduce} autoStart={p.quizAuto} onPhase={p.onQuizPhase} />
           <button type="button" onClick={p.onStory} className="flex h-11 w-full items-center justify-center gap-2 rounded-full border border-line-strong bg-surface-2 text-[14px] font-medium text-ink hover:bg-line">
             <Play className="size-4" aria-hidden /> Watch Nano learn
             <span className="text-[12px] font-normal text-muted">about 80 seconds</span>
@@ -257,7 +265,16 @@ export function Sheet(p: SheetProps) {
           <button type="button" onClick={p.onHide} className="inline-flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[13px] text-muted hover:text-ink">
             <EyeOff className="size-4" aria-hidden /> Hide Nano &amp; Ultra
           </button>
-          <span className="text-[12px] text-muted">Remembered on this device</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={p.soundOn}
+            onClick={() => p.onSound(!p.soundOn)}
+            className="inline-flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[13px] text-muted hover:text-ink"
+          >
+            {p.soundOn ? <Volume2 className="size-4" aria-hidden /> : <VolumeX className="size-4" aria-hidden />}
+            Sound {p.soundOn ? "on" : "off"}
+          </button>
         </div>
       </motion.div>
     </div>
