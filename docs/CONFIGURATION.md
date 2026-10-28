@@ -316,6 +316,7 @@ Read only by `deploy/train_job.sh`, `deploy/student_endpoint.sh` and the one-com
 | `RATCHET_BUCKET_ID` | both | required (job; endpoint `create`) | Nebius Object Storage bucket ID, mounted at `/data` |
 | `RATCHET_SUBNET_ID` | both | empty (the project's default subnet) | `--subnet-id` for the job and for `create` |
 | `RATCHET_TRAIN_IMAGE` | `train_job.sh` | required | Training image built from `deploy/Dockerfile.train` |
+| `RATCHET_WHEELS_DIR` | `install_kernels.sh` (inside the training job) | `/data` | Where the prebuilt Mamba kernel wheels are cached, as `wheels-<compute capability>/` on the bucket mount |
 | `RATCHET_TRAIN_PLATFORM` | `train_job.sh` | `gpu-l40s-a` | Nebius GPU platform |
 | `RATCHET_TRAIN_PRESET` | `train_job.sh` | `1gpu-8vcpu-32gb` | Nebius preset |
 | `RATCHET_REGISTRY_SECRET` | `train_job.sh` | empty | `--registry-secret`: a MysteryBox secret with `REGISTRY_USERNAME` and `REGISTRY_PASSWORD`, for a private training image (Nebius Container Registry) |

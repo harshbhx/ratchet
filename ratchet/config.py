@@ -474,6 +474,7 @@ DEPLOY_ENV: frozenset[str] = frozenset(
         "RATCHET_TRAIN_PLATFORM",
         "RATCHET_TRAIN_PRESET",
         "RATCHET_TRAIN_VERSION",
+        "RATCHET_WHEELS_DIR",
         "RATCHET_VLLM_IMAGE",
         "RATCHET_VM_DISK_GB",
         "RATCHET_VM_NAME",
