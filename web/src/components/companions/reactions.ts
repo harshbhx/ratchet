@@ -39,8 +39,8 @@ export const EASTER_EGG: Line[] = [
   { who: "ultra", text: "Focus.", expr: "determined" },
 ];
 
-export type DuoMove = "highfive" | "pat" | "pass" | "hide";
-export const DUO_MOVES: DuoMove[] = ["highfive", "pat", "pass", "hide"];
+export type DuoMove = "highfive" | "pat" | "pass" | "hide" | "sneak" | "levelup" | "fistbump";
+export const DUO_MOVES: DuoMove[] = ["highfive", "pat", "pass", "hide", "sneak", "levelup", "fistbump"];
 
 /** Moves the two make with each other, and what they say. */
 export const DUO_LINES: Record<DuoMove, Line[]> = {
@@ -59,6 +59,18 @@ export const DUO_LINES: Record<DuoMove, Line[]> = {
   hide: [
     { who: "nano", text: "Too hard! Hiding!", expr: "surprised" },
     { who: "ultra", text: "Stay behind me.", expr: "determined" },
+  ],
+  sneak: [
+    { who: "nano", text: "Psst. Just a peek at the answer?", expr: "happy" },
+    { who: "ultra", text: "Not yet.", expr: "determined" },
+  ],
+  levelup: [
+    { who: "ultra", text: "Lesson complete. Here is your card.", expr: "happy" },
+    { who: "nano", text: "Level up! Did my chip just glow?", expr: "proud" },
+  ],
+  fistbump: [
+    { who: "nano", text: "Fist bump!", expr: "happy" },
+    { who: "ultra", text: "Mild enthusiasm. Granted.", expr: "happy" },
   ],
 };
 
@@ -120,7 +132,7 @@ export function sectionReactions(f: Facts): Record<string, SectionReaction> {
     },
     nebius: {
       lines: [
-        { who: "nano", text: "My endpoint cold-started in about seven minutes.", expr: "sleepy" },
+        { who: "nano", text: "My endpoint cold-started in about seven minutes.", expr: "surprised" },
         { who: "ultra", text: "Plan your coffee accordingly." },
       ],
     },

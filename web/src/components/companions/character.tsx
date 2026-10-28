@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useId, useImperativeHandle, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { lookOffset, type Expr, type Look, type Pose, type Who } from "./companion-model";
+import { eyeSpec, lookOffset, type Expr, type Look, type Pose, type Who } from "./companion-model";
 
 /**
  * Nano and Ultra, drawn from simple shapes (original artwork, no external assets). Nano is the student: small, round, blue, with an
@@ -70,7 +70,10 @@ function armAngles(pose: Pose, expr: Expr): [number, number] {
     case "pat":
       return [138, -6];
     case "sip":
+    case "watch":
       return [6, -118];
+    case "fold":
+      return [-74, 74];
     default:
       return expr === "wave" ? [6, -150] : [6, -6];
   }
@@ -79,48 +82,8 @@ function armAngles(pose: Pose, expr: Expr): [number, number] {
 const INK = "var(--ink)";
 const PLATE = "var(--surface-2)";
 
-/** What the lids and pupils do for each expression. `top` and `bottom` are how far the lids are closed at rest (0 open, 1 shut). */
-function eyeSpec(expr: Expr, squint: boolean, idx: 0 | 1, ultra: boolean) {
-  let s = { top: 0, bottom: 0, pupil: 2.7, scale: 1, dx: 0, dy: 0, wet: false, arc: false };
-  switch (expr) {
-    case "happy":
-    case "wave":
-      s = { ...s, top: 0.08, bottom: 0.32, pupil: 3.5 };
-      break;
-    case "proud":
-      s = { ...s, top: 0.42, bottom: 0.18, pupil: 3.2 };
-      break;
-    case "laughing":
-      s = { ...s, arc: true };
-      break;
-    case "sleepy":
-      s = { ...s, top: 0.62, dy: 1.2 };
-      break;
-    case "surprised":
-      s = { ...s, scale: 1.16, pupil: 3.7 };
-      break;
-    case "thinking":
-      s = { ...s, top: idx === 1 ? 0.3 : 0.12, dx: 1.8, dy: -1.8 };
-      break;
-    case "determined":
-      s = { ...s, top: 0.3, pupil: 2.5 };
-      break;
-    case "sad":
-      s = { ...s, top: 0.24, dy: 1.2, wet: true };
-      break;
-    default:
-      // Ultra's dry look: the right eye a little skeptical.
-      if (ultra && idx === 1) s = { ...s, top: 0.2 };
-  }
-  if (squint) s = { ...s, top: Math.max(s.top, 0.52), bottom: Math.max(s.bottom, 0.42), arc: false };
-  return s;
-}
-
 function Eye({ x, y, idx, look, geom, ultra, uid, iris, live }: { x: number; y: number; idx: 0 | 1; look: Look; geom: Geom; ultra: boolean; uid: string; iris: string; live: boolean }) {
-  const sp = eyeSpec(look.expr, look.squint, idx, ultra);
-  if (sp.arc) {
-    return <path d={`M${x - 5} ${y + 2}q5 -8 10 0`} stroke={INK} strokeWidth="2.6" strokeLinecap="round" fill="none" />;
-  }
+  const sp = eyeSpec(look.expr, look.squint, idx, ultra, look.fx === "yawn");
   const rx = geom.eye.rx * sp.scale;
   const ry = geom.eye.ry * sp.scale;
   const clip = `${uid}c${idx}`;
@@ -133,9 +96,11 @@ function Eye({ x, y, idx, look, geom, ultra, uid, iris, live }: { x: number; y: 
       <ellipse rx={rx} ry={ry} fill="#fbfbf8" stroke={INK} strokeOpacity="0.4" strokeWidth="1.3" />
       <g clipPath={`url(#${clip})`}>
         <g className={cn("cp-pupil", look.micro === "dart" && "cp-dart")} style={{ transform: `translate(calc(var(--lx, 0px) + ${sp.dx}px), calc(var(--ly, 0px) + ${sp.dy}px))` }}>
-          <circle r={ir} fill={iris} />
-          <circle r={ir} fill="none" stroke="#000" strokeOpacity="0.25" strokeWidth="0.8" />
-          <circle r={sp.pupil} fill="#0b0b0e" />
+          <g className={live ? "cp-sacc" : undefined} style={{ animationDelay: `${idx * -0.9}s` }}>
+            <circle r={ir} fill={iris} />
+            <circle r={ir} fill="none" stroke="#000" strokeOpacity="0.25" strokeWidth="0.8" />
+            <circle r={sp.pupil} fill="#0b0b0e" />
+          </g>
         </g>
         {/* the highlights stay put on the eye, like light on glass */}
         <circle cx={rx * 0.28} cy={-ry * 0.34} r={sp.wet ? 2.3 : 1.7} fill="#fff" />
@@ -171,6 +136,7 @@ function Mouth({ look, x, y, ultra, talking }: { look: Look; x: number; y: numbe
       </g>
     );
   }
+  if (look.fx === "yawn") return <ellipse className="cp-yawn" cx={x} cy={y + 2} rx="5" ry="6.5" fill={INK} />;
   const cls = look.micro === "twitch" ? "cp-twitch" : undefined;
   const g = (n: ReactNode) => <g className={cls}>{n}</g>;
   switch (expr) {
@@ -218,11 +184,12 @@ function Brows({ look, ex, ey, ultra }: { look: Look; ex: [number, number]; ey: 
   if (expr === "thinking") return <g><path d={`M${ex[0] - 6} ${by + 1}h12`} {...st} /><path d={`M${ex[1] - 6} ${by - 1}q6 -5 12 0`} {...st} /></g>;
   if (expr === "happy" || expr === "wave" || expr === "proud") return <g><path d={`M${ex[0] - 6} ${by}q6 -3 12 0`} {...st} /><path d={`M${ex[1] - 6} ${by}q6 -3 12 0`} {...st} /></g>;
   if (!ultra) return null;
+  if (look.brow === "raise") return <g><path d={`M${ex[0] - 6.5} ${by + 0.5}h13`} {...st} /><path d={`M${ex[1] - 6.5} ${by - 5}q6.5 -4 13 0`} {...st} /></g>;
   // Ultra's brows: level, the right one a little higher. Dry.
   return <g><path d={`M${ex[0] - 6.5} ${by + 0.5}h13`} {...st} /><path d={`M${ex[1] - 6.5} ${by - 2.2}q6.5 -2 13 0`} {...st} /></g>;
 }
 
-function Held({ held, ultra, sip }: { held: Look["held"]; ultra: boolean; sip?: boolean }) {
+function Held({ held, ultra, sip, text = "" }: { held: Look["held"]; ultra: boolean; sip?: boolean; text?: string }) {
   if (held === "none") return null;
   const s = ultra ? 1.15 : 1;
   return (
@@ -233,6 +200,7 @@ function Held({ held, ultra, sip }: { held: Look["held"]; ultra: boolean; sip?: 
           <path d="M0 -9v19" stroke={INK} strokeWidth="1.4" />
           <path d="M-10 -3h7M-10 1h7M3 -3h7M3 1h7" stroke="var(--muted)" strokeWidth="1.2" strokeLinecap="round" />
           <path d="M7 -9v7l2.5 -2l2.5 2v-7z" fill="var(--rented)" />
+          <path className="cp-page" d="M0 -8h13v17h-13z" fill="var(--surface-2)" stroke={INK} strokeWidth="1" />
         </g>
       )}
       {held === "ball" && (
@@ -254,6 +222,18 @@ function Held({ held, ultra, sip }: { held: Look["held"]; ultra: boolean; sip?: 
           <path d="M-8 -4h10M-8 0h14M-8 4h8" stroke="var(--muted)" strokeWidth="1.2" strokeLinecap="round" />
           <path d="M3 3l3 3l6 -7" stroke="var(--bad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
           <rect x="9" y="-14" width="3" height="14" rx="1.5" fill="var(--bad)" transform="rotate(24 10 -7)" />
+        </g>
+      )}
+      {held === "score" && (
+        <g>
+          <rect x="-18" y="-12" width="36" height="25" rx="4" fill="var(--surface)" stroke={INK} strokeWidth="1.6" />
+          <text x="0" y="5.5" textAnchor="middle" fill="var(--owned-ink)" style={{ fontSize: 13, fontWeight: 800 }}>{text}</text>
+        </g>
+      )}
+      {held === "tag" && (
+        <g>
+          <rect x="-31" y="-8.5" width="62" height="17" rx="8.5" fill="var(--surface)" stroke={INK} strokeWidth="1.5" />
+          <text x="0" y="3.2" textAnchor="middle" fill="var(--ink)" style={{ fontSize: 6.4, fontWeight: 700 }}>{text}</text>
         </g>
       )}
       {held === "mug" && (
@@ -329,7 +309,8 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
   const [ex0, ex1] = g.ex;
   const blushOn = look.blush || look.expr === "happy" || look.expr === "proud" || look.expr === "laughing" || look.expr === "wave";
   const holding = look.held !== "none" && (pose === "carry" || pose === "hug");
-  const sipping = pose === "sip" && look.held === "mug";
+  const sipping = (pose === "sip" || pose === "watch") && look.held === "mug" && look.fx !== "watch";
+  const shadesOver = look.sunglasses && look.shadesDown;
   const gb = `${uid}b`;
   const gs = `${uid}s`;
   const footY = jump ? 116 : 121;
@@ -372,6 +353,7 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
       </defs>
       {/* a soft shadow on whatever it stands on */}
       <ellipse cx="60" cy="126" rx={ultra ? 34 : 28} ry="4.2" fill="var(--ink)" opacity={jump ? 0.07 : 0.16} />
+      <g className={cn(live && "cp-shift")} style={{ transformOrigin: "60px 124px" }}>
       <g className={cn(live && "cp-bob")} style={{ transformOrigin: "60px 124px" }}>
         <g className="cp-foot-a">
           <ellipse cx={g.feet[0]} cy={footY} rx={ultra ? 10 : 9} ry="4.6" fill={dark} />
@@ -390,9 +372,37 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
             <circle cx="60" cy="90" r="2.8" fill={INK} opacity="0.75" />
           </g>
         )}
+        {look.fx === "door" && (
+          <g transform="translate(-22 0)">
+            <rect x="-14" y="34" width="36" height="92" rx="3" fill="var(--surface-2)" stroke={INK} strokeWidth="2" />
+            <rect x="-8" y="42" width="24" height="30" rx="2" fill="none" stroke={INK} strokeOpacity="0.35" strokeWidth="1.4" />
+            <rect x="-8" y="80" width="24" height="36" rx="2" fill="none" stroke={INK} strokeOpacity="0.35" strokeWidth="1.4" />
+            <circle cx="16" cy="84" r="2.6" fill="var(--warn)" stroke={INK} strokeWidth="1" />
+          </g>
+        )}
         {arm(0, aL, false)}
         {arm(1, aR, look.expr === "wave" && pose === "stand")}
-        {holding && <Held held={look.held} ultra={ultra} />}
+        {holding && <Held held={look.held} ultra={ultra} text={look.text} />}
+        {look.fx === "juggle" && (
+          <g aria-hidden>
+            {["AS", "ON", "*"].map((t, i) => (
+              <g key={t} className={cn(live && "cp-jug")} style={{ animationDelay: `${i * -0.4}s` }}>
+                <rect x="-8" y="-4.5" width="16" height="9" rx="3" transform="translate(60 98)" fill="var(--surface)" stroke={INK} strokeWidth="1.1" />
+                <text x="60" y="101.2" textAnchor="middle" fill="var(--rented-ink)" style={{ fontSize: 6.6, fontWeight: 800 }}>{t}</text>
+              </g>
+            ))}
+          </g>
+        )}
+        {look.fx === "pen" && <path className={cn(live && "cp-mark")} d="M52 104l3 -3l3 3l3 -3l3 3" stroke="var(--bad)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />}
+        {look.fx === "watch" && (
+          <g transform="translate(103 80)">
+            <path d="M0 4q-18 18 -28 20" stroke={INK} strokeOpacity="0.5" strokeWidth="1.2" fill="none" />
+            <circle r="7" fill="var(--surface)" stroke={INK} strokeWidth="1.6" />
+            <path className={cn(live && "cp-tick")} d="M0 0V-4.4" stroke={INK} strokeWidth="1.4" strokeLinecap="round" style={{ transformOrigin: "0 0" }} />
+            <path d="M0 0l3.2 1.6" stroke={INK} strokeWidth="1.4" strokeLinecap="round" />
+            <circle cy="-8.4" r="1.6" fill={INK} />
+          </g>
+        )}
         {sipping && <Held held="mug" ultra sip />}
         {look.held === "mug" && !holding && !sipping && pose !== "jump" && (
           <g transform={`translate(${ultra ? 98 : 86} 106) scale(0.7)`}>
@@ -404,6 +414,8 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
         <g className={cn("cp-head", look.micro === "shake" && "cp-hshake")} style={{ transformOrigin: "60px 84px", transform: live ? "translate(var(--hx, 0px), 0) rotate(var(--tilt, 0deg))" : undefined }}>
           {ultra ? (
             <>
+              <ellipse className={cn(live && "cp-ear")} cx="19.5" cy="50" rx="4.4" ry="7" fill={dark} style={{ transformOrigin: "22px 50px" }} />
+              <ellipse className={cn(live && "cp-ear")} cx="100.5" cy="50" rx="4.4" ry="7" fill={dark} style={{ transformOrigin: "98px 50px", animationDelay: "-2s" }} />
               <ellipse cx="60" cy="48" rx="41" ry="37" fill={`url(#${gb})`} />
               <ellipse cx="60" cy="48" rx="41" ry="37" fill={`url(#${gs})`} />
               <path d="M21.5 35.3A41 37 0 0 1 70.6 12.3" stroke="#fff" strokeOpacity="0.42" strokeWidth="2.4" strokeLinecap="round" fill="none" />
@@ -420,8 +432,9 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
                     <path d="M60 14V3" stroke={dark} strokeWidth="2" strokeLinecap="round" />
                     <circle cx="60" cy="2.6" r="2.8" fill={accent} stroke={INK} strokeOpacity="0.25" strokeWidth="0.8" />
                   </g>
+                  {look.glow && <circle cx="60" cy="14" r="17" fill="var(--warn)" className={cn(live && "cp-levelup")} opacity="0.35" />}
                   <g className={cn(live && "cp-chip")} style={{ transformOrigin: "60px 17px" }}>
-                    <rect x="48" y="9" width="24" height="11.5" rx="3.4" fill="var(--rented)" />
+                    <rect x="48" y="9" width="24" height="11.5" rx="3.4" fill={look.glow ? "#ffd27a" : "var(--rented)"} />
                     <rect x="48" y="9" width="24" height="5" rx="3" fill="#fff" opacity="0.2" />
                     <path d="M53 17.2v3.6M60 17.2v3.6M67 17.2v3.6" stroke="var(--rented-ink)" strokeWidth="1.4" strokeLinecap="round" opacity="0.75" />
                     <circle cx="53" cy="12.4" r="1.4" fill="#fff" opacity="0.85" />
@@ -430,17 +443,28 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
               )}
             </>
           )}
+          {/* sunglasses worn pushed up on the head */}
+          {look.sunglasses && !look.shadesDown && !ultra && (
+            <g fill="#15151a" opacity="0.95">
+              <rect x="39" y="24" width="18" height="10" rx="4.5" />
+              <rect x="63" y="24" width="18" height="10" rx="4.5" />
+              <rect x="56" y="27" width="8" height="2.4" />
+              <path d="M42 27l5 -1.2M66 27l5 -1.2" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
+            </g>
+          )}
           {/* face plate, with a little depth at its edge */}
           <rect x={g.plate.x} y={g.plate.y} width={g.plate.w} height={g.plate.h} rx={g.plate.r} fill={PLATE} />
           <rect x={g.plate.x + 1} y={g.plate.y + 1} width={g.plate.w - 2} height={g.plate.h - 2} rx={g.plate.r - 1} fill="none" stroke={INK} strokeOpacity="0.1" strokeWidth="2" />
-          <Brows look={look} ex={g.ex} ey={g.ey} ultra={ultra} />
-          {!look.sunglasses && (
+          <g key={`b${look.expr}${look.brow}${look.squint}`} className={live ? "cp-in" : undefined}>
+            <Brows look={look} ex={g.ex} ey={g.ey} ultra={ultra} />
+          </g>
+          {!shadesOver && (
             <>
               <Eye x={ex0} y={g.ey} idx={0} look={look} geom={g} ultra={ultra} uid={uid} iris={iris} live={live} />
               <Eye x={ex1} y={g.ey} idx={1} look={look} geom={g} ultra={ultra} uid={uid} iris={iris} live={live} />
             </>
           )}
-          {ultra && !look.sunglasses && (
+          {ultra && !shadesOver && (
             <g fill="none" stroke={INK} strokeWidth="2.3" className={cn(look.adjust && "cp-adjust")}>
               <circle cx={ex0} cy={g.ey} r="10.2" />
               <circle cx={ex1} cy={g.ey} r="10.2" />
@@ -448,7 +472,7 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
               <path className={cn(live && "cp-glint")} d={`M${ex0 - 6} ${g.ey - 5}l5 -3`} stroke="#fff" strokeWidth="2.2" strokeLinecap="round" opacity="0.8" />
             </g>
           )}
-          {look.sunglasses && (
+          {shadesOver && (
             <g>
               <g fill="#15151a">
                 <rect x={ex0 - 10.5} y={g.ey - 7.5} width="21" height="15" rx="6" />
@@ -462,7 +486,9 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
             <ellipse cx={ex0 - 9} cy={g.ey + 11} rx="4.8" ry="3.1" />
             <ellipse cx={ex1 + 9} cy={g.ey + 11} rx="4.8" ry="3.1" />
           </g>
-          <Mouth look={look} x={60} y={g.my} ultra={ultra} talking={talking && live} />
+          <g key={`m${look.expr}${look.fx}${talking}`} className={live ? "cp-in" : undefined}>
+            <Mouth look={look} x={60} y={g.my} ultra={ultra} talking={talking && live} />
+          </g>
           {look.expr === "laughing" && <path className="cp-tear" d={`M${ex1 + 7} ${g.ey + 4}q3 4 0 7q-3 -3 0 -7z`} fill="var(--owned)" opacity="0.7" />}
           {!ultra && look.cap && (
             <g>
@@ -509,6 +535,7 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
             )}
           </g>
         )}
+      </g>
       </g>
     </svg>
   );

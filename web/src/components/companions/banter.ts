@@ -64,7 +64,7 @@ export function banterLines(f: Facts): Banter[] {
     { id: "cloudflare", lines: [U("This site sits on Cloudflare."), N("And Ultra's brain runs on Nebius. Division of labour!", "proud")] },
     { id: "tokenfactory", lines: [N("Ultra runs on Nebius Token Factory.", "idle"), U("It's a nice factory. Very punctual.")] },
     { id: "endpoint", lines: [N("They served me from a Nebius endpoint once.", "surprised"), U("By hand, for speed tests. Then it was deleted.")] },
-    { id: "cold", lines: [U("Cold start on that endpoint: about seven minutes."), N("I was stretching. Warm-up is important.", "sleepy")] },
+    { id: "cold", lines: [U("Cold start on that endpoint: about seven minutes."), N("I was stretching. Warm-up is important.", "happy")] },
     { id: "speed", lines: [N("Sixteen users at once: 1.6 s median for SQL!", "proud"), U("Speed, not accuracy. We didn't score it there.")] },
     { id: "synthetic", lines: [U("All the training data is synthetic."), N("So I've never met a real customer. Hello, you!", "wave")] },
     { id: "adapter", lines: [N("You'd keep an adapter and its signed lineage.", "idle"), U("Not a model. Read the small print. I did.")] },

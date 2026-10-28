@@ -16,6 +16,7 @@ const story = await import("../src/components/companions/story.ts");
 const game = await import("../src/components/companions/game.ts");
 const perch = await import("../src/components/companions/perch.ts");
 const scroll = await import("../src/components/companions/scroll.ts");
+const scenesMod = await import("../src/components/companions/scenes.ts");
 const { parseExams } = await import("../src/lib/exams-model.ts");
 
 const exams = parseExams(readFileSync(new URL("../src/data/exams.json", import.meta.url), "utf8"));
@@ -26,6 +27,7 @@ const everyText = () => [
   ...Object.values(reactions.sectionReactions(facts)).flatMap((r) => r.lines.map((l) => l.text)),
   ...story.storySteps(facts).map((s) => s.caption),
   ...Object.values(reactions.DUO_LINES).flatMap((ls) => ls.map((l) => l.text)),
+  ...Object.values(scenesMod.scenes(facts)).flatMap((sc) => [sc.nano.text, sc.ultra.text].filter(Boolean)),
   ...reactions.EASTER_EGG.map((l) => l.text),
   ...["sent", "answer", "limit", "error"].flatMap((p) => reactions.liveReaction(p).map((l) => l.text)),
 ];
@@ -60,7 +62,7 @@ test("no line breaks the honesty rules", () => {
 });
 
 test("every number in a line is one the site publishes", () => {
-  const allowed = new Set(["39.0", "33.0", "12.8", "12.5", "821", "4,322", "1.6", "00:00", "1", "2", "3", "7", "9", "16", "40", "25"]);
+  const allowed = new Set(["39", "33", "39.0", "33.0", "12.8", "12.5", "821", "4,322", "1.6", "00:00", "1", "2", "3", "7", "9", "16", "40", "25"]);
   for (const t of everyText()) {
     for (const n of t.match(/\d[\d,.:]*\d|\d/g) ?? []) assert.ok(allowed.has(n.replace(/\.$/, "")), `${n} in "${t}"`);
   }
@@ -275,7 +277,7 @@ test("sections: each is remarked on once per visit; the exam line carries the re
 });
 
 test("the two move with each other: high five, a pat, a passed card and hiding", () => {
-  assert.deepEqual([...reactions.DUO_MOVES].sort(), ["hide", "highfive", "pass", "pat"]);
+  assert.deepEqual([...reactions.DUO_MOVES].sort(), ["fistbump", "hide", "highfive", "levelup", "pass", "pat", "sneak"]);
   for (const m of reactions.DUO_MOVES) assert.ok(reactions.DUO_LINES[m].length >= 2);
 });
 
@@ -459,4 +461,83 @@ test("scroll speed from samples, and when Nano jumps to keep up", () => {
 test("a micro-expression field exists at rest", () => {
   assert.equal(model.REST.micro, "none");
   assert.ok(model.POSES.includes("sip"));
+});
+
+// ---------- eyes, scenes, peeking ----------
+test("Nano's and Ultra's eyes are open at rest, in every expression but sleepy", () => {
+  for (const ultra of [false, true]) {
+    for (const idx of [0, 1]) {
+      const rest = model.eyeSpec("idle", false, idx, ultra);
+      assert.ok(rest.top <= 0.2 && rest.bottom === 0, `idle ${ultra ? "ultra" : "nano"} ${idx}`);
+      for (const e of model.EXPRESSIONS) {
+        if (e === "sleepy") continue;
+        const sp = model.eyeSpec(e, false, idx, ultra);
+        assert.ok(sp.top <= model.OPEN_MAX, `${e} top ${sp.top}`);
+        assert.ok(sp.bottom <= 0.35, `${e} bottom ${sp.bottom}`);
+        assert.ok(sp.scale >= 1 && sp.pupil > 2, e);
+      }
+    }
+  }
+  assert.equal(model.eyeSpec("idle", false, 0, false).top, 0, "Nano's default lid is wide open");
+  assert.ok(model.eyeSpec("sleepy", false, 0, false).top > 0.5, "sleepy is the one that closes");
+  assert.ok(model.eyeSpec("idle", true, 0, false).top <= 0.3 + 1e-9, "a squint narrows, it is not a slit");
+  assert.ok(model.eyeSpec("idle", false, 0, false, true).top > 0.5, "a yawn shuts them");
+});
+
+test("at rest and after a theme change Nano's eyes stay open; the sunglasses sit on his head", () => {
+  const c = { night: true, dark: true, graduated: false, squinting: false };
+  const dark = model.baseLook("nano", c);
+  assert.equal(dark.sunglasses, true);
+  assert.equal(dark.shadesDown, false, "pushed up, not over the eyes");
+  assert.equal(model.baseLook("nano", { ...c, shadesDown: true }).shadesDown, true);
+  assert.equal(model.baseLook("nano", { ...c, dark: false, shadesDown: true }).shadesDown, false);
+  for (const night of [true, false]) for (const d of [true, false]) assert.equal(model.baseLook("nano", { night, dark: d, graduated: false, squinting: false }).expr, "idle");
+});
+
+test("a perch on text is never chosen; when nothing is clear they tuck into the gutter, head and hands in view", () => {
+  const vp = { w: 1280, h: 800 };
+  const wall = { cta: [], text: [{ left: 0, top: 0, right: 1280, bottom: 800 }] };
+  const cands = [...perch.candidatesFromItems([card("a", 700, 500, 1200)], "nano"), ...perch.floorCandidates("nano", vp)];
+  assert.equal(perch.choosePerch(cands, "nano", { vp, size: NANO, zones: wall }), null, "every perch is on text");
+  const peek = perch.bestPeek("nano", vp, NANO, wall);
+  assert.equal(peek.kind, "peek");
+  assert.ok(peek.x > vp.w - 10, "Nano peeks from the right edge");
+  assert.ok(perch.bestPeek("ultra", vp, ULTRA, wall).x < 10, "Ultra from the left");
+  // A gutter beside the text is a fine place: only the narrow strip at the edge matters.
+  const gutter = { cta: [], text: [{ left: 40, top: 0, right: 1240, bottom: 800 }] };
+  const best = perch.choosePerch(perch.peekCandidates("nano", vp), "nano", { vp, size: NANO, zones: gutter });
+  assert.ok(best && best.cand.kind === "peek", "peeking into a 40px gutter is allowed");
+  // A call to action is never stood on, even by a peek.
+  const cta = { cta: [{ left: 1100, top: 0, right: 1280, bottom: 800 }], text: [] };
+  assert.equal(perch.choosePerch(perch.peekCandidates("nano", vp), "nano", { vp, size: NANO, zones: cta }), null);
+  assert.equal(perch.gatherPair(vp, { nano: NANO, ultra: ULTRA }, wall), null, "no room to gather on text");
+});
+
+test("every landing section and every page has a scene, and the exam scene holds the real score card", () => {
+  const sc = scenesMod.scenes(facts);
+  for (const id of [...scenesMod.SCENE_SECTIONS, ...scenesMod.ROUTE_SCENES]) assert.ok(sc[id], id);
+  assert.equal(sc["real-run"].nano.text, "39%");
+  assert.equal(sc["real-run"].ultra.fx, "pen");
+  assert.deepEqual([sc.safety.ultra.pose, sc.safety.ultra.fx, sc.safety.once], ["stop", "door", "sneak"]);
+  assert.equal(sc.how.once, "pass");
+  assert.match(sc.stack.nano.text, /Nebius AI Cloud/);
+  assert.match(sc.stack.ultra.text, /Token Factory/);
+  assert.deepEqual([sc["closing-cta"].nano.pose, sc["closing-cta"].ultra.pose], ["jump", "jump"]);
+  assert.deepEqual([sc.footer.nano.expr, sc.footer.ultra.expr], ["wave", "wave"]);
+  assert.deepEqual([scenesMod.routeScene("/"), scenesMod.routeScene("/live"), scenesMod.routeScene("/judges"), scenesMod.routeScene("/scout"), scenesMod.routeScene("/dashboard")], [null, "live", "judges", "scout-page", "dashboard"]);
+  for (const t of Object.values(sc)) for (const side of [t.nano, t.ultra]) assert.ok(!side.text || side.text.length <= 16, side.text);
+});
+
+test("the section the reader is at: the one across the line a little over a third down, the footer at the foot", () => {
+  const tops = [{ id: "rent", top: -900, bottom: -100 }, { id: "catch", top: -100, bottom: 700 }, { id: "how", top: 700, bottom: 1500 }];
+  assert.equal(scenesMod.currentSection(tops, 800, false), "catch");
+  assert.equal(scenesMod.currentSection([{ id: "rent", top: 500, bottom: 1200 }], 800, false), "hero", "nothing across the line yet: still the top");
+  assert.equal(scenesMod.currentSection(tops, 800, true), "footer");
+});
+
+test("the new duo moves have their lines: a sneaked answer is blocked, a lesson card levels Nano up", () => {
+  assert.match(reactions.DUO_LINES.sneak[1].text, /not yet/i);
+  assert.equal(reactions.DUO_LINES.sneak[1].who, "ultra");
+  assert.match(reactions.DUO_LINES.levelup[1].text, /level up/i);
+  assert.ok(reactions.DUO_LINES.fistbump.length >= 2);
 });

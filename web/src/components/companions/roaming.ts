@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { animate, useMotionValue, useTransform, type MotionValue } from "motion/react";
 import type { Actor } from "./actor";
 import type { Look, Who } from "./companion-model";
-import { PERCH_SELECTOR, TEXT_SELECTOR, candidatesFromItems, choosePerch, floorCandidates, gatherPair, gathers, needsRepick, overlapArea, charRect, travelPlan, type Item, type Move, type Pt, type Size, type Zones } from "./perch";
+import { PERCH_SELECTOR, TEXT_SELECTOR, bestPeek, prefRatio, candidatesFromItems, choosePerch, floorCandidates, gatherPair, gathers, needsRepick, peekCandidates, travelPlan, type Item, type Move, type Pt, type Size, type Zones } from "./perch";
 import { AVOID_SELECTOR, type Rect } from "./placement";
+import { SCENE_SECTIONS, currentSection } from "./scenes";
 import { FAST, pushSample, repickEveryMs, shouldAutoJump, velocity, type Sample } from "./scroll";
 
 /** One character's place on the screen: a base point (its perch, following the page) plus an offset that carries it from one perch to the next. */
@@ -51,6 +52,12 @@ export interface RoamingOpts {
   onMove: (who: Who, m: Move | null) => void;
   onLook: (who: Who, patch: Partial<Look>, ms?: number) => void;
   onVisible: (who: Who, v: boolean) => void;
+  /** The section the reader is at (landing page). */
+  onScene: (id: string) => void;
+  /** What kind of place each stands on: a card, a heading, the floor, or peeking from the edge. */
+  onPlace: (who: Who, kind: string) => void;
+  /** The page has stopped moving. */
+  onSettle: () => void;
   /** True while something (the sheet, a drag) means they should hold still. */
   hold: () => boolean;
 }
@@ -94,7 +101,9 @@ export function useRoaming(o: RoamingOpts) {
       const opt = O.current;
       const r = opt.roamers[who];
       const prev = anchors.current[who];
-      const next: Anchor = { id: cand.id, x: cand.x, y: cand.y, sy0: sy, follow: cand.kind !== "floor" };
+      const next: Anchor = { id: cand.id, x: cand.x, y: cand.y, sy0: sy, follow: cand.kind !== "floor" && cand.kind !== "peek" };
+      opt.onPlace(who, cand.kind);
+      const restLean = cand.kind === "peek" ? (who === "nano" ? -15 : 15) : 0;
       if (prev && prev.id === cand.id) {
         // The same perch, re-measured: keep it where it is, no walk.
         const ox0 = r.bx.get();
@@ -130,6 +139,7 @@ export function useRoaming(o: RoamingOpts) {
           animate(act.sx, 0.93, { duration: 0.2 });
         }
         r.lean.set(plan.mode === "jump" ? 0 : dir * 6);
+        if (plan.mode === "glide") r.lean.set(dir * 3);
         await new Promise<void>((done) => {
           travel.current[who] = animate(0, 1, {
             duration: plan.ms / 1000,
@@ -147,7 +157,7 @@ export function useRoaming(o: RoamingOpts) {
         if (token.current[who] !== tok) return;
         r.ox.set(0);
         r.oy.set(0);
-        animate(r.lean, 0, { type: "spring", stiffness: 260, damping: 14 });
+        animate(r.lean, restLean, { type: "spring", stiffness: 260, damping: 14 });
         opt.onMove(who, null);
         if (plan.mode === "jump") await act.squash(fast ? 1500 : 900);
       };
@@ -165,7 +175,7 @@ export function useRoaming(o: RoamingOpts) {
       const now = performance.now();
       // Read every rectangle once.
       const items: Item[] = [];
-      for (const el of Array.from(document.querySelectorAll(PERCH_SELECTOR)).slice(0, 300)) {
+      for (const el of Array.from(document.querySelectorAll(PERCH_SELECTOR)).slice(0, 3000)) {
         const r = el.getBoundingClientRect();
         if (r.bottom < 0 || r.top > vp.h || r.width < 110 || r.height < 20) continue;
         items.push({ id: `p${idOf(el)}`, kind: el.tagName === "H2" ? "heading" : "card", rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } });
@@ -176,17 +186,27 @@ export function useRoaming(o: RoamingOpts) {
         .map((r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom }));
       cta.push(...opt.extraZones());
       const text: Rect[] = [];
-      for (const el of Array.from(document.querySelectorAll(TEXT_SELECTOR)).slice(0, 500)) {
+      for (const el of Array.from(document.querySelectorAll(TEXT_SELECTOR)).slice(0, 4000)) {
         const r = el.getBoundingClientRect();
         if (r.bottom < 0 || r.top > vp.h || r.width < 8 || r.height > 420) continue;
         text.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
       }
       const zones: Zones = { cta, text };
+      const tops: Array<{ id: string; top: number; bottom: number }> = [];
+      for (const el of Array.from(document.querySelectorAll("main section[id], #closing-cta, footer"))) {
+        const id = el.tagName === "FOOTER" ? "footer" : el.id;
+        if (id !== "footer" && !(SCENE_SECTIONS as readonly string[]).includes(id)) continue;
+        const r = el.getBoundingClientRect();
+        tops.push({ id, top: r.top, bottom: r.bottom });
+      }
+      const sceneNow = currentSection(tops, vp.h, sy + vp.h >= document.documentElement.scrollHeight - 40);
+      const sceneIdx = Math.max(0, (SCENE_SECTIONS as readonly string[]).indexOf(sceneNow));
+      opt.onScene(sceneNow);
       const docH = document.documentElement.scrollHeight;
       for (const w of whos) lastPick.current[w] = now;
 
-      if (!opt.phone && gathers(sy, vp.h, docH)) {
-        const pair = gatherPair(vp, { nano: opt.sizes.nano, ultra: opt.sizes.ultra }, zones);
+      const pair = !opt.phone && gathers(sy, vp.h, docH) ? gatherPair(vp, { nano: opt.sizes.nano, ultra: opt.sizes.ultra }, zones) : null;
+      if (pair) {
         for (const w of whos) apply(w, { id: `gather:${w}:${Math.round(pair[w].x)}`, x: pair[w].x, y: pair[w].y, kind: "floor" }, fast, sy, vp);
         for (const w of whos) opt.onVisible(w, true);
         return;
@@ -197,20 +217,13 @@ export function useRoaming(o: RoamingOpts) {
         if (!whos.includes(w)) continue;
         const other = w === "nano" ? "ultra" : "nano";
         const otherPt = placed[other] ?? (anchors.current[other] ? { x: opt.roamers[other].px.get(), y: opt.roamers[other].py.get() } : null);
-        const cands = [...candidatesFromItems(items, w), ...floorCandidates(w, vp)];
-        const best = choosePerch(cands, w, { vp, size: opt.sizes[w], zones, other: opt.phone ? null : otherPt, current: anchors.current[w]?.id }, wander === w ? 0.9 : 0);
-        if (!best) {
-          opt.onVisible(w, false);
-          continue;
-        }
-        // On a phone nothing may stand on text: if the best place still overlaps it, they stay in the dock.
-        const r = charRect(best.cand, opt.sizes[w]);
-        const overlap = text.reduce((n, z) => n + overlapArea(r, z), 0);
-        const hide = opt.phone && overlap > opt.sizes[w].w * opt.sizes[w].h * 0.12;
-        opt.onVisible(w, !hide);
-        if (hide) continue;
-        placed[w] = best.cand;
-        apply(w, best.cand, fast && w === "nano", sy, vp);
+        const cands = [...candidatesFromItems(items, w), ...floorCandidates(w, vp), ...peekCandidates(w, vp)];
+        const best = choosePerch(cands, w, { vp, size: opt.sizes[w], zones, other: opt.phone ? null : otherPt, current: anchors.current[w]?.id, prefRatio: prefRatio(w, sceneIdx) }, wander === w ? 0.9 : 0);
+        // Nothing is clear of text: tuck into the gutter at the edge, head and hands in view, rather than cover anything.
+        const cand = best ? best.cand : bestPeek(w, vp, opt.sizes[w], zones, anchors.current[w]?.id);
+        opt.onVisible(w, true);
+        placed[w] = cand;
+        apply(w, cand, fast && w === "nano", sy, vp);
       }
     },
     [apply],
@@ -248,6 +261,7 @@ export function useRoaming(o: RoamingOpts) {
         pick(active(), false);
         // Scrolling stopped: they look around.
         for (const w of active()) if (Math.random() < 0.7) O.current.onLook(w, { micro: "dart" }, 900);
+        O.current.onSettle();
       }, 280);
     };
     const onScroll = () => {

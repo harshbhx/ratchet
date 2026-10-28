@@ -20,6 +20,7 @@ import { AVOID_SELECTOR, chooseSlot, type Slot } from "./placement";
 import { DUO_LINES, DUO_MOVES, EASTER_EGG, WATCHED_SECTIONS, liveReaction, pokeReaction, sectionReactions, shouldReact, type DuoMove, type Poke } from "./reactions";
 import { ProgressRing, Sheet } from "./sheet";
 import { Sparkles } from "./sparkles";
+import { routeScene, scenes } from "./scenes";
 import { STORY_IDLE, storyReducer, storySteps } from "./story";
 import { StoryBar } from "./story-bar";
 import { useActor } from "./actor";
@@ -58,6 +59,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const [session, setSession] = useState<Session>(readSession);
   const sessionRef = useRef(session);
   const [squinting, setSquinting] = useState(false);
+  const [shadesDown, setShadesDown] = useState(false);
   const [over, setOver] = useState<Record<Who, Partial<Look>>>({ nano: {}, ultra: {} });
   const [speech, setSpeech] = useState<{ who: Who; text: string } | null>(null);
   const [liveText, setLiveText] = useState("");
@@ -67,6 +69,9 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const [moving, setMoving] = useState<Record<Who, Move | null>>({ nano: null, ultra: null });
   const [visible, setVisible] = useState<Record<Who, boolean>>({ nano: true, ultra: true });
   const [mobileActive, setMobileActive] = useState<Who>("nano");
+  const [sceneId, setSceneId] = useState("hero");
+  const [place, setPlace] = useState<Record<Who, string>>({ nano: "", ultra: "" });
+  const [lookScene, setLookScene] = useState(false);
   const [story, dispatch] = useReducer((s: typeof STORY_IDLE, a: Parameters<typeof storyReducer>[1]) => storyReducer(s, a, 9), STORY_IDLE);
   const [wantStory, setWantStory] = useState(false);
 
@@ -86,6 +91,11 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const dragging = useRef(false);
   const duoBusy = useRef(false);
   const speaking = useRef(false);
+  const togetherRef = useRef<(m: DuoMove) => Promise<void>>(async () => {});
+  const placeRef = useRef(place);
+  placeRef.current = place;
+  const sceneSeen = useRef(new Set<string>());
+  const sceneMap = useMemo(() => scenes(FACTS), []);
   const lastPoke = useRef<Partial<Record<Who, Poke["kind"]>>>({});
   const pokes = useRef(createBurst(5, 3000));
   const hardPokes = useRef(createBurst(3, 1200));
@@ -95,8 +105,13 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const live = useRef({ story: story.status, sheet });
   live.current = { story: story.status, sheet };
 
-  const ctx = { night, dark, graduated: session.graduated, squinting: reduce ? !dark : squinting };
-  const looks: Record<Who, Look> = { nano: { ...baseLook("nano", ctx), ...over.nano }, ultra: { ...baseLook("ultra", ctx), ...over.ultra } };
+  const ctx = { night, dark, graduated: session.graduated, squinting: !reduce && squinting, shadesDown: !reduce && shadesDown };
+  // What each looks like: the resting look, then what the section they are at has them doing, then whatever just happened to them.
+  const activeScene = story.status === "idle" && !reduce ? sceneMap[pathname === "/" ? sceneId : (routeScene(pathname) ?? "")] : undefined;
+  const looks: Record<Who, Look> = {
+    nano: { ...baseLook("nano", ctx), ...activeScene?.nano, ...over.nano },
+    ultra: { ...baseLook("ultra", ctx), ...activeScene?.ultra, ...over.ultra },
+  };
 
   // ---------- looks and speech ----------
   const act = useCallback((who: Who, patch: Partial<Look>, ms?: number) => {
@@ -201,6 +216,34 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
           act("nano", { held: "card", pose: "carry", expr: "thinking", pop: "?" });
           if (plan.physics) await ultra.home();
           await sleep(2200);
+        } else if (m === "sneak") {
+          // Nano tries to sneak a look at the answer; Ultra's palm says not yet.
+          act("nano", { pose: "pointRight", held: "card", expr: "happy" });
+          act("ultra", { pose: "stop", expr: "determined" });
+          if (plan.physics) await nano.slide(46);
+          await sleep(1100);
+          act("nano", { expr: "sad", sweat: true, held: "card", pose: "carry" });
+          if (plan.physics) await Promise.all([nano.shake(), ultra.nod()]);
+          await sleep(900);
+          if (plan.physics) await nano.home();
+        } else if (m === "levelup") {
+          // Ultra hands Nano a lesson card; Nano levels up and his chip glows.
+          act("ultra", { held: "card", pose: "carry", expr: "happy" });
+          if (plan.physics) await ultra.slide(-20);
+          await sleep(800);
+          act("ultra", { held: "none", pose: "pointLeft", expr: "happy" });
+          act("nano", { held: "card", pose: "carry", expr: "proud", glow: true, pop: "sparkle" });
+          setBurst((b) => b + 1);
+          if (plan.physics) await Promise.all([ultra.home(), nano.hop(22)]);
+          await sleep(1800);
+        } else if (m === "fistbump") {
+          act("nano", { pose: "pointRight", expr: "happy" });
+          act("ultra", { pose: "pointLeft", expr: "happy" });
+          if (plan.physics) await Promise.all([nano.slide(22), ultra.slide(-22)]);
+          if (plan.physics) await Promise.all([nano.squash(700), ultra.squash(400)]);
+          setBurst((b) => b + 1);
+          await sleep(900);
+          if (plan.physics) await Promise.all([nano.home(), ultra.home()]);
         } else {
           act("nano", { expr: "surprised", sweat: true, pop: "!" });
           act("ultra", { expr: "determined", pose: "stop" });
@@ -229,7 +272,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
         return;
       }
       if (who === "nano" && hardPokes.current.push(t) && plan.physics) {
-        void duo("hide");
+        void togetherRef.current("hide");
         return;
       }
       const r = pokeReaction(who, Math.random, lastPoke.current[who]);
@@ -422,17 +465,22 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     };
   }, []);
 
-  // Nano squints when the page turns light (and a little at first), and keeps the sunglasses for the dark theme.
+  // When the page turns light Nano squints for a moment; when it turns dark he pulls his sunglasses down for a moment, then pushes
+  // them back up onto his head. At rest his eyes are always open.
   const firstTheme = useRef(true);
   useEffect(() => {
-    if (reduce) return;
     if (firstTheme.current) {
       firstTheme.current = false;
-      if (dark) return;
+      return;
     }
-    if (dark) return setSquinting(false);
+    if (reduce) return;
+    if (dark) {
+      setShadesDown(true);
+      const id = window.setTimeout(() => setShadesDown(false), 2400);
+      return () => window.clearTimeout(id);
+    }
     setSquinting(true);
-    const id = window.setTimeout(() => setSquinting(false), 2400);
+    const id = window.setTimeout(() => setSquinting(false), 800);
     return () => window.clearTimeout(id);
   }, [dark, reduce]);
 
@@ -529,6 +577,12 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
 
   // ---------- roaming ----------
   const sizes = phone ? SIZES.phone : SIZES.desktop;
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
+  const activeRef = useRef(mobileActive);
+  activeRef.current = mobileActive;
+  const sizesRef = useRef(sizes);
+  sizesRef.current = sizes;
   const roam = useRoaming({
     enabled: plan.physics,
     phone,
@@ -547,8 +601,77 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     onMove: (who, m) => setMoving((o) => (o[who] === m ? o : { ...o, [who]: m })),
     onLook: act,
     onVisible: (who, v) => setVisible((o) => (o[who] === v ? o : { ...o, [who]: v })),
+    onScene: setSceneId,
+    onPlace: (who, kind) => setPlace((o) => (o[who] === kind ? o : { ...o, [who]: kind })),
+    onSettle: () => {
+      // The page has stopped: both look at the section in front of them for a moment.
+      setLookScene(true);
+      window.setTimeout(() => setLookScene(false), 2600);
+    },
     hold: () => live.current.sheet || dragging.current,
   });
+
+  // A move between the two: Ultra walks over to Nano first, then it plays, then Ultra goes back to his own perch.
+  useEffect(() => {
+    togetherRef.current = async (m: DuoMove) => {
+      if (duoBusy.current) return;
+      if (plan.physics && !phone) {
+        roam.meet();
+        await sleep(1200);
+      }
+      await duo(m);
+      if (plan.physics && !phone) roam.release();
+    };
+  }, [duo, roam, plan.physics, phone]);
+
+  // A section with a piece of choreography plays it once per visit, when the reader has stopped there.
+  useEffect(() => {
+    const sc = pathname === "/" ? sceneMap[sceneId] : undefined;
+    if (!sc?.once || sceneSeen.current.has(sceneId) || phone || !plan.autonomous) return;
+    const id = window.setTimeout(() => {
+      if (busy() || duoBusy.current || speaking.current) return;
+      sceneSeen.current.add(sceneId);
+      void togetherRef.current(sc.once!);
+    }, 2200);
+    return () => window.clearTimeout(id);
+  }, [sceneId, pathname, sceneMap, phone, plan.autonomous, busy]);
+
+  // They notice the pointer: a quick dash at them is a flinch; staying close, Nano waves and Ultra raises an eyebrow.
+  useEffect(() => {
+    if (!plan.autonomous) return;
+    let last = { x: 0, y: 0, t: 0 };
+    const hover: Record<Who, number> = { nano: 0, ultra: 0 };
+    const cool: Record<Who, number> = { nano: 0, ultra: 0 };
+    const on = (e: PointerEvent) => {
+      const now = performance.now();
+      const dt = now - last.t;
+      if (dt < 40) return;
+      const speed = last.t ? (Math.hypot(e.clientX - last.x, e.clientY - last.y) / dt) * 1000 : 0;
+      last = { x: e.clientX, y: e.clientY, t: now };
+      if (live.current.sheet || live.current.story !== "idle" || dragging.current) return;
+      for (const w of ["nano", "ultra"] as Who[]) {
+        if (phoneRef.current && w !== activeRef.current) continue;
+        const r = roamers[w];
+        const px = r.px.get();
+        if (px < -50) continue;
+        const d = Math.hypot(e.clientX - px, e.clientY - (r.py.get() - sizesRef.current[w].h * 0.5));
+        if (d < 170 && speed > 1800 && now > cool[w]) {
+          cool[w] = now + 4000;
+          act(w, { expr: "surprised", pop: "!", sweat: true }, 900);
+          void actors[w].shake();
+        } else if (d < 110 && speed < 400) {
+          hover[w] ||= now;
+          if (now - hover[w] > 350 && now > cool[w]) {
+            cool[w] = now + 6000;
+            if (w === "nano") act("nano", { expr: "wave" }, 1600);
+            else act("ultra", { brow: "raise" }, 1600);
+          }
+        } else hover[w] = 0;
+      }
+    };
+    window.addEventListener("pointermove", on, { passive: true });
+    return () => window.removeEventListener("pointermove", on);
+  }, [plan.autonomous, roamers, actors, act]);
 
   // On a phone one of them walks at a time, the other waits in the dock.
   useEffect(() => {
@@ -589,30 +712,74 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
       }
       talk = window.setTimeout(fireTalk, nextDelayMs());
     };
+    // Personality loops, one every 6 to 12 seconds, picked at random: small stories each of them acts out.
+    const nanoLoops: Array<() => void> = [
+      () => act("nano", { fx: "juggle", pose: "carry", expr: "happy" }, 3600),
+      () => act("nano", { held: "book", pose: "carry", fx: "read", expr: "thinking" }, 3800),
+      () => {
+        // a tiny dance: three bounces that lean left, right, left
+        act("nano", { expr: "happy", pop: "sparkle" }, 2400);
+        void nano.hop(16).then(() => nano.hop(14)).then(() => nano.hop(12));
+      },
+      () => {
+        if (night) act("nano", { fx: "yawn", expr: "sleepy" }, 2300);
+        else {
+          act("nano", { pose: "jump", expr: "happy" }, 1100);
+          void animate(nano.sy, [1, 1.1, 1], { duration: 1 });
+        }
+      },
+      () => {
+        // a little cartwheel: a spin with a hop
+        act("nano", { expr: "laughing" }, 1400);
+        void nano.hop(24);
+        void nano.spin();
+      },
+      () => act("nano", { expr: "wave" }, 2200),
+    ];
+    const ultraLoops: Array<() => void> = [
+      () => act("ultra", { pose: "sip", held: "mug", expr: "happy" }, 2800),
+      () => act("ultra", { held: "papers", pose: "carry", fx: "pen", expr: "idle" }, 3300),
+      () => act("ultra", { adjust: true }, 900),
+      () => act("ultra", { pose: "fold", expr: "determined" }, 2800),
+      () => act("ultra", { pose: "watch", fx: "watch", expr: "thinking" }, 2800),
+      () => {
+        // an approving nod toward Nano
+        act("ultra", { expr: "happy" }, 1600);
+        void ultra.nod();
+      },
+    ];
+    const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]!;
     const fireMove = () => {
       move = window.setTimeout(fireMove, 6000 + Math.random() * 6000);
       if (!plan.autonomous || busy() || duoBusy.current || speaking.current) return;
       const r = Math.random();
-      if (r < 0.14) void nano.hop(26);
-      else if (r < 0.24) {
-        // excited: three little bounces
-        act("nano", { expr: "happy", pop: "sparkle" }, 2000);
-        void nano.hop(20).then(() => nano.hop(16)).then(() => nano.hop(12));
-      } else if (r < 0.31) void ultra.nod();
-      else if (r < 0.4) {
-        // a stretch
-        act("nano", { pose: "jump", expr: "happy" }, 1100);
-        void animate(nano.sy, [1, 1.1, 1], { duration: 1 });
-      } else if (r < 0.5) act("ultra", { pose: "sip", held: "mug", expr: "happy" }, 2600);
-      else if (r < 0.6) roam.wander("nano");
-      else if (r < 0.66) roam.wander("ultra");
-      else if (r < 0.72) act("nano", { expr: "thinking", pop: "?" }, 1800);
-      else if (r < 0.78 && !dark) {
+      const kinds = placeRef.current;
+      if (phoneRef.current) {
+        // On a phone: fewer, sweeter moves. The one that is out peeks from the edge, waves and ducks back.
+        const w = activeRef.current;
+        const dir = w === "nano" ? -1 : 1;
+        act(w, { expr: "wave" }, 1500);
+        void actors[w].slide(dir * 30).then(() => sleep(1400)).then(() => actors[w].home());
+        return;
+      }
+      const peekers = (["nano", "ultra"] as Who[]).filter((w) => kinds[w] === "peek");
+      if (peekers.length && r < 0.5) {
+        // Tucked into the gutter: pop out halfway, wave, duck back.
+        const w = pick(peekers);
+        const dir = w === "nano" ? -1 : 1;
+        act(w, { expr: "wave" }, 1500);
+        void actors[w].slide(dir * 34).then(() => sleep(1300)).then(() => actors[w].home());
+        return;
+      }
+      if (r < 0.34) pick(nanoLoops)();
+      else if (r < 0.62) pick(ultraLoops)();
+      else if (r < 0.72) roam.wander("nano");
+      else if (r < 0.78) roam.wander("ultra");
+      else if (r < 0.84 && !dark) {
         setSquinting(true);
-        window.setTimeout(() => setSquinting(false), 1300);
-      } else if (r < 0.84) act("ultra", { adjust: true }, 900);
-      else if (r < 0.92) act(Math.random() < 0.5 ? "nano" : "ultra", { micro: Math.random() < 0.5 ? "twitch" : "shake" }, 900);
-      else void duo(DUO_MOVES[Math.floor(Math.random() * DUO_MOVES.length)]!);
+        window.setTimeout(() => setSquinting(false), 700);
+      } else if (r < 0.9) act(Math.random() < 0.5 ? "nano" : "ultra", { micro: Math.random() < 0.5 ? "twitch" : "shake" }, 900);
+      else void togetherRef.current(DUO_MOVES[Math.floor(Math.random() * DUO_MOVES.length)]!);
     };
     talk = window.setTimeout(fireTalk, nextDelayMs());
     move = window.setTimeout(fireMove, 6000);
@@ -649,6 +816,12 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const speakerShownOnRoamer = !!speech && shown(speech.who);
 
   const gazeFor = (who: Who) => {
+    if (lookScene && !speech && shown(who) && story.status === "idle") {
+      const dx = vw * 0.5 - roamers[who].px.get();
+      const dy = window.innerHeight * 0.45 - roamers[who].py.get();
+      const d = Math.hypot(dx, dy) || 1;
+      return { x: dx / d, y: dy / d };
+    }
     if (!speech || speech.who === who || !shown(speech.who) || !shown(who)) return null;
     const dx = roamers[speech.who].px.get() - roamers[who].px.get();
     const dy = roamers[speech.who].py.get() - roamers[who].py.get();
@@ -665,10 +838,11 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
       <motion.div
         key={who}
         style={{ x: r.px, y: r.py, width: size.w, height: size.h, marginLeft: -size.w / 2, marginTop: -size.h }}
+        data-place={place[who]}
         className={`pointer-events-none fixed left-0 top-0 z-40 ${sheet || !visible[who] ? "invisible" : ""}`}
       >
         <AnimatePresence>
-          {speech?.who === who && <Bubble key={speech.text} who={who} text={speech.text} reduce={reduce} align={left ? "left" : "right"} />}
+          {speech?.who === who && <Bubble key={speech.text} who={who} text={speech.text} reduce={reduce} align={left ? "left" : "right"} className={place[who] === "peek" ? (who === "nano" ? "!right-9" : "!left-9") : ""} />}
         </AnimatePresence>
         {who === "nano" && <Sparkles burst={burst} />}
         <motion.div style={{ rotate: r.lean, originX: 0.5, originY: 1 }}>
@@ -709,7 +883,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
           className={`pointer-events-none fixed bottom-3 right-3 z-40 ${sheet ? "invisible" : ""}`}
         >
           <AnimatePresence>
-            {speech && !speakerShownOnRoamer && <Bubble key={speech.text} who={speech.who} text={speech.text} reduce={reduce} align="right" />}
+            {speech && !speakerShownOnRoamer && <Bubble key={speech.text} who={speech.who} text={speech.text} reduce={reduce} align={slot.side === "left" ? "left" : "right"} />}
           </AnimatePresence>
           <button
             type="button"

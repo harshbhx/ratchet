@@ -3,11 +3,12 @@
 
 export type Who = "nano" | "ultra";
 export type Expr = "idle" | "happy" | "thinking" | "proud" | "sleepy" | "surprised" | "laughing" | "determined" | "sad" | "wave";
-export type Pose = "stand" | "jump" | "pointLeft" | "pointRight" | "carry" | "stop" | "hug" | "pat" | "sip";
-export type Held = "none" | "book" | "ball" | "card" | "papers" | "mug";
+export type Pose = "stand" | "jump" | "pointLeft" | "pointRight" | "carry" | "stop" | "hug" | "pat" | "sip" | "fold" | "watch";
+export type Held = "none" | "book" | "ball" | "card" | "papers" | "mug" | "score" | "tag";
+export type Fx = "none" | "juggle" | "read" | "pen" | "watch" | "door" | "yawn";
 
 export const EXPRESSIONS: readonly Expr[] = ["idle", "happy", "thinking", "proud", "sleepy", "surprised", "laughing", "determined", "sad", "wave"];
-export const POSES: readonly Pose[] = ["stand", "jump", "pointLeft", "pointRight", "carry", "stop", "hug", "pat", "sip"];
+export const POSES: readonly Pose[] = ["stand", "jump", "pointLeft", "pointRight", "carry", "stop", "hug", "pat", "sip", "fold", "watch"];
 
 /** Everything that changes how one character is drawn. */
 export interface Look {
@@ -26,9 +27,19 @@ export interface Look {
   adjust: boolean;
   /** A quick one-off: eyes dart, the smile twitches, the head shakes. */
   micro: "none" | "dart" | "twitch" | "shake";
+  /** A little scene prop or activity: juggling SQL tokens, turning book pages, marking a paper, a pocket watch, a door, a yawn. */
+  fx: Fx;
+  /** Text on a held score card or tag. */
+  text: string;
+  /** Ultra raises an eyebrow. */
+  brow: "none" | "raise";
+  /** The adapter chip glows (a level up). */
+  glow: boolean;
+  /** Sunglasses are worn pushed up on the head; down means over the eyes (for a moment, when the theme turns dark). */
+  shadesDown: boolean;
 }
 
-export const REST: Look = { expr: "idle", pose: "stand", held: "none", sunglasses: false, squint: false, lamp: false, cap: false, blush: false, sweat: false, pop: "none", adjust: false, micro: "none" };
+export const REST: Look = { expr: "idle", pose: "stand", held: "none", sunglasses: false, squint: false, lamp: false, cap: false, blush: false, sweat: false, pop: "none", adjust: false, micro: "none", fx: "none", text: "", brow: "none", glow: false, shadesDown: false };
 
 /** Local night is Night School: 20:00 to 05:59. */
 export function isNight(d: Date): boolean {
@@ -42,6 +53,8 @@ export interface Context {
   graduated: boolean;
   /** Nano squints for a moment after the page turns light. */
   squinting: boolean;
+  /** The sunglasses are down over the eyes for a moment, after the page turns dark. */
+  shadesDown?: boolean;
 }
 
 /** How each character looks at rest. Nano: sunglasses in the dark theme, a squint in the light one, a lamp and a book at night. */
@@ -50,6 +63,7 @@ export function baseLook(who: Who, c: Context): Look {
     return {
       ...REST,
       sunglasses: c.dark,
+      shadesDown: c.dark && !!c.shadesDown,
       squint: !c.dark && c.squinting,
       lamp: c.night,
       cap: c.graduated,
@@ -98,4 +112,60 @@ export function isTyping(el: { tagName?: string; isContentEditable?: boolean } |
 export const PHONE_MAX = 639;
 export function isPhone(width: number): boolean {
   return width <= PHONE_MAX;
+}
+
+/** The most closed a lid may rest for an expression that is not sleepy: 0 is wide open, 1 is shut. Eyes must read as open. */
+export const OPEN_MAX = 0.3;
+
+export interface EyeSpec {
+  /** How far the top lid rests down. */
+  top: number;
+  /** How far the lower lid lifts (a smile). */
+  bottom: number;
+  pupil: number;
+  scale: number;
+  dx: number;
+  dy: number;
+  wet: boolean;
+}
+
+/**
+ * What the lids and pupils do for each expression. Every expression except sleepy (and the yawn) keeps the eyes open: a top lid at
+ * most OPEN_MAX down. Eyes are never drawn as closed arcs, a squint is a brief narrowing and not a slit, and the default is wide open.
+ */
+export function eyeSpec(expr: Expr, squint: boolean, idx: 0 | 1, ultra: boolean, yawn = false): EyeSpec {
+  let s: EyeSpec = { top: 0, bottom: 0, pupil: 2.7, scale: 1, dx: 0, dy: 0, wet: false };
+  switch (expr) {
+    case "happy":
+    case "wave":
+      s = { ...s, top: 0.04, bottom: 0.2, pupil: 3.5 };
+      break;
+    case "proud":
+      s = { ...s, top: 0.26, bottom: 0.14, pupil: 3.2 };
+      break;
+    case "laughing":
+      s = { ...s, top: 0.18, bottom: 0.3, pupil: 3.4 };
+      break;
+    case "sleepy":
+      s = { ...s, top: 0.62, dy: 1.2 };
+      break;
+    case "surprised":
+      s = { ...s, scale: 1.14, pupil: 3.7 };
+      break;
+    case "thinking":
+      s = { ...s, top: idx === 1 ? 0.26 : 0.1, dx: 1.8, dy: -1.8 };
+      break;
+    case "determined":
+      s = { ...s, top: 0.24, pupil: 2.5 };
+      break;
+    case "sad":
+      s = { ...s, top: 0.22, dy: 1.2, wet: true };
+      break;
+    default:
+      // Ultra's dry look: the right eye a little skeptical, still clearly open.
+      if (ultra && idx === 1) s = { ...s, top: 0.2 };
+  }
+  if (squint) s = { ...s, top: Math.max(s.top, 0.3), bottom: Math.max(s.bottom, 0.26) };
+  if (yawn) s = { ...s, top: 0.7 };
+  return s;
 }
