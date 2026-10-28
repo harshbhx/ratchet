@@ -7,6 +7,7 @@
  */
 import { readFileSync } from 'node:fs';
 import RtIcon from '../RtIcon.astro';
+import Tour from './Tour.astro';
 
 interface Props {
   title: string;
@@ -51,6 +52,9 @@ const META = [version ? `Version ${version}` : '', 'Apache-2.0', 'Built on NVIDI
                 {i === 0 && <RtIcon name="start" size={16} class="rt-button__arrow" />}
               </a>
             ))}
+            <button type="button" class="rt-button rt-button--ghost" data-rt-tour-start>
+              <RtIcon name="compass" size={16} /> Take the tour
+            </button>
           </div>
         )
       }
@@ -108,6 +112,8 @@ const META = [version ? `Version ${version}` : '', 'Apache-2.0', 'Built on NVIDI
     </div>
   </div>
 </section>
+
+<Tour />
 
 <script>
   // Opens Starlight's search (its header button, or its Ctrl/Cmd+K shortcut). Without JavaScript the button stays hidden

@@ -122,6 +122,11 @@ const ask = (src: string) =>
           </a>
         )
       }
+      <a class="rt-pa__row rt-pa__row--wide" role="menuitem" href="/llms.txt" target="_blank" rel="noopener noreferrer">
+        <span class="rt-pa__ri" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2M20 14h2M15 13v2M9 13v2"></path></svg></span>
+        <span class="rt-pa__rt"><strong>llms.txt for AI tools</strong><small>Every page as plain text, with llms-full.txt</small></span>
+        <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"></path><path d="M7 17 17 7"></path></svg>
+      </a>
     </div>
   </div>
   <span class="rt-pa__status" role="status" aria-live="polite" data-status></span>
@@ -473,6 +478,9 @@ const ask = (src: string) =>
     border-color: var(--rt-line, var(--sl-color-hairline));
     background: var(--rt-surface-2, var(--sl-color-gray-6));
     outline: none;
+  }
+  .rt-pa__row--wide {
+    grid-column: 1 / -1;
   }
   .rt-pa__ri {
     display: grid;
