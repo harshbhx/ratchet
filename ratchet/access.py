@@ -49,6 +49,7 @@ ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/readyz"): PUBLIC,
     ("GET", "/ratchet/bom/public-key"): PUBLIC,
     ("GET", "/ratchet/stats"): DASHBOARD,
+    ("GET", "/ratchet/counters"): DASHBOARD,
     ("GET", "/ratchet/kpis"): DASHBOARD,
     ("GET", "/ratchet/drift"): DASHBOARD,
     ("GET", "/ratchet/teacher"): DASHBOARD,

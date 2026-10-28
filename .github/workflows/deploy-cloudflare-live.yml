@@ -28,6 +28,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci --no-audit --no-fund
+      # `wrangler deploy` also applies the Durable Object migrations in wrangler.json (v1 RatchetLive, v2 VisitorQuota, v3 LiveCounters, the
+      # running totals that survive restarts). There is no D1 database, so there is nothing else to migrate.
       - name: Build the image and deploy
         run: npx wrangler deploy
         env:
@@ -46,6 +48,10 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - name: Check the running totals answer (the migration applied)
+        run: |
+          curl -fsS --retry 5 --retry-delay 10 https://live.ratchet.dualmindlab.tech/ratchet/stats/persistent \
+            | python -c "import json,sys; d=json.load(sys.stdin); assert set(d)=={'recorded','since','updated','instances','totals'}, d; print(d)"
       - name: Check https://live.ratchet.dualmindlab.tech
         run: |
           for attempt in 1 2 3 4 5 6; do

@@ -9,6 +9,9 @@ import { JUDGE_CHAPTERS, type ChapterGroup } from "./chapters";
 import { JudgesProvider, useJudges } from "./data";
 import { Legend, StartHere, WhatsReal } from "./start";
 import { ExamsChapter } from "./exams";
+import { MeasuredChapter } from "./measured";
+import { LiveSince, MEASURED } from "@/components/measured/measured";
+import { nightSchoolWording } from "@/lib/measured-model";
 import { ApiChapter, ClientChapter, FeaturesChapter } from "./outside";
 import { ArchitectureChapter, CascadeChapter, LedgerChapter, ReleaseChapter } from "./inside-a";
 import { CertificateChapter, ProofChapter, ReceiptsChapter, WatchChapter } from "./inside-b";
@@ -139,8 +142,10 @@ function GatewayLine() {
     <p className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[13px] leading-relaxed text-ink-2">
       {status && <RealBadge status={status} />}
       <span>
-        Live chapters read the gateway serving this page: {stats.mode === "mock" ? "a mock gateway" : "a live gateway"}, day {fmtInt(stats.day)},{" "}
-        {fmtInt(stats.totals.requests)} requests so far.
+        Live chapters read the gateway serving this page: {stats.mode === "mock" ? "a mock gateway" : "a live gateway"}
+        {stats.totals.requests > 0
+          ? `, day ${fmtInt(stats.day)}, ${fmtInt(stats.totals.requests)} requests since it started.`
+          : ". It has not answered a request since it last started, so those chapters show dated, measured runs instead."}
       </span>
     </p>
   );
@@ -219,8 +224,9 @@ function Page() {
                   <LayoutDashboard className="size-4" aria-hidden /> Tour the dashboard
                 </Link>
               </div>
-              <div className="mt-6">
+              <div className="mt-6 space-y-3">
                 <GatewayLine />
+                <LiveSince />
               </div>
             </div>
             <StageOneCard onChapter={go} />
@@ -239,6 +245,7 @@ function Page() {
 
         <Group id="group-results" title="Results" group="start" purpose="What was measured, and what every claim on this site rests on.">
           <ExamsChapter />
+          <MeasuredChapter />
           <WhatsReal />
         </Group>
 
@@ -252,7 +259,7 @@ function Page() {
           id="group-inside"
           title="Inside the gateway"
           group="inside"
-          purpose="The loop built to train a new small model each night and release it safely, read live from this gateway. It has not run on live traffic. Open what you care about."
+          purpose={`The loop built to train a new small model each night and release it safely, read live from this gateway. ${MEASURED ? nightSchoolWording(MEASURED).pipeline : ""} Open what you care about.`}
         >
           <ArchitectureChapter />
           <CascadeChapter />

@@ -452,6 +452,10 @@ class Runtime:
         self.judge = JudgeAccess(scout.judge_code, scout.judge_session_s, clock=self.wall_clock) if scout.judge_enabled else None
         self.judge_attempts = AttemptLimiter(JUDGE_ATTEMPTS_PER_HOUR, clock=self.wall_clock)
         self.search_lock = threading.Lock()
+        # What `GET /ratchet/counters` names this process by, and the Scout runs it admitted (the ledger has no row per run).
+        self.instance_id = uuid.uuid4().hex
+        self.started_at = self.wall_clock()
+        self.scout_runs = 0
         self.live_check_lock = threading.Lock()
         self.live_check_cache: tuple[float, dict[str, Any] | None] = (0.0, None)
         self.search_errors = 0  # failed searches since the last reset (credit refusals are not failures)
@@ -898,6 +902,10 @@ class Runtime:
         if self.credits is not None:
             search = MeteredSearch(self.search, self.credits, judge, run_id)
         return Scout(call, search, max_results=self.settings.scout_max_results)
+
+    def count_scout_run(self) -> None:
+        with self.search_lock:
+            self.scout_runs += 1
 
     def note_search(self, reason: str | None) -> None:
         """Record one search's outcome from a Scout run: None when it worked, else why it did not. A failure (not a
@@ -3332,6 +3340,25 @@ def _stats_payload() -> dict[str, Any]:
     }
 
 
+@app.get("/ratchet/counters")
+def counters() -> dict[str, Any]:
+    """Cumulative aggregates of this gateway process, for something outside the container to keep running totals of (the live
+    Worker does, so they survive a restart): requests in all and by route group, the student calls' tokens, what Token
+    Factory calls cost (requests and failures), Scout runs and errors. `instance` names this process and `started` is when
+    it began: every number grows while the instance is the same and a new instance starts again from its own ledger, so a
+    reader adds the difference between two snapshots of one instance and the first snapshot of a new one. Counts and dollars
+    only, never text, an address or a client. Read like /ratchet/stats."""
+    with rt.search_lock:
+        scout_runs = rt.scout_runs
+    return {
+        "instance": rt.instance_id,
+        "started": round(rt.started_at, 1),
+        "mode": rt.settings.mode,
+        **rt.ledger.aggregate_counters(),
+        "scout_runs": scout_runs,
+    }
+
+
 ERRORS_WINDOW_S = 3600.0  # /ratchet/stats' errors.last_hour
 
 
@@ -4670,6 +4697,7 @@ def _run_scout(question: str, emit, pace: float = 0.0, judge: bool = False, run_
     run_id = run_id or uuid.uuid4().hex[:8]
     spent = [0.0]
     outcome = ["error"]
+    rt.count_scout_run()
 
     def counting_emit(ev: dict[str, Any]) -> None:
         if ev.get("type") == "step":

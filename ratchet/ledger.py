@@ -4373,6 +4373,45 @@ class Ledger:
             "failed_cost_usd": failed,
         }
 
+    @_reads
+    def aggregate_counters(self) -> dict[str, float]:
+        """Cumulative counts and dollars of this ledger, for `GET /ratchet/counters`: requests in all and by how they were
+        served (`split`: the live demo's random split, route `demo_split`; `student`: answered by a student on any other
+        route; `teacher`: the rest), the student calls' tokens, what every request and every failure spent, and the failures.
+        Folded request rows (FR-13.4) count and embeddings pass-through rows do not, as in `totals`. Counts only: no text,
+        no client, no end user. Each number only grows while the ledger lives, which is what lets a reader of two snapshots
+        take their difference."""
+        r = dict(
+            self._rdb.execute(
+                "SELECT COUNT(*) n, COALESCE(SUM(route='demo_split'), 0) split,"
+                " COALESCE(SUM(served_by='student' AND route IS NOT 'demo_split'), 0) student, COALESCE(SUM(cost_usd), 0.0) cost,"
+                " COALESCE(SUM(student_in_tokens), 0) tin, COALESCE(SUM(student_out_tokens), 0) tout"
+                f" FROM requests WHERE {NOT_PASSTHROUGH}"
+            ).fetchone()
+        )
+        if self._has_rollup(self._rdb):
+            f = dict(
+                self._rdb.execute(
+                    "SELECT COALESCE(SUM(requests), 0) n, COALESCE(SUM(CASE WHEN route='demo_split' THEN requests END), 0) split,"
+                    " COALESCE(SUM(CASE WHEN route IS NOT 'demo_split' THEN student_served END), 0) student,"
+                    " COALESCE(SUM(cost), 0.0) cost, COALESCE(SUM(student_in_tokens), 0) tin,"
+                    f" COALESCE(SUM(student_out_tokens), 0) tout FROM daily_rollup WHERE {NOT_PASSTHROUGH}"
+                ).fetchone()
+            )
+            r = {k: r[k] + f[k] for k in r}
+        failed = self._rdb.execute("SELECT COUNT(*), COALESCE(SUM(cost_usd), 0.0) FROM failures").fetchone()
+        n, split, student = int(r["n"]), int(r["split"]), int(r["student"])
+        return {
+            "requests": n,
+            "requests_split": split,
+            "requests_student": student,
+            "requests_teacher": max(0, n - split - student),
+            "student_tokens_in": int(r["tin"]),
+            "student_tokens_out": int(r["tout"]),
+            "cost_usd": float(r["cost"]) + float(failed[1]),
+            "errors": int(failed[0]),
+        }
+
     # ---------- success metrics (FR-7.9, ratchet/kpis.py) ----------
     @_locked
     def kpi_days(self) -> list[dict[str, Any]]:
