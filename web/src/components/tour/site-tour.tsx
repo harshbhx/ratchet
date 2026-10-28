@@ -387,7 +387,7 @@ export function SiteTourHost() {
         return a;
       };
       p.append(link(DOCS_URL, "Read the docs"), " · ", link("/judges", "For judges"));
-      const v = videoHref(REAL.links, "tour");
+      const v = videoHref(REAL.links, "site");
       if (v) p.append(" · ", link(v, "Watch the video"));
       pop.description.append(p);
     }

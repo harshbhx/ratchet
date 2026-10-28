@@ -1,7 +1,8 @@
 import { Suspense, lazy, useRef, useState, type PointerEvent } from "react";
 import { motion } from "motion/react";
 import { Link } from "react-router";
-import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, ShieldCheck, Sparkles, Undo2 } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, Copy, FileSignature, Play, ShieldCheck, Sparkles, Undo2 } from "lucide-react";
+import { signal } from "@/components/companions/companion-bus";
 import { ShinyText } from "@/components/fx/shiny-text";
 import { SplitText } from "@/components/fx/split-text";
 import { TiltCard } from "@/components/fx/tilt-card";
@@ -149,7 +150,7 @@ export function Hero() {
             <motion.div {...enter(0.58)} className="mt-6 max-w-[34rem]">
               <BaseUrlDiff />
             </motion.div>
-            <motion.div {...enter(0.66)} className="mt-6 flex flex-wrap items-center gap-3">
+            <motion.div {...enter(0.66)} data-companion-avoid className="mt-6 flex flex-wrap items-center gap-3">
               <ButtonLink
                 to={LIVE_PATH}
                 data-tour="try-live"
@@ -171,6 +172,15 @@ export function Hero() {
               </ButtonA>
               <Button type="button" variant="subtle" size="lg" onClick={startSiteTour} className="h-12 w-full min-[440px]:w-auto">
                 <Sparkles aria-hidden /> Take the 60-second tour
+              </Button>
+              <Button
+                type="button"
+                variant="subtle"
+                size="lg"
+                onClick={() => signal({ type: "story" })}
+                className="h-12 w-full min-[440px]:w-auto"
+              >
+                <Play aria-hidden /> Watch Nano learn
               </Button>
             </motion.div>
             <motion.p {...enter(0.74)} className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px]">
