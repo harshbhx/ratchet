@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { Layout } from "@/components/layout/layout";
 import { TourHost } from "@/components/tour/tour";
+import { SiteTourHost } from "@/components/tour/site-tour";
 import { ButtonLink } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
 
@@ -41,6 +42,7 @@ export default function App() {
         </Routes>
       </Suspense>
       <TourHost />
+      <SiteTourHost />
     </BrowserRouter>
   );
 }

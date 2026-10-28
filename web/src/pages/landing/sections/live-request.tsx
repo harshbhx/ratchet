@@ -66,7 +66,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
   };
 
   return (
-    <div className={cn("mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6", className)} aria-labelledby="live-req-title">
+    <div data-tour="live-request" data-live={live ? "true" : "false"} className={cn("mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6", className)} aria-labelledby="live-req-title">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <h3 id="live-req-title" className="text-[16px] font-semibold tracking-[-0.01em] text-ink">
           Try a real request
@@ -121,7 +121,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
         {state.kind === "done" && (
           <div>
             <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{state.answer.text}</p>
-            <p className="mt-2.5 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+            <p data-tour="live-who" data-served-by={state.answer.servedBy ?? ""} className="mt-2.5 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
               {state.answer.servedBy ? (
                 <>
                   Answered by <WhoBadge servedBy={state.answer.servedBy} model={state.answer.model} route={state.answer.route} simulated={!live} />
@@ -132,9 +132,13 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
             </p>
           </div>
         )}
-        {state.kind === "error" && <p className="text-[14px] text-ink-2">{state.message}</p>}
+        {state.kind === "error" && (
+          <p data-tour="live-error" className="text-[14px] text-ink-2">
+            {state.message}
+          </p>
+        )}
         {state.kind === "limit" && (
-          <p className="text-[14.5px] leading-relaxed text-ink">
+          <p data-tour="live-limit" className="text-[14.5px] leading-relaxed text-ink">
             {DAILY_LIMIT_TEXT}
           </p>
         )}

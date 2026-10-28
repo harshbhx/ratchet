@@ -27,7 +27,7 @@ npm test                                         # tests/*.test.mjs: pure helper
 - Every number is live from the API, measured (`evidence/`), or a linked third-party fact. No invented numbers, testimonials or logos.
 - Web content (Scout search results) is rendered as React text only; links go through `safeHref`. Never use `dangerouslySetInnerHTML`.
 - No external scripts, fonts or CDNs at runtime: fonts are bundled from `@fontsource-variable`.
-- Browser storage holds the theme and nothing else. A key the operator types (the admin key) lives in React state and goes out only as an `Authorization: Bearer` header (`adminHeaders` in `api.ts`); `test_dashboard_admin_key_stays_in_memory` scans `src/` for this.
+- Browser storage holds the theme and the guided tour's flags (`components/tour/site-tour-storage.ts`: the hint's dismissal and the corner button's hidden flag in localStorage, the tour's place across the page change in sessionStorage) and nothing else. A key the operator types (the admin key) lives in React state and goes out only as an `Authorization: Bearer` header (`adminHeaders` in `api.ts`); `test_dashboard_admin_key_stays_in_memory` scans `src/` for this.
 
 ## Layout
 
