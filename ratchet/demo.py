@@ -186,4 +186,4 @@ def reset_event(reason: str, policy: DemoPolicy) -> str:
         "max_days": f"after {policy.max_days} simulated days (RATCHET_DEMO_MAX_DAYS)",
         "max_requests": f"after {policy.max_requests} requests (RATCHET_DEMO_MAX_REQUESTS)",
     }.get(reason, "")
-    return f"the shared simulation reset {why}; the warm-up ran again"
+    return f"the shared mock-mode gateway reset {why}; the warm-up ran again"

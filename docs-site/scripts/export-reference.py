@@ -48,8 +48,8 @@ TAGS: list[tuple[str, str]] = [
     ("Savings receipts", "Signed daily receipts per client and their inclusion proofs."),
     ("Tasks", "The task registry: list, inspect, validate, add and remove tasks."),
     ("Admin", "Operator actions with an audit trail: versions, switches, pins, erasure and export."),
-    ("Demo controls (mock only)", "Buttons of the mock demo. They answer 404 in live mode."),
-    ("Scout", "The multi-agent research demo: runs, the event stream and the budget guard's status."),
+    ("Mock-mode controls (mock only)", "Buttons of the mock-mode gateway. They answer 404 in live mode."),
+    ("Scout", "The multi-agent research tool: runs, the event stream and the budget guard's status."),
     ("Pages", "The web pages the gateway serves."),
 ]
 
@@ -65,7 +65,7 @@ def tag_for(path: str) -> str:
     if p.startswith("/ratchet/admin/"):
         return "Admin"
     if p.startswith("/ratchet/demo/"):
-        return "Demo controls (mock only)"
+        return "Mock-mode controls (mock only)"
     if p.startswith("/ratchet/versions/"):
         return "Versions and evidence"
     if p.startswith("/ratchet/cost"):
@@ -162,7 +162,7 @@ def export_openapi(gateway: Any) -> tuple[dict[str, Any], list[dict[str, str]]]:
             "The HTTP API of the Ratchet gateway (`ratchet.gateway:app`), generated from the code with "
             "`python docs-site/scripts/export-reference.py`. The chat route speaks OpenAI's format, so any OpenAI SDK "
             f"works. Examples, error envelopes and access levels are in the [hand-written API guide]({DOCS_URL}/reference/api/). "
-            "Mock-only demo controls answer 404 in live mode, and in live mode most `/ratchet/*` routes need an admin or "
+            "Mock-only controls answer 404 in live mode, and in live mode most `/ratchet/*` routes need an admin or "
             "dashboard key unless the dashboard is public."
         ),
         "license": {"name": "Apache-2.0", "url": f"{REPO_URL}/blob/main/LICENSE"},
@@ -171,7 +171,7 @@ def export_openapi(gateway: Any) -> tuple[dict[str, Any], list[dict[str, str]]]:
         {"url": "http://localhost:8000", "description": "Local mock mode (make demo)"},
         {
             "url": "https://{host}",
-            "description": "Your gateway (the public demo's host by default)",
+            "description": "Your gateway (the live gateway's host by default)",
             "variables": {"host": {"default": "ratchet.dualmindlab.tech"}},
         },
     ]
@@ -312,7 +312,7 @@ CLIS: list[dict[str, Any]] = [
         "cmd": "python -m ratchet.watch",
         "module": "ratchet.watch",
         "when": (
-            "On the demo VM's host, from cron: restart a hung gateway, probe it through its public URL "
+            "On the VM's host, from cron: restart a hung gateway, probe it through its public URL "
             "and send signed alerts. Not needed to run a gateway."
         ),
     },
@@ -320,7 +320,7 @@ CLIS: list[dict[str, Any]] = [
         "id": "demo-check",
         "cmd": "python scripts/demo_check.py",
         "script": "scripts/demo_check.py",
-        "when": "Check a public demo from the outside, as a visitor sees it: OK, WARN or FAIL per check.",
+        "when": "Check a live gateway from the outside, as a visitor sees it: OK, WARN or FAIL per check.",
     },
     {
         "id": "train",

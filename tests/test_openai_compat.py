@@ -395,7 +395,7 @@ def test_mock_keyerror_is_400_and_live_keyerror_is_500(gw_env, monkeypatch, tmp_
     c = TestClient(gw.app, raise_server_exceptions=False)
     for messages in unknown:
         r = c.post(CHAT, json={"messages": messages})
-        assert r.status_code == 400 and "mock mode only answers demo requests" in r.json()["detail"], r.text
+        assert r.status_code == 400 and "mock mode only answers the mock world's own requests" in r.json()["detail"], r.text
         assert _error(r)["type"] == "invalid_request_error"
     assert gw.rt.gateway_errors == 0 and gw.rt.ledger.totals()["requests"] == 0
     gw = _gateway(gw_env, RATCHET_MOCK_STRICT="0")

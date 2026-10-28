@@ -1,4 +1,4 @@
-"""OpenAI-compatible gateway, dashboard API, landing page and the Scout multi-agent demo.
+"""OpenAI-compatible gateway, dashboard API, landing page and the Scout multi-agent research tool.
 
     RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000     # offline demo, no keys
     RATCHET_MODE=live NEBIUS_API_KEY=... RATCHET_API_KEYS=... uvicorn ratchet.gateway:app  # real Token Factory teacher
@@ -143,7 +143,6 @@ from .resilience import (
     describe_failure,
 )
 from .router import EVENT_ON_FAILURE, PASSTHROUGH_ROUTE, Choice, Ratchet, RequestMeta, Result, task_label
-from .scout import record as scout_record
 from .scout.agents import Call, Scout
 from .scout.credits import CreditMeter, MeteredSearch
 from .scout.guard import Guard
@@ -557,8 +556,8 @@ class Runtime:
             if not self.access.allow_unauthenticated:
                 raise ValueError(
                     "RATCHET_API_KEYS is empty: in live mode /v1/* would answer anyone, on your teacher credits. Set "
-                    "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the demo "
-                    "VM's Caddy guard: RATCHET_API_GUARD=guarded and a RATCHET_ADMIN_TOKEN of 32+ characters) checks every "
+                    "RATCHET_API_KEYS, or RATCHET_ALLOW_UNAUTHENTICATED=1 when something in front of the gateway (the VM's "
+                    "Caddy guard: RATCHET_API_GUARD=guarded and a RATCHET_ADMIN_TOKEN of 32+ characters) checks every "
                     "caller"
                 )
             problem = s.guard_problem()
@@ -1376,7 +1375,7 @@ async def _demo_limit(request: Request) -> None:
         wait = max(1, math.ceil(d.retry_after_s))
         raise HTTPException(
             429,
-            f"the shared simulation takes {policy.rpm} actions a minute per visitor; try again in {wait} s",
+            f"the shared mock-mode gateway takes {policy.rpm} actions a minute per visitor; try again in {wait} s",
             headers={"Retry-After": str(wait)},
         )
 
@@ -2403,7 +2402,7 @@ def _serve_held(
         # `gateway_error` event (`_unhandled_error`), never a 400 that blames the client.
         if rt.settings.mode != "mock" or not rt.settings.mock_strict:
             raise
-        raise HTTPException(400, f"mock mode only answers demo requests: {e}") from e
+        raise HTTPException(400, f"mock mode only answers the mock world's own requests: {e}") from e
     except httpx.HTTPError as e:  # the teacher itself failed, after its retries: nothing left to fall back to
         raise _map_upstream(e) from e
     headers.update(_spend_headers(limits, rt.meter.add(client, r.cost_usd, hold=holds[0] if holds else None)))
@@ -2720,7 +2719,7 @@ def _no_train_add(raw: bytes, client: str | None, admin: str | None) -> dict[str
     try:
         created = rt.ledger.no_train_add(entries, admin=admin, limit=limit)
     except NoTrainFull as e:
-        raise HTTPException(409, f"the mock demo holds at most {e.limit} no-train registrations; reset it") from e
+        raise HTTPException(409, f"mock mode holds at most {e.limit} no-train registrations; reset it") from e
     who = f"admin {admin}" if admin is not None else (client or "a client without a key")
     if any(created):  # counts and names only: never the end user or its hash (/ratchet/stats is public)
         rt.ledger.event("no_train", f"{sum(created)} end user registration(s) by {who}")
@@ -2887,7 +2886,7 @@ def _embed_held(raw: bytes, client: str | None, rate: Decision | None, holds: li
         raise unsupported_endpoint("POST", "/v1/embeddings", "embeddings are turned off here (RATCHET_EMBEDDINGS_BASE=off)")
     cap = getattr(embedder, "max_values", None)  # the mock embedder's, so one request cannot tie up the shared demo
     if cap is not None and len(req.inputs) * (req.dimensions or getattr(embedder, "default_dims", 1)) > cap:
-        message = f"The mock demo returns at most {cap} embedding values (inputs x dimensions) per request."
+        message = f"Mock mode returns at most {cap} embedding values (inputs x dimensions) per request."
         raise APIError(400, message, INVALID_REQUEST, "unsupported_value", "input")
     served = rt.settings.embeddings_model
     alias = check_embeddings_model(req.model, served, rt.routing)
@@ -3702,7 +3701,7 @@ def _validate_tasks(raw: bytes) -> dict[str, Any]:
 @app.put("/ratchet/tasks/{name}", response_model=None)
 async def put_task(name: str, request: Request, admin: str = Depends(_admin)) -> dict[str, Any] | JSONResponse:
     """Create or replace an API task: 200 `{task, spec_hash, changed, created}`, 422 `{errors}` for a bad spec, 403 for
-    a built-in or file task, 409 when the registry (or the mock demo's share of it) is full."""
+    a built-in or file task, 409 when the registry (or mock mode's share of it) is full."""
     raw = await request.body()
     return await anyio.to_thread.run_sync(functools.partial(_put_task, name, raw, admin))
 
@@ -3739,7 +3738,7 @@ def _put_task(name: str, raw: bytes, admin: str) -> dict[str, Any] | JSONRespons
             return _put_result(task, changed=False, created=False)
         if (current is None or current.source != "api") and rt.settings.mode == "mock":
             if sum(1 for t in tasks.registered() if t.source == "api") >= MOCK_MAX_API_TASKS:
-                raise HTTPException(409, f"the mock demo holds at most {MOCK_MAX_API_TASKS} API tasks; delete one or reset")
+                raise HTTPException(409, f"mock mode holds at most {MOCK_MAX_API_TASKS} API tasks; delete one or reset")
         try:
             tasks.register(task)
         except tasks.TaskConflict as e:  # cannot happen under tasks_lock after the check above; refuse it all the same
@@ -3894,7 +3893,7 @@ def cost_endpoint(body: Any = Body(...), admin: str = Depends(_admin)) -> dict[s
     led = rt.ledger
     if rt.settings.mode == "mock" and state == "up":
         if sum(1 for iv in led.compute_intervals("student_endpoint") if iv["source"] == "api") >= MOCK_MAX_API_INTERVALS:
-            raise HTTPException(409, f"the mock demo holds at most {MOCK_MAX_API_INTERVALS} endpoint records; reset it")
+            raise HTTPException(409, f"mock mode holds at most {MOCK_MAX_API_INTERVALS} endpoint records; reset it")
     interval, changed, summary = record_endpoint(
         led, rt.cost_policy, state, "api", rate, gpus, note=redact(note) if note else None, by=admin
     )
@@ -4535,17 +4534,17 @@ OUTAGE_MIN_S, OUTAGE_MAX_S = 5, 300
 
 def _mock_only() -> None:
     if rt.settings.mode != "mock":
-        raise HTTPException(403, "demo controls are only available in mock mode")
+        raise HTTPException(403, "these controls are only available in mock mode")
 
 
 def _demo_busy() -> HTTPException:
-    return HTTPException(409, "another demo action is running; try again in a moment")
+    return HTTPException(409, "another mock-mode action is running; try again in a moment")
 
 
 @app.post("/ratchet/demo/day")
 def demo_day(requests: int = 1500, workload: str = "tickets") -> dict[str, Any]:
-    """Simulate one day of traffic (support tickets, Scout research calls, both, structured outputs or tool requests),
-    then one night of training. Mock models: `simulation` says so in the response."""
+    """Run one day of mock traffic (support tickets, Scout research calls, both, structured outputs or tool requests),
+    then one night of training. Mock models: the response's `simulation` field says so."""
     _mock_only()
     if workload not in WORKLOADS:
         raise HTTPException(400, f"workload must be one of {list(WORKLOADS)}")
@@ -4621,7 +4620,7 @@ def demo_teacher_drift(noise: float = 0.15) -> dict[str, Any]:
 def demo_reset() -> dict[str, str]:
     _mock_only()
     if time.time() - _last_reset[0] < RESET_COOLDOWN_S:
-        raise HTTPException(429, f"the demo was reset less than {int(RESET_COOLDOWN_S)} seconds ago")
+        raise HTTPException(429, f"the mock-mode gateway was reset less than {int(RESET_COOLDOWN_S)} seconds ago")
     if not _demo_lock.acquire(blocking=False):
         raise _demo_busy()
     try:
@@ -4651,7 +4650,7 @@ def _scout_precheck(question: str, ip: str, judge: bool = False, run_id: str | N
     if len(q) > MAX_QUESTION_CHARS:
         return 400, f"Questions are limited to {MAX_QUESTION_CHARS} characters."
     if rt.settings.mode == "mock" and q not in EXAMPLE_QUESTIONS:
-        return 400, "This demo runs in mock mode with simulated search results, so it answers the example questions only."
+        return 400, "This gateway runs in mock mode with mock search results, so it answers the example questions only."
     if rt.search is None:
         return 503, "Live search is not configured (TAVILY_API_KEY is not set)."
     refused = rt.guard.admit(ip, judge=judge, run_id=run_id)
@@ -4724,20 +4723,6 @@ def scout_examples() -> dict[str, Any]:
     return {"mode": rt.settings.mode, "examples": EXAMPLE_QUESTIONS, "free_text": rt.settings.mode == "live"}
 
 
-@app.get("/scout/recorded")
-def scout_recorded() -> dict[str, Any]:
-    """Recorded live runs, newest first (FR-10.40): read-only, no model call, no guard budget, no ledger row."""
-    return {"recordings": scout_record.listing(rt.settings.scout_recordings_dir)}
-
-
-@app.get("/scout/recorded/{rid}")
-def scout_recorded_one(rid: str) -> dict[str, Any]:
-    rec = scout_record.get(rt.settings.scout_recordings_dir, rid)
-    if rec is None:
-        raise HTTPException(404, "No such recording.")
-    return {"id": rid, **rec}
-
-
 @app.get("/scout/status")
 def scout_status(request: Request) -> dict[str, Any]:
     """The guard's state, judge access and search credits (ADR 0120), and which model answers student calls (FR-7.40),
@@ -4771,7 +4756,7 @@ async def scout_judge(request: Request) -> JSONResponse:
         raise HTTPException(400, 'Send {"code": "..."}.')
     judge = rt.judge
     if judge is None:
-        raise HTTPException(404, "Judge access is not enabled on this demo.")
+        raise HTTPException(404, "Judge access is not enabled on this gateway.")
     if not rt.judge_attempts.allow(_client_ip(request)):
         raise HTTPException(429, "Too many attempts from this address. Try again in an hour.")
     if not judge.check(code):

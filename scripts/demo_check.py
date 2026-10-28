@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the public demo from outside, as a judge sees it (FR-11.34). Standard library plus `ratchet.watch`.
+"""Check the live gateway from outside, as a judge sees it (FR-11.34). Standard library plus `ratchet.watch`.
 
     python scripts/demo_check.py https://<domain> [--mode live|mock] [--key-env NAME] [--chat] [--json] [--timeout 30]
 
@@ -143,7 +143,7 @@ def main(
     out: TextIO | None = None,
 ) -> int:
     out = out or sys.stdout
-    p = argparse.ArgumentParser(description="Check the public demo from outside.")
+    p = argparse.ArgumentParser(description="Check the live gateway from outside.")
     p.add_argument("url")
     p.add_argument("--mode", choices=("live", "mock"), default="live")
     p.add_argument(

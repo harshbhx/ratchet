@@ -1023,17 +1023,22 @@ def test_dockerfile_is_pinned():
                 m = PIN.fullmatch(spec)
                 assert m, f"unpinned: {spec}"
                 installed[m.group(1).lower()] = m.group(2)
-            if "torch" not in specs[0]:  # every step after torch reads the list as constraints
-                assert "-c /tmp/train-versions.txt" in command, run
-    assert installed == pins and "unsloth" not in installed
+            assert "-c /tmp/train-versions.txt" in command, run  # every pip step reads the list as constraints
+    # torch comes with the base image (the round-2 retrain's), and the Mamba kernels are restored at job start by
+    # deploy/install_kernels.sh from the bucket's cached wheels: the image itself installs the rest.
+    assert f"FROM pytorch/pytorch:{pins['torch']}-cuda12.8-cudnn9-devel" in docker
+    kernels = (ROOT / "deploy" / "install_kernels.sh").read_text(encoding="utf-8")
+    for name in ("causal-conv1d", "mamba-ssm"):
+        assert f'"{name}=={pins[name]}"' in kernels or f'{name}=={pins[name]}"' in kernels
+    assert {**installed, "torch": pins["torch"], "causal-conv1d": pins["causal-conv1d"], "mamba-ssm": pins["mamba-ssm"]} == pins
+    assert "unsloth" not in installed
     copy = docker.index("COPY deploy/train-versions.txt /tmp/train-versions.txt")
     assert copy < docker.index("-c /tmp/train-versions.txt")  # on disk before the first step reads it
-    # The kernels' import is checked after they are installed, so a failed build fails the image.
-    mamba = next(i for i, run in enumerate(runs) if "mamba-ssm==" in run)
-    check = next(i for i, run in enumerate(runs) if run.startswith('python -c "import torch, mamba_ssm, causal_conv1d'))
-    assert check > mamba
-    # The job runs `python -m ratchet.nightschool.train`; Ubuntu has no `python` without python-is-python3.
-    assert "python-is-python3" in runs[0]
+    # The image does not compile the kernels (a GPU-less builder cannot build them for the L40S): the job does.
+    assert "COPY deploy/install_kernels.sh /app/install_kernels.sh" in docker
+    assert "CAUSAL_CONV1D_FORCE_BUILD=TRUE" in kernels and "TORCH_CUDA_ARCH_LIST" in kernels and "/data" in kernels
+    train_job = (ROOT / "deploy" / "train_job.sh").read_text(encoding="utf-8")
+    assert "bash /app/install_kernels.sh && python -m ratchet.nightschool.train" in train_job
     # versions.json records exactly what the image pins, and the `train` extra agrees with the image.
     assert {name.lower() for name in train.LIBRARIES} == set(pins)
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
