@@ -46,6 +46,21 @@
   const open = (node: Element) => {
     if (!dialog || !stage || !sizeBtn) return;
     const copy = node.cloneNode(true) as HTMLElement;
+    // A table is shown in its own copy of the page body, so the table styles apply; the diagram sizing button does not.
+    const isTable = node.tagName === 'TABLE';
+    dialog.dataset.kind = isTable ? 'table' : 'figure';
+    if (isTable) {
+      copy.removeAttribute('data-more');
+      const body = document.createElement('div');
+      body.className = 'sl-markdown-content';
+      body.append(copy);
+      stage.replaceChildren(body);
+      dialog.dataset.fit = 'false';
+      dialog.setAttribute('aria-label', 'Expanded table');
+      dialog.showModal();
+      return;
+    }
+    dialog.setAttribute('aria-label', 'Expanded view');
     // Mermaid scopes a diagram's styles to its svg's id: the copy gets its own id, and its styles follow it.
     if (copy.id) {
       const id = copy.id;
@@ -166,12 +181,33 @@
   // ---------- Tables that scroll sideways ----------
   const edge = (table: HTMLElement) => {
     const more = table.scrollWidth - table.clientWidth > 2;
+    // The "Expand table" button shows only for a table that still scrolls sideways after fitting to the column.
+    const bar = table.parentElement?.querySelector<HTMLElement>(':scope > .rt-tablebar');
+    if (bar) bar.hidden = !more;
     const atStart = table.scrollLeft <= 1;
     const atEnd = table.scrollLeft >= table.scrollWidth - table.clientWidth - 1;
     table.dataset.more = !more ? '' : atStart ? 'end' : atEnd ? 'start' : 'both';
   };
   const tables = content ? Array.from(content.querySelectorAll<HTMLElement>(':scope table')) : [];
   tables.forEach((table) => {
+    // Wrap the table with a bar for its Expand button (without JavaScript: the plain scrollable table).
+    if (!table.closest('.rt-ui, .not-content')) {
+      const wrap = document.createElement('div');
+      wrap.className = 'rt-tablewrap';
+      const bar = document.createElement('div');
+      bar.className = 'rt-tablebar';
+      bar.hidden = true;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'rt-tablebtn';
+      button.setAttribute('aria-label', 'Expand table to full screen');
+      button.innerHTML =
+        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg><span>Expand table</span>';
+      button.addEventListener('click', () => open(table));
+      bar.append(button);
+      table.before(wrap);
+      wrap.append(bar, table);
+    }
     edge(table);
     let queued = false;
     table.addEventListener(
@@ -302,6 +338,24 @@
     width: min(100%, 90rem);
     max-width: 100%;
     height: auto;
+  }
+  .rt-zoom[data-kind='table'] [data-zoom-size] {
+    display: none;
+  }
+  .rt-zoom[data-kind='table'] .rt-zoom__stage {
+    display: block;
+  }
+  .rt-zoom[data-kind='table'] .rt-zoom__stage > :global(.sl-markdown-content) {
+    width: min(100%, 100rem);
+    margin-inline: auto;
+  }
+  .rt-zoom[data-kind='table'] :global(table) {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: calc(100dvh - 8rem) !important;
+    margin: 0 !important;
+    mask-image: none !important;
+    -webkit-mask-image: none !important;
   }
   .rt-zoom__stage > :global(img) {
     width: auto;

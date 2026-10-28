@@ -1,0 +1,112 @@
+---
+/**
+ * "What's real": a compact strip of status badges (Starlight's Badge) with one line each and a link to the page that
+ * holds the evidence. Edit the items in index.mdx when the status changes; every line must match an existing page.
+ */
+import { Badge } from '@astrojs/starlight/components';
+
+interface Item {
+  badge: string;
+  variant: 'success' | 'note' | 'tip' | 'caution';
+  title: string;
+  text: string;
+  href: string;
+}
+interface Props {
+  items: Item[];
+  asOf?: string;
+}
+const { items, asOf } = Astro.props;
+---
+
+<div class="rt-strip rt-ui not-content">
+  <ul class="rt-strip__list">
+    {
+      items.map((item) => (
+        <li class="rt-strip__item">
+          <Badge text={item.badge} variant={item.variant} size="small" />
+          <a class="rt-strip__title" href={item.href}>
+            {item.title}
+          </a>
+          <span class="rt-strip__text">{item.text}</span>
+        </li>
+      ))
+    }
+  </ul>
+  {asOf && <p class="rt-strip__asof">{asOf}</p>}
+</div>
+
+<style>
+  .rt-strip {
+    border: 1px solid var(--rt-line);
+    border-radius: var(--rt-radius-xl);
+    background: var(--rt-surface);
+    overflow: hidden;
+  }
+  .rt-strip__list {
+    display: grid;
+    grid-template-columns: 1fr;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  @media (min-width: 48rem) {
+    .rt-strip__list {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .rt-strip__item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+    margin: 0 !important;
+    padding: 1rem 1.15rem;
+    border-bottom: 1px solid var(--rt-line);
+    transition: background-color 0.2s var(--rt-ease);
+  }
+  .rt-strip__item:hover {
+    background: var(--rt-surface-2);
+  }
+  .rt-strip__item:last-child {
+    border-bottom: 0;
+  }
+  @media (min-width: 48rem) {
+    .rt-strip__item:nth-child(odd) {
+      border-right: 1px solid var(--rt-line);
+    }
+    .rt-strip__item:nth-last-child(-n + 2):nth-child(odd),
+    .rt-strip__item:nth-last-child(-n + 2):nth-child(odd) + .rt-strip__item {
+      border-bottom: 0;
+    }
+  }
+  .rt-strip .rt-strip__title {
+    color: var(--rt-ink);
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.4;
+    text-decoration: none;
+  }
+  .rt-strip .rt-strip__title:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .rt-strip .rt-strip__title:focus-visible {
+    outline: 2px solid var(--rt-focus);
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+  }
+  .rt-strip__text {
+    color: var(--rt-muted);
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
+  .rt-strip .rt-strip__asof {
+    margin: 0;
+    padding: 0.7rem 1.15rem;
+    border-top: 1px solid var(--rt-line);
+    background: var(--rt-surface-2);
+    color: var(--rt-muted);
+    font-size: 0.78rem;
+  }
+</style>

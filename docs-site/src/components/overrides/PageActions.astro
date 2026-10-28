@@ -9,17 +9,27 @@
  * left out on a page that has no source file. Nothing is sent from this site: the page text goes to the clipboard only when the
  * reader chooses to copy it, and the assistant links carry the page's address, never its text.
  */
+import { readFileSync } from 'node:fs';
+
 const route = Astro.locals.starlightRoute;
+let version = '';
+try {
+  version = readFileSync(new URL('../../../../pyproject.toml', import.meta.url), 'utf8').match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? '';
+} catch {
+  version = '';
+}
 const title = String(route.entry.data.title ?? 'this page');
 const page = new URL(Astro.url.pathname, Astro.site ?? Astro.url).href;
 // The edit link points at the source file on GitHub (docs/ for the reference pages, docs-site/ for the guides).
 const edit = route.editUrl ? route.editUrl.toString() : '';
 const blob = edit.replace('/edit/', '/blob/');
 const raw = edit.replace('https://github.com/', 'https://raw.githubusercontent.com/').replace('/edit/', '/');
+// Claude and Perplexity marks: Simple Icons (CC0), paths copied as they are. Simple Icons carries no OpenAI mark, so ChatGPT
+// gets a Lucide icon. Marks belong to their owners.
 const assistants = [
-  { name: 'ChatGPT', hint: 'Ask about this page', base: 'https://chatgpt.com/?q=', icon: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z' },
-  { name: 'Claude', hint: 'Ask about this page', base: 'https://claude.ai/new?q=', icon: 'M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4' },
-  { name: 'Perplexity', hint: 'Search with this page as the source', base: 'https://www.perplexity.ai/search?q=', icon: 'M12 3 4 8v8l8 5 8-5V8l-8-5Zm0 0v18M4 8l8 5 8-5' },
+  { name: 'Claude', base: 'https://claude.ai/new?q=', mark: { kind: 'si', d: 'm4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z' } },
+  { name: 'ChatGPT', base: 'https://chatgpt.com/?q=', mark: { kind: 'lucide', d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' } },
+  { name: 'Perplexity', base: 'https://www.perplexity.ai/search?q=', mark: { kind: 'si', d: 'M22.3977 7.0896h-2.3106V.0676l-7.5094 6.3542V.1577h-1.1554v6.1966L4.4904 0v7.0896H1.6023v10.3976h2.8882V24l6.932-6.3591v6.2005h1.1554v-6.0469l6.9318 6.1807v-6.4879h2.8882V7.0896zm-3.4657-4.531v4.531h-5.355l5.355-4.531zm-13.2862.0676 4.8691 4.4634H5.6458V2.6262zM2.7576 16.332V8.245h7.8476l-6.1149 6.1147v1.9723H2.7576zm2.8882 5.0404v-3.8852h.0001v-2.6488l5.7763-5.7764v7.0111l-5.7764 5.2993zm12.7086.0248-5.7766-5.1509V9.0618l5.7766 5.7766v6.5588zm2.8882-5.0652h-1.733v-1.9723L13.3948 8.245h7.8478v8.087z' } },
 ];
 const ask = (src: string) =>
   encodeURIComponent(
@@ -27,63 +37,95 @@ const ask = (src: string) =>
   );
 ---
 
-<div class="rt-pa" data-title={title} data-url={page} data-raw={raw} data-blob={blob}>
+<div class="rt-pa" data-title={title} data-url={page} data-raw={raw} data-blob={blob} data-version={version}>
   <div class="rt-pa__group">
     <button type="button" class="rt-pa__main" data-copy="page">
       <span class="rt-pa__ico" data-ico="copy" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
       </span>
       <span class="rt-pa__ico rt-pa__ico--done" data-ico="done" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"></path></svg>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"></path></svg>
       </span>
       <span data-label>Copy page</span>
     </button>
     <button type="button" class="rt-pa__more" aria-haspopup="menu" aria-expanded="false" aria-controls="rt-pa-menu" aria-label="More page actions">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
     </button>
   </div>
 
   <div class="rt-pa__menu" id="rt-pa-menu" role="menu" aria-label="Page actions" hidden>
-    <p class="rt-pa__label">This page</p>
-    <button type="button" class="rt-pa__item" role="menuitem" data-copy="page">
-      <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg></span>
-      <span class="rt-pa__text"><strong>Copy page</strong><small>As Markdown, for any assistant or editor</small></span>
-    </button>
-    {
-      raw && (
-        <a class="rt-pa__item" role="menuitem" href={raw} target="_blank" rel="noopener noreferrer">
-          <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"></path><path d="M14 3v5h5M9 13h6M9 17h4"></path></svg></span>
-          <span class="rt-pa__text"><strong>View as Markdown</strong><small>The source file, as plain text</small></span>
-          <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg>
-        </a>
-      )
-    }
-    {
-      blob && (
-        <a class="rt-pa__item" role="menuitem" href={blob} target="_blank" rel="noopener noreferrer">
-          <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 8-5 4 5 4M16 8l5 4-5 4M14 5l-4 14"></path></svg></span>
-          <span class="rt-pa__text"><strong>View source</strong><small>This file in the repository</small></span>
-          <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg>
-        </a>
-      )
-    }
-    <button type="button" class="rt-pa__item" role="menuitem" data-copy="link">
-      <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg></span>
-      <span class="rt-pa__text"><strong>Copy link</strong><small>The address of this page</small></span>
-    </button>
+    <div class="rt-pa__head">
+      <span class="rt-pa__title" title={title}>{title}</span>
+      <span class="rt-pa__chip" data-tokens hidden></span>
+      <kbd class="rt-pa__kbd" aria-hidden="true">Shift C</kbd>
+    </div>
 
     <p class="rt-pa__label">Ask AI</p>
-    {
-      assistants.map((a) => (
-        <a class="rt-pa__item" role="menuitem" href={`${a.base}${ask(raw)}`} data-assistant={a.base} target="_blank" rel="noopener noreferrer">
-          <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={a.icon}></path></svg></span>
-          <span class="rt-pa__text"><strong>Open in {a.name}</strong><small>{a.hint}</small></span>
-          <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"></path></svg>
-        </a>
-      ))
-    }
+    <div class="rt-pa__grid rt-pa__grid--3" role="none">
+      {
+        assistants.map((a, i) => (
+          <a class="rt-pa__card" role="menuitem" style={`--i:${i}`} href={`${a.base}${ask(raw)}`} data-assistant={a.base} target="_blank" rel="noopener noreferrer">
+            <span class="rt-pa__mark" aria-hidden="true">
+              {a.mark.kind === 'si' ? (
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" focusable="false"><path d={a.mark.d}></path></svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d={a.mark.d}></path></svg>
+              )}
+            </span>
+            <strong>{a.name}</strong>
+            <small>Open with this page loaded</small>
+            <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"></path><path d="M7 17 17 7"></path></svg>
+          </a>
+        ))
+      }
+    </div>
+
+    <p class="rt-pa__label">Copy</p>
+    <div class="rt-pa__grid rt-pa__grid--2" role="none">
+      <button type="button" class="rt-pa__card rt-pa__card--copy" role="menuitem" style="--i:3" data-copy="page">
+        <span class="rt-pa__mark" aria-hidden="true"><span class="rt-pa__swap rt-pa__swap--a"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg></span><span class="rt-pa__swap rt-pa__swap--b"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m5 12 5 5 9-10"></path></svg></span></span>
+        <strong>Markdown</strong>
+        <small>The page, ready to paste</small>
+      </button>
+      <button type="button" class="rt-pa__card rt-pa__card--copy" role="menuitem" style="--i:4" data-copy="prompt">
+        <span class="rt-pa__mark" aria-hidden="true"><span class="rt-pa__swap rt-pa__swap--a"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m4 17 6-6-6-6M12 19h8"></path></svg></span><span class="rt-pa__swap rt-pa__swap--b"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m5 12 5 5 9-10"></path></svg></span></span>
+        <strong>LLM prompt</strong>
+        <small>Markdown plus a context header</small>
+      </button>
+    </div>
+
+    <p class="rt-pa__label">Links</p>
+    <div class="rt-pa__rows" role="none">
+      <button type="button" class="rt-pa__row" role="menuitem" data-copy="link">
+        <span class="rt-pa__ri" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg></span>
+        <span class="rt-pa__rt"><strong>Copy link</strong><small>The address of this page</small></span>
+      </button>
+      <button type="button" class="rt-pa__row" role="menuitem" data-copy="section">
+        <span class="rt-pa__ri" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"></path></svg></span>
+        <span class="rt-pa__rt"><strong>Link to this section</strong><small data-section-name>The heading you are reading</small></span>
+      </button>
+      {
+        raw && (
+          <a class="rt-pa__row" role="menuitem" href={raw} target="_blank" rel="noopener noreferrer">
+            <span class="rt-pa__ri" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8M16 13H8M16 17H8"></path></svg></span>
+            <span class="rt-pa__rt"><strong>View Markdown source</strong><small>The file, as plain text</small></span>
+            <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"></path><path d="M7 17 17 7"></path></svg>
+          </a>
+        )
+      }
+      {
+        blob && (
+          <a class="rt-pa__row" role="menuitem" href={blob} target="_blank" rel="noopener noreferrer">
+            <span class="rt-pa__ri" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18 16 4-4-4-4"></path><path d="m6 8-4 4 4 4"></path><path d="m14.5 4-5 16"></path></svg></span>
+            <span class="rt-pa__rt"><strong>View on GitHub</strong><small>This file in the repository</small></span>
+            <svg class="rt-pa__out" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"></path><path d="M7 17 17 7"></path></svg>
+          </a>
+        )
+      }
+    </div>
   </div>
   <span class="rt-pa__status" role="status" aria-live="polite" data-status></span>
+  <div class="rt-pa__toast" data-toast hidden></div>
 </div>
 
 <style>
@@ -172,104 +214,398 @@ const ask = (src: string) =>
   .rt-pa__menu {
     position: absolute;
     z-index: 30;
-    top: calc(100% + 0.45rem);
+    top: calc(100% + 0.5rem);
     left: 0;
-    width: 22rem;
+    width: 28rem;
     max-width: calc(100vw - 2rem);
-    padding: 0.4rem;
-    border: 1px solid var(--rt-line, var(--sl-color-hairline));
-    border-radius: 0.9rem;
+    padding: 0.7rem;
+    border: 1px solid var(--rt-line-strong, var(--sl-color-hairline));
+    border-radius: 1.1rem;
     background: var(--sl-color-bg);
-    box-shadow: 0 16px 40px rgb(0 0 0 / 0.28);
-    animation: rt-menu 0.14s ease-out;
+    box-shadow: 0 24px 60px -12px rgb(0 0 0 / 0.35), 0 2px 6px rgb(0 0 0 / 0.08);
     transform-origin: top left;
+    animation: rt-menu 0.28s cubic-bezier(0.34, 1.45, 0.64, 1);
   }
   .rt-pa__menu[hidden] {
     display: none;
   }
+  /* A soft gradient beam around the panel's border. */
+  .rt-pa__menu::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    z-index: -1;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(from var(--rt-pa-beam, 0deg), transparent 0 60%, var(--rt-owned, #3987e5) 78%, var(--rt-rented, #d95926) 90%, transparent);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    opacity: 0.7;
+    pointer-events: none;
+  }
+  @property --rt-pa-beam {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-pa__menu::before {
+      animation: rt-pa-spin 7s linear infinite;
+    }
+    @keyframes rt-pa-spin {
+      to {
+        --rt-pa-beam: 360deg;
+      }
+    }
+  }
   @keyframes rt-menu {
     from {
       opacity: 0;
-      transform: translateY(-4px) scale(0.985);
+      transform: translateY(-6px) scale(0.96);
     }
     to {
       opacity: 1;
       transform: none;
     }
   }
-  .rt-pa__label {
-    margin: 0.45rem 0.6rem 0.25rem;
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--sl-color-gray-3);
-  }
-  .rt-pa__label:first-child {
-    margin-top: 0.2rem;
-  }
-  .rt-pa__item {
+  .rt-pa__head {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
-    width: 100%;
-    padding: 0.42rem 0.5rem;
-    border: 0;
-    border-radius: 0.6rem;
+    gap: 0.5rem;
+    padding: 0.1rem 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--rt-line, var(--sl-color-hairline));
+  }
+  .rt-pa__title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--sl-color-white);
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .rt-pa__chip {
+    flex: none;
+    padding: 0.05rem 0.5rem;
+    border: 1px solid var(--rt-line, var(--sl-color-hairline));
+    border-radius: 999px;
+    color: var(--sl-color-gray-2);
+    font-size: 0.7rem;
+    font-weight: 500;
+  }
+  .rt-pa__chip[hidden] {
+    display: none;
+  }
+  .rt-pa__kbd {
+    flex: none;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--rt-line-strong, var(--sl-color-hairline));
+    border-radius: 0.35rem;
+    background: var(--rt-surface-2, transparent);
+    color: var(--sl-color-gray-2);
+    font-family: var(--rt-font-mono, monospace);
+    font-size: 0.68rem;
+  }
+  @media (hover: none) {
+    .rt-pa__kbd {
+      display: none;
+    }
+  }
+  .rt-pa__label {
+    margin: 0.8rem 0.3rem 0.4rem;
+    color: var(--sl-color-gray-3);
+    font-size: 0.66rem;
+    font-weight: 650;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .rt-pa__grid {
+    display: grid;
+    gap: 0.5rem;
+  }
+  .rt-pa__grid--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .rt-pa__grid--2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* Tiles: a slightly raised surface, a hairline, a spotlight that follows the pointer. */
+  .rt-pa__card {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+    min-width: 0;
+    padding: 0.8rem 0.8rem 0.75rem;
+    overflow: hidden;
+    border: 1px solid var(--rt-line, var(--sl-color-hairline));
+    border-radius: 0.8rem;
+    background: var(--rt-surface-2, var(--sl-color-gray-6));
+    color: var(--sl-color-gray-1);
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      transform 0.18s var(--rt-ease, ease),
+      border-color 0.18s,
+      box-shadow 0.18s;
+  }
+  .rt-pa__card::before,
+  .rt-pa__row::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: radial-gradient(10rem circle at var(--mx, 50%) var(--my, 0%), color-mix(in srgb, var(--rt-owned, #3987e5) 22%, transparent), transparent 70%);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .rt-pa__card:hover,
+  .rt-pa__card:focus-visible {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--rt-owned, #3987e5) 55%, var(--rt-line, transparent));
+    box-shadow: 0 8px 20px -10px rgb(0 0 0 / 0.35);
+    outline: none;
+  }
+  .rt-pa__card:hover::before,
+  .rt-pa__card:focus-visible::before,
+  .rt-pa__row:hover::before,
+  .rt-pa__row:focus-visible::before {
+    opacity: 1;
+  }
+  .rt-pa__card:focus-visible,
+  .rt-pa__row:focus-visible {
+    box-shadow: 0 0 0 2px var(--sl-color-accent);
+  }
+  .rt-pa__mark {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 2.4rem;
+    height: 2.4rem;
+    margin-bottom: 0.4rem;
+    border: 1px solid var(--rt-line, var(--sl-color-hairline));
+    border-radius: 0.65rem;
+    background: var(--sl-color-bg);
+    color: var(--sl-color-white);
+    transition: transform 0.25s var(--rt-ease, ease);
+  }
+  .rt-pa__card--copy .rt-pa__mark {
+    color: var(--rt-owned-ink, var(--sl-color-accent));
+  }
+  .rt-pa__card:hover .rt-pa__mark {
+    transform: scale(1.08) rotate(-4deg);
+  }
+  .rt-pa__card strong {
+    color: var(--sl-color-white);
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+  .rt-pa__card small {
+    color: var(--sl-color-gray-3);
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+  .rt-pa__card > .rt-pa__out {
+    position: absolute;
+    top: 0.65rem;
+    right: 0.65rem;
+    color: var(--sl-color-gray-3);
+  }
+  /* The check that replaces the icon after a copy. */
+  .rt-pa__swap {
+    display: grid;
+    place-items: center;
+    grid-area: 1 / 1;
+    transition:
+      transform 0.25s var(--rt-ease, ease),
+      opacity 0.2s;
+  }
+  .rt-pa__swap--b {
+    color: var(--rt-good-ink, #51cf66);
+    opacity: 0;
+    transform: scale(0.4) rotate(-30deg);
+  }
+  .rt-pa__card[data-done] .rt-pa__swap--a {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  .rt-pa__card[data-done] .rt-pa__swap--b {
+    opacity: 1;
+    transform: none;
+  }
+  .rt-pa__card[data-done] {
+    border-color: var(--rt-good, #51cf66);
+  }
+  .rt-pa__rows {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+  }
+  .rt-pa__row {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+    padding: 0.5rem 0.6rem;
+    overflow: hidden;
+    border: 1px solid transparent;
+    border-radius: 0.65rem;
     background: transparent;
     color: var(--sl-color-gray-1);
     font: inherit;
     text-align: left;
     text-decoration: none;
     cursor: pointer;
+    transition:
+      background-color 0.15s,
+      border-color 0.15s;
   }
-  .rt-pa__item:hover,
-  .rt-pa__item:focus-visible {
+  .rt-pa__row:hover,
+  .rt-pa__row:focus-visible {
+    border-color: var(--rt-line, var(--sl-color-hairline));
     background: var(--rt-surface-2, var(--sl-color-gray-6));
     outline: none;
   }
-  .rt-pa__item:focus-visible {
-    box-shadow: inset 0 0 0 2px var(--sl-color-accent);
-  }
-  .rt-pa__tile {
+  .rt-pa__ri {
     display: grid;
     place-items: center;
     flex: none;
-    width: 2rem;
-    height: 2rem;
+    width: 1.9rem;
+    height: 1.9rem;
     border: 1px solid var(--rt-line, var(--sl-color-hairline));
     border-radius: 0.5rem;
-    background: var(--rt-surface, transparent);
     color: var(--rt-owned-ink, var(--sl-color-accent));
   }
-  .rt-pa__text {
+  .rt-pa__rt {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-width: 0;
   }
-  .rt-pa__text strong {
-    font-size: 0.86rem;
-    font-weight: 600;
+  .rt-pa__rt strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--sl-color-white);
+    font-size: 0.8rem;
+    font-weight: 600;
   }
-  .rt-pa__text small {
-    font-size: 0.74rem;
+  .rt-pa__rt small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--sl-color-gray-3);
+    font-size: 0.7rem;
+  }
+  .rt-pa__row > .rt-pa__out {
+    flex: none;
     color: var(--sl-color-gray-3);
   }
   .rt-pa__out {
     flex: none;
     color: var(--sl-color-gray-3);
   }
+  /* The panel's tiles appear one after another. */
+  @media (prefers-reduced-motion: no-preference) {
+    .rt-pa__menu:not([hidden]) .rt-pa__card {
+      animation: rt-tile 0.35s var(--rt-ease, ease) backwards;
+      animation-delay: calc(var(--i, 0) * 40ms + 60ms);
+    }
+    @keyframes rt-tile {
+      from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.96);
+      }
+    }
+  }
+  .rt-pa__toast {
+    position: fixed;
+    z-index: 70;
+    left: 50%;
+    bottom: 1.5rem;
+    transform: translateX(-50%);
+    max-width: calc(100vw - 2rem);
+    padding: 0.55rem 0.95rem;
+    border: 1px solid var(--rt-line-strong, var(--sl-color-hairline));
+    border-radius: 0.7rem;
+    background: var(--sl-color-bg);
+    color: var(--sl-color-white);
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.3);
+    font-size: 0.82rem;
+    animation: rt-menu 0.2s ease-out;
+  }
+  .rt-pa__toast[hidden] {
+    display: none;
+  }
+  .rt-pa__toast span {
+    color: var(--sl-color-gray-2);
+  }
   .rt-pa__status {
     font-size: 0.78rem;
     color: var(--sl-color-gray-3);
   }
+  /* On a phone the panel is a sheet at the bottom of the screen. */
+  @media (max-width: 40rem) {
+    .rt-pa__menu {
+      position: fixed;
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: auto;
+      max-width: none;
+      max-height: 85dvh;
+      overflow-y: auto;
+      padding: 0.8rem 0.7rem calc(0.9rem + env(safe-area-inset-bottom));
+      border-radius: 1.2rem 1.2rem 0 0;
+      transform-origin: bottom center;
+      animation: rt-sheet 0.3s cubic-bezier(0.34, 1.2, 0.64, 1);
+    }
+    .rt-pa__menu::before {
+      display: none;
+    }
+    .rt-pa__rows {
+      grid-template-columns: 1fr;
+    }
+    .rt-pa__row {
+      min-height: 3rem;
+    }
+    .rt-pa__toast {
+      bottom: 5rem;
+    }
+  }
+  @keyframes rt-sheet {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: none;
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
     .rt-pa__menu,
+    .rt-pa__toast,
+    .rt-pa__card,
     .rt-pa[data-state='done'] .rt-pa__ico--done {
       animation: none;
     }
+    .rt-pa__card,
+    .rt-pa__mark,
+    .rt-pa__swap,
     .rt-pa__more svg {
       transition: none;
+    }
+    .rt-pa__card:hover,
+    .rt-pa__card:hover .rt-pa__mark {
+      transform: none;
     }
   }
 </style>
@@ -397,17 +733,56 @@ const ask = (src: string) =>
       const list = items();
       const i = list.indexOf(document.activeElement as HTMLElement);
       if (e.key === 'Escape') setOpen(false, true);
-      else if (e.key === 'ArrowDown') {
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
         e.preventDefault();
         list[(i + 1) % list.length]?.focus();
-      } else if (e.key === 'ArrowUp') {
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
         e.preventDefault();
         list[(i - 1 + list.length) % list.length]?.focus();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        list[0]?.focus();
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        list[list.length - 1]?.focus();
       } else if (e.key === 'Tab') setOpen(false);
     });
     menu.querySelectorAll<HTMLAnchorElement>('a').forEach((a) => a.addEventListener('click', () => setOpen(false)));
 
     let timer = 0;
+    const toast = box.querySelector<HTMLElement>('[data-toast]');
+    let toastTimer = 0;
+    const flash = (what: string, detail: string) => {
+      if (!toast) return;
+      toast.replaceChildren();
+      toast.append(document.createTextNode(what));
+      if (detail) {
+        const s = document.createElement('span');
+        s.textContent = ` \u00b7 ${detail}`;
+        toast.append(s);
+      }
+      toast.hidden = false;
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => (toast.hidden = true), 2600);
+    };
+    const tokens = (text: string) => {
+      const n = Math.round(text.length / 4);
+      return n >= 1000 ? `~${(n / 1000).toFixed(1)}k tokens` : `~${n} tokens`;
+    };
+    // The heading nearest the top of the reading area: where "Copy link to this section" points.
+    const section = (): HTMLElement | null => {
+      const hs = [...document.querySelectorAll<HTMLElement>('.sl-markdown-content :is(h2, h3, h4)[id]')];
+      let best: HTMLElement | null = null;
+      for (const h of hs) {
+        if (h.getBoundingClientRect().top <= 140) best = h;
+        else break;
+      }
+      return best;
+    };
+    const markdownOf = () => {
+      const article = document.querySelector<HTMLElement>('.sl-markdown-content');
+      return `# ${box.dataset.title}\n\n${article ? toMarkdown(article) : ''}\n\nSource: ${here}\n`;
+    };
     const say = (done: string, ok: boolean) => {
       if (status) status.textContent = ok ? done : 'Could not copy';
       if (ok && label) {
@@ -441,15 +816,75 @@ const ask = (src: string) =>
         return ok;
       }
     };
+    const doCopy = async (kind: string, src?: HTMLElement) => {
+      let text = '';
+      let what = 'Page copied';
+      let detail = '';
+      if (kind === 'link') {
+        text = here;
+        what = 'Link copied';
+        detail = here.replace(/^https?:\/\//, '');
+      } else if (kind === 'section') {
+        const h = section();
+        text = h ? `${here}#${h.id}` : here;
+        what = 'Section link copied';
+        detail = h ? (h.textContent ?? '').trim() : 'top of the page';
+      } else {
+        const md = markdownOf();
+        if (kind === 'prompt') {
+          const v = box.dataset.version ? `, version ${box.dataset.version}` : '';
+          text = `Context: this is a page of the Ratchet documentation${v}.\nTitle: ${box.dataset.title}\nURL: ${here}\n\nUse the page below to answer my questions. Quote it where you can, and say so when it does not cover something.\n\n---\n\n${md}`;
+          what = 'Prompt copied';
+        } else text = md;
+        detail = `Markdown, ${tokens(text)}`;
+      }
+      const ok = await write(text);
+      say(kind === 'link' || kind === 'section' ? 'Link copied' : 'Copied', ok);
+      if (ok) flash(what, detail);
+      if (ok && src?.classList.contains('rt-pa__card')) {
+        src.dataset.done = '';
+        window.setTimeout(() => {
+          delete src.dataset.done;
+          if (!menu.hidden) setOpen(false, true);
+        }, 900);
+      } else if (!menu.hidden) setOpen(false, true);
+    };
     box.querySelectorAll<HTMLElement>('[data-copy]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const link = btn.dataset.copy === 'link';
-        const article = document.querySelector<HTMLElement>('.sl-markdown-content');
-        const text = link ? here : `# ${box.dataset.title}\n\n${article ? toMarkdown(article) : ''}\n\nSource: ${here}\n`;
-        const ok = await write(text);
-        say(link ? 'Link copied' : 'Copied', ok);
-        if (!menu.hidden) setOpen(false, true);
-      });
+      btn.addEventListener('click', () => doCopy(btn.dataset.copy ?? 'page', btn));
+    });
+
+    // Shift+C copies the page (not while typing, and not with another modifier, so Ctrl/Cmd+K and Ctrl+C are untouched).
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'C' || !e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      e.preventDefault();
+      doCopy('page');
+    });
+
+    // The tiles' spotlight follows the pointer.
+    menu.addEventListener('pointermove', (e) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('.rt-pa__card, .rt-pa__row');
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      el.style.setProperty('--mx', `${e.clientX - r.left}px`);
+      el.style.setProperty('--my', `${e.clientY - r.top}px`);
+    });
+
+    // Size chip and the section's name, worked out when the menu opens (nothing is measured on load).
+    const chip = menu.querySelector<HTMLElement>('[data-tokens]');
+    const sectionName = menu.querySelector<HTMLElement>('[data-section-name]');
+    const refresh = () => {
+      const article = document.querySelector<HTMLElement>('.sl-markdown-content');
+      if (chip && article) {
+        chip.textContent = tokens(article.textContent ?? '');
+        chip.hidden = false;
+      }
+      const h = section();
+      if (sectionName) sectionName.textContent = h ? (h.textContent ?? '').trim() : 'The top of the page';
+    };
+    more.addEventListener('click', () => {
+      if (!menu.hidden) refresh();
     });
   });
 </script>

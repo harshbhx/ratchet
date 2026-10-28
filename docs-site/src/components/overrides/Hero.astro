@@ -1,7 +1,7 @@
 ---
 /**
- * Splash-page hero. Replaces Lucode's Hero with Ratchet's: the React Bits grid background, a blur-in title, the
- * tagline and actions from the page's `hero` frontmatter, and the loop card. Only the home page has a hero.
+ * Splash-page hero. Replaces Lucode's Hero with Ratchet's compact docs header (src/components/home/HomeHero.astro):
+ * the title, tagline and actions come from the page's `hero` frontmatter. Only the home page has a hero.
  */
 import HomeHero from '../home/HomeHero.astro';
 
@@ -14,9 +14,4 @@ const actions = (hero.actions ?? []).map((a: any) => ({
 }));
 ---
 
-<HomeHero
-  title={(hero.title as string) ?? data.title}
-  tagline={(hero.tagline as string) ?? data.description}
-  announcement={hero.announcement as { text: string; link: string } | undefined}
-  actions={actions}
-/>
+<HomeHero title={(hero.title as string) ?? data.title} tagline={(hero.tagline as string) ?? data.description} actions={actions} />

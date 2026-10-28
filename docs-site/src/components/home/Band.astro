@@ -1,0 +1,82 @@
+---
+/**
+ * A calm band of the docs home: a small eyebrow, a heading, an optional one-line lead, then the content. No entrance
+ * animation; the docs home is for scanning. The heading is a real h2 so the page outline stays in order.
+ */
+interface Props {
+  id: string;
+  title: string;
+  eyebrow?: string;
+  lead?: string;
+  tint?: boolean;
+}
+const { id, title, eyebrow, lead, tint = false } = Astro.props;
+---
+
+<section class:list={['rt-band', 'rt-ui', { 'rt-band--tint': tint }]} id={id} aria-labelledby={`${id}-title`}>
+  <div class="rt-band__inner">
+    {eyebrow && <p class="rt-band__eyebrow">{eyebrow}</p>}
+    <h2 id={`${id}-title`} class="rt-band__title">{title}</h2>
+    {lead && <p class="rt-band__lead">{lead}</p>}
+    <div class="rt-band__body"><slot /></div>
+  </div>
+</section>
+
+<style>
+  .rt-band {
+    margin: 0 !important;
+    padding-block: 2.5rem;
+  }
+  @media (min-width: 64rem) {
+    .rt-band {
+      padding-block: 3.25rem;
+    }
+  }
+  .rt-band--tint {
+    background: linear-gradient(to bottom, var(--rt-bg-sunken), var(--rt-bg) 90%);
+    border-block: 1px solid var(--rt-line);
+  }
+  .rt-band__inner {
+    width: 100%;
+    max-width: 64rem;
+    margin-inline: auto;
+    padding-inline: 1rem;
+  }
+  @media (min-width: 48rem) {
+    .rt-band__inner {
+      padding-inline: 1.5rem;
+    }
+  }
+  .rt-band .rt-band__eyebrow {
+    margin: 0 0 0.4rem !important;
+    color: var(--rt-muted);
+    font-family: var(--rt-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  /* Beats the page body's "each h2 opens a chapter" rule (content.css), which would add a hairline and 3.5rem above. */
+  .rt-band :global(h2.rt-band__title) {
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    color: var(--rt-ink);
+    font-size: clamp(1.4rem, 1.15rem + 0.9vw, 1.75rem);
+    font-weight: 650;
+    letter-spacing: -0.022em;
+    line-height: 1.25;
+  }
+  .rt-band .rt-band__lead {
+    max-width: 42rem;
+    margin: 0.5rem 0 0 !important;
+    color: var(--rt-muted);
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+  .rt-band__body {
+    margin-top: 1.5rem;
+  }
+  .rt-band__body > :global(:first-child) {
+    margin-top: 0;
+  }
+</style>
