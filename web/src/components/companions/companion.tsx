@@ -18,6 +18,9 @@ export function Companion({
   actor,
   live,
   draggable,
+  moving,
+  talking,
+  gaze,
   onPoke,
   onJump,
   onGrab,
@@ -29,6 +32,9 @@ export function Companion({
   actor: Actor;
   live: boolean;
   draggable: boolean;
+  moving?: "walk" | "jump" | "glide" | null;
+  talking?: boolean;
+  gaze?: { x: number; y: number } | null;
   onPoke: () => void;
   onJump: () => void;
   onGrab?: () => void;
@@ -105,7 +111,7 @@ export function Companion({
         style={{ scaleX: actor.sx, scaleY: actor.sy, rotate: actor.rot, originX: 0.5, originY: 1 }}
         className={`block select-none rounded-2xl ${draggable ? (grabbed ? "cursor-grabbing" : "cursor-grab") : "cursor-pointer"}`}
       >
-        <Character who={who} look={look} size={size} live={live} />
+        <Character who={who} look={look} size={size} live={live} moving={moving} talking={talking} gaze={gaze} />
       </motion.button>
     </motion.div>
   );

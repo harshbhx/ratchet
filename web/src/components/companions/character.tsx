@@ -1,14 +1,15 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from "react";
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { lookOffset, type Expr, type Look, type Pose, type Who } from "./companion-model";
 
 /**
  * Nano and Ultra, drawn from simple shapes (original artwork, no external assets). Nano is the student: small, round, blue, with an
- * orange adapter chip on its head. Ultra is the teacher: bigger, orange, with round glasses and a bow tie. Colours are the design
- * tokens, so both read in light and dark; the face plate is the surface colour and the features are the ink colour.
+ * orange adapter chip and a little antenna on its head. Ultra is the teacher: bigger, orange, round glasses and a bow tie. Bodies and
+ * heads have a soft gradient, a rim light and a shaded edge; the face plate is a quiet surface tone with real eyes: sclera, iris, pupil,
+ * two highlights, and eyelids that close for blinks and half-close for sleepy, smug or squinting. Colours are the design tokens.
  *
- * Decoration only (`aria-hidden`): whatever they say is text, in a live region. The CSS for blinking, breathing and the small
- * flourishes is in globals.css (`.cp-*`); nothing here animates anything but a transform or an opacity.
+ * Decoration only (`aria-hidden`): whatever they say is text, in a live region. Only transform and opacity animate (the `.cp-*` CSS in
+ * companions.css); with `live` off (static portraits, reduced motion) no class that moves is applied.
  */
 
 interface Geom {
@@ -21,30 +22,33 @@ interface Geom {
   torso: { x: number; y: number; w: number; h: number; r: number };
   feet: [number, number];
   plate: { x: number; y: number; w: number; h: number; r: number };
+  eye: { rx: number; ry: number };
 }
 
 const GEOM: Record<Who, Geom> = {
   nano: {
     ex: [47, 73],
     ey: 54,
-    my: 66,
+    my: 67,
     shoulder: [[46, 94], [74, 94]],
     arm: 22,
     armW: 8,
     torso: { x: 44, y: 84, w: 32, h: 34, r: 14 },
     feet: [49, 71],
-    plate: { x: 32, y: 36, w: 56, h: 38, r: 18 },
+    plate: { x: 31, y: 35, w: 58, h: 41, r: 19 },
+    eye: { rx: 8, ry: 9 },
   },
   ultra: {
     ex: [44, 76],
     ey: 50,
-    my: 63,
+    my: 64,
     shoulder: [[38, 94], [82, 94]],
     arm: 24,
     armW: 9,
     torso: { x: 34, y: 82, w: 52, h: 38, r: 16 },
     feet: [46, 74],
-    plate: { x: 27, y: 31, w: 66, h: 40, r: 17 },
+    plate: { x: 26, y: 30, w: 68, h: 43, r: 18 },
+    eye: { rx: 6.2, ry: 7.2 },
   },
 };
 
@@ -65,101 +69,164 @@ function armAngles(pose: Pose, expr: Expr): [number, number] {
       return [-60, 60];
     case "pat":
       return [138, -6];
+    case "sip":
+      return [6, -118];
     default:
       return expr === "wave" ? [6, -150] : [6, -6];
   }
 }
 
 const INK = "var(--ink)";
+const PLATE = "var(--surface-2)";
 
-function Eye({ x, y, kind, k }: { x: number; y: number; kind: "open" | "wide" | "arc" | "flat" | "squint" | "sad" | "tight"; k: string }) {
-  const stroke = { stroke: INK, strokeWidth: 2.5, strokeLinecap: "round" as const, fill: "none" };
-  if (kind === "arc") return <path key={k} d={`M${x - 4.4} ${y + 1.8}q4.4 -6.6 8.8 0`} {...stroke} />;
-  if (kind === "flat") return <path key={k} d={`M${x - 4} ${y}h8`} {...stroke} />;
-  if (kind === "squint") return <path key={k} d={`M${x - 4.6} ${y + 0.6}q4.6 -3.2 9.2 0`} {...stroke} strokeWidth={2.8} />;
-  const [rx, ry] = kind === "wide" ? [4.6, 5.6] : kind === "tight" ? [3.2, 3] : kind === "sad" ? [3.2, 3.4] : [3.2, 3.9];
+/** What the lids and pupils do for each expression. `top` and `bottom` are how far the lids are closed at rest (0 open, 1 shut). */
+function eyeSpec(expr: Expr, squint: boolean, idx: 0 | 1, ultra: boolean) {
+  let s = { top: 0, bottom: 0, pupil: 2.7, scale: 1, dx: 0, dy: 0, wet: false, arc: false };
+  switch (expr) {
+    case "happy":
+    case "wave":
+      s = { ...s, top: 0.08, bottom: 0.32, pupil: 3.5 };
+      break;
+    case "proud":
+      s = { ...s, top: 0.42, bottom: 0.18, pupil: 3.2 };
+      break;
+    case "laughing":
+      s = { ...s, arc: true };
+      break;
+    case "sleepy":
+      s = { ...s, top: 0.62, dy: 1.2 };
+      break;
+    case "surprised":
+      s = { ...s, scale: 1.16, pupil: 3.7 };
+      break;
+    case "thinking":
+      s = { ...s, top: idx === 1 ? 0.3 : 0.12, dx: 1.8, dy: -1.8 };
+      break;
+    case "determined":
+      s = { ...s, top: 0.3, pupil: 2.5 };
+      break;
+    case "sad":
+      s = { ...s, top: 0.24, dy: 1.2, wet: true };
+      break;
+    default:
+      // Ultra's dry look: the right eye a little skeptical.
+      if (ultra && idx === 1) s = { ...s, top: 0.2 };
+  }
+  if (squint) s = { ...s, top: Math.max(s.top, 0.52), bottom: Math.max(s.bottom, 0.42), arc: false };
+  return s;
+}
+
+function Eye({ x, y, idx, look, geom, ultra, uid, iris, live }: { x: number; y: number; idx: 0 | 1; look: Look; geom: Geom; ultra: boolean; uid: string; iris: string; live: boolean }) {
+  const sp = eyeSpec(look.expr, look.squint, idx, ultra);
+  if (sp.arc) {
+    return <path d={`M${x - 5} ${y + 2}q5 -8 10 0`} stroke={INK} strokeWidth="2.6" strokeLinecap="round" fill="none" />;
+  }
+  const rx = geom.eye.rx * sp.scale;
+  const ry = geom.eye.ry * sp.scale;
+  const clip = `${uid}c${idx}`;
+  const ir = sp.pupil + 2.2;
   return (
-    <g className="cp-blink" key={k}>
-      <g style={{ transform: "translate(var(--lx, 0px), var(--ly, 0px))" }}>
-        <ellipse cx={x} cy={y} rx={rx} ry={ry} fill={INK} />
-        <circle cx={x + 1.2} cy={y - 1.5} r={kind === "wide" ? 1.7 : 1.2} fill="var(--surface)" />
-        <circle cx={x - 1.4} cy={y + 1.4} r="0.6" fill="var(--surface)" opacity="0.8" />
+    <g transform={`translate(${x} ${y})`}>
+      <clipPath id={clip}>
+        <ellipse rx={rx} ry={ry} />
+      </clipPath>
+      <ellipse rx={rx} ry={ry} fill="#fbfbf8" stroke={INK} strokeOpacity="0.4" strokeWidth="1.3" />
+      <g clipPath={`url(#${clip})`}>
+        <g className={cn("cp-pupil", look.micro === "dart" && "cp-dart")} style={{ transform: `translate(calc(var(--lx, 0px) + ${sp.dx}px), calc(var(--ly, 0px) + ${sp.dy}px))` }}>
+          <circle r={ir} fill={iris} />
+          <circle r={ir} fill="none" stroke="#000" strokeOpacity="0.25" strokeWidth="0.8" />
+          <circle r={sp.pupil} fill="#0b0b0e" />
+        </g>
+        {/* the highlights stay put on the eye, like light on glass */}
+        <circle cx={rx * 0.28} cy={-ry * 0.34} r={sp.wet ? 2.3 : 1.7} fill="#fff" />
+        <circle cx={-rx * 0.3} cy={ry * 0.32} r={sp.wet ? 1.2 : 0.9} fill="#fff" opacity="0.85" />
+        {/* the lids: the top lid blinks (CSS), the lower lid lifts for a smile */}
+        <g className={live ? "cp-lid" : undefined} style={{ ["--rest" as string]: sp.top, transform: `scaleY(${sp.top})`, transformBox: "fill-box", transformOrigin: "50% 0%" }}>
+          <rect x={-rx - 1} y={-ry - 1.5} width={rx * 2 + 2} height={ry * 2 + 3} fill={PLATE} />
+          <path d={`M${-rx - 1} ${ry + 1.5}H${rx + 1}`} stroke={INK} strokeWidth="2" strokeLinecap="round" />
+        </g>
+        {sp.bottom > 0 && (
+          <g style={{ transform: `scaleY(${sp.bottom})`, transformBox: "fill-box", transformOrigin: "50% 100%" }}>
+            <rect x={-rx - 1} y={-ry - 1.5} width={rx * 2 + 2} height={ry * 2 + 3} fill={PLATE} />
+          </g>
+        )}
       </g>
     </g>
   );
 }
 
-function eyeKind(expr: Expr, squint: boolean): "open" | "wide" | "arc" | "flat" | "squint" | "sad" | "tight" {
-  if (squint) return "squint";
-  switch (expr) {
-    case "happy":
-    case "proud":
-    case "laughing":
-      return "arc";
-    case "sleepy":
-      return "flat";
-    case "surprised":
-      return "wide";
-    case "sad":
-      return "sad";
-    case "determined":
-      return "tight";
-    default:
-      return "open";
+function Mouth({ look, x, y, ultra, talking }: { look: Look; x: number; y: number; ultra: boolean; talking: boolean }) {
+  const expr = look.expr;
+  const line = { stroke: INK, strokeWidth: 2.4, strokeLinecap: "round" as const, fill: "none" };
+  if (talking) {
+    // Three mouth shapes, one shown at a time (CSS, stepped): shut, wide, round.
+    return (
+      <g>
+        <path className="cp-v" style={{ animationDelay: "0s" }} d={`M${x - 5} ${y}h10`} {...line} />
+        <g className="cp-v" style={{ animationDelay: "-0.2s" }}>
+          <path d={`M${x - 7} ${y - 3}q7 12 14 0z`} fill={INK} />
+          <path d={`M${x - 3.5} ${y + 3.4}q3.5 -3 7 0q-3.5 2.4 -7 0z`} fill="var(--rented)" opacity="0.85" />
+        </g>
+        <ellipse className="cp-v" style={{ animationDelay: "-0.4s" }} cx={x} cy={y + 1.5} rx="3.2" ry="3.8" fill={INK} />
+      </g>
+    );
   }
-}
-
-function Mouth({ expr, x, y, ultra }: { expr: Expr; x: number; y: number; ultra: boolean }) {
-  const line = { stroke: INK, strokeWidth: 2.3, strokeLinecap: "round" as const, fill: "none" };
+  const cls = look.micro === "twitch" ? "cp-twitch" : undefined;
+  const g = (n: ReactNode) => <g className={cls}>{n}</g>;
   switch (expr) {
     case "happy":
     case "wave":
-      return <path d={`M${x - 8} ${y - 2}q8 11 16 0z`} fill={INK} />;
-    case "laughing":
-      return (
+      return g(
         <g>
-          <path d={`M${x - 10} ${y - 3}q10 17 20 0z`} fill={INK} />
-          <path d={`M${x - 5} ${y + 5}q5 -4 10 0q-5 4 -10 0z`} fill="var(--rented)" opacity="0.8" />
-        </g>
+          <path d={`M${x - 8} ${y - 2}q8 12 16 0z`} fill={INK} />
+          <path d={`M${x - 4} ${y + 4.4}q4 -3.4 8 0q-4 2.6 -8 0z`} fill="var(--rented)" opacity="0.85" />
+        </g>,
+      );
+    case "laughing":
+      return g(
+        <g>
+          <path d={`M${x - 10} ${y - 3}q10 18 20 0z`} fill={INK} />
+          <path d={`M${x - 5} ${y + 6}q5 -4.4 10 0q-5 3.4 -10 0z`} fill="var(--rented)" opacity="0.85" />
+        </g>,
       );
     case "proud":
-      return <path d={`M${x - 7} ${y}q7 7 14 0`} {...line} />;
+      return g(<path d={`M${x - 7} ${y}q7 7 14 0`} {...line} />);
     case "sleepy":
-      return <ellipse cx={x} cy={y + 2} rx="2.6" ry="2" fill={INK} opacity="0.85" />;
+      return g(<ellipse cx={x} cy={y + 2} rx="2.6" ry="2" fill={INK} opacity="0.85" />);
     case "surprised":
-      return <ellipse cx={x} cy={y + 1} rx="3.3" ry="4.2" fill={INK} />;
+      return g(<ellipse cx={x} cy={y + 1} rx="3.3" ry="4.4" fill={INK} />);
     case "thinking":
-      return <path d={`M${x - 6} ${y + 1}q3 -3 6 0t6 0`} {...line} />;
+      return g(<path d={`M${x - 6} ${y + 1}q3 -3 6 0t6 0`} {...line} />);
     case "determined":
-      return <path d={`M${x - 6} ${y}h12`} {...line} />;
+      return g(<path d={`M${x - 6} ${y}h12`} {...line} />);
     case "sad":
-      return <path d={`M${x - 6} ${y + 4}q6 -6 12 0`} {...line} />;
+      return g(<path d={`M${x - 6} ${y + 4}q6 -7 12 0`} {...line} />);
     default:
-      return ultra ? <path d={`M${x - 6} ${y + 1}q6 3 13 -2`} {...line} /> : <path d={`M${x - 6} ${y - 1}q6 5 12 0`} {...line} />;
+      return g(ultra ? <path d={`M${x - 6} ${y + 1}q6 3 13 -2`} {...line} /> : <path d={`M${x - 6} ${y - 1}q6 5 12 0`} {...line} />);
   }
 }
 
-function Brows({ expr, ex, ey, ultra, squint }: { expr: Expr; ex: [number, number]; ey: number; ultra: boolean; squint: boolean }) {
-  const by = ey - 11;
-  const st = { stroke: INK, strokeWidth: 2.2, strokeLinecap: "round" as const, fill: "none", opacity: 0.8 };
-  const slope = (x: number, dir: 1 | -1, outerDy: number, innerDy: number) => (
-    <path d={`M${x - dir * 6} ${by + outerDy}L${x + dir * 6} ${by + innerDy}`} {...st} />
-  );
-  if (expr === "determined" || squint) return <g>{slope(ex[0], 1, -2.5, 2.5)}{slope(ex[1], -1, -2.5, 2.5)}</g>;
-  if (expr === "sad") return <g>{slope(ex[0], 1, 2, -3)}{slope(ex[1], -1, 2, -3)}</g>;
+function Brows({ look, ex, ey, ultra }: { look: Look; ex: [number, number]; ey: number; ultra: boolean }) {
+  const expr = look.expr;
+  const by = ey - 12.5;
+  const st = { stroke: INK, strokeWidth: 2.5, strokeLinecap: "round" as const, fill: "none", opacity: 0.85 };
+  const slope = (x: number, dir: 1 | -1, outerDy: number, innerDy: number) => <path d={`M${x - dir * 6.5} ${by + outerDy}Q${x} ${by + (outerDy + innerDy) / 2 - 1} ${x + dir * 6.5} ${by + innerDy}`} {...st} />;
+  if (expr === "determined" || look.squint) return <g>{slope(ex[0], 1, -2.5, 3)}{slope(ex[1], -1, -2.5, 3)}</g>;
+  if (expr === "sad") return <g>{slope(ex[0], 1, 3, -3.5)}{slope(ex[1], -1, 3, -3.5)}</g>;
   if (expr === "surprised")
-    return <g><path d={`M${ex[0] - 5} ${by - 2}q5 -4 10 0`} {...st} /><path d={`M${ex[1] - 5} ${by - 2}q5 -4 10 0`} {...st} /></g>;
-  if (expr === "thinking") return <g><path d={`M${ex[0] - 5} ${by}h10`} {...st} /><path d={`M${ex[1] - 5} ${by - 3}q5 -3 10 0`} {...st} /></g>;
+    return <g><path d={`M${ex[0] - 6} ${by - 1}q6 -6 12 0`} {...st} /><path d={`M${ex[1] - 6} ${by - 1}q6 -6 12 0`} {...st} /></g>;
+  if (expr === "thinking") return <g><path d={`M${ex[0] - 6} ${by + 1}h12`} {...st} /><path d={`M${ex[1] - 6} ${by - 1}q6 -5 12 0`} {...st} /></g>;
+  if (expr === "happy" || expr === "wave" || expr === "proud") return <g><path d={`M${ex[0] - 6} ${by}q6 -3 12 0`} {...st} /><path d={`M${ex[1] - 6} ${by}q6 -3 12 0`} {...st} /></g>;
   if (!ultra) return null;
-  // Ultra's brows: level, with one a little higher. Dry.
-  return <g><path d={`M${ex[0] - 6} ${by}h12`} {...st} /><path d={`M${ex[1] - 6} ${by - 2}h12`} {...st} /></g>;
+  // Ultra's brows: level, the right one a little higher. Dry.
+  return <g><path d={`M${ex[0] - 6.5} ${by + 0.5}h13`} {...st} /><path d={`M${ex[1] - 6.5} ${by - 2.2}q6.5 -2 13 0`} {...st} /></g>;
 }
 
-function Held({ held, ultra }: { held: Look["held"]; ultra: boolean }) {
+function Held({ held, ultra, sip }: { held: Look["held"]; ultra: boolean; sip?: boolean }) {
   if (held === "none") return null;
   const s = ultra ? 1.15 : 1;
   return (
-    <g transform={`translate(60 ${ultra ? 104 : 102}) scale(${s})`}>
+    <g transform={sip ? "translate(101 80) rotate(-24) scale(0.78)" : `translate(60 ${ultra ? 104 : 102}) scale(${s})`}>
       {held === "book" && (
         <g>
           <rect x="-14" y="-9" width="28" height="19" rx="2.5" fill="var(--surface)" stroke={INK} strokeWidth="1.6" />
@@ -206,30 +273,47 @@ export interface CharacterProps {
   size?: number;
   /** Blinking, breathing and the pupils following the pointer. Off for static portraits and under reduced motion. */
   live?: boolean;
+  /** How it is travelling: a walk cycle, a jump or a calm glide. */
+  moving?: "walk" | "jump" | "glide" | null;
+  /** A speech bubble is up: the mouth moves. */
+  talking?: boolean;
+  /** Look toward a point (a unit-ish vector from this character), e.g. at the one who is speaking. */
+  gaze?: { x: number; y: number } | null;
   className?: string;
-  children?: ReactNode;
 }
 
-export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Character({ who, look, size = 96, live = true, className }, ref) {
+export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Character({ who, look, size = 96, live = true, moving = null, talking = false, gaze = null, className }, ref) {
   const inner = useRef<SVGSVGElement | null>(null);
   useImperativeHandle(ref, () => inner.current as SVGSVGElement);
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const ultra = who === "ultra";
   const g = GEOM[who];
   const body = ultra ? "var(--rented)" : "var(--owned)";
   const accent = ultra ? "var(--owned)" : "var(--rented)";
+  const iris = ultra ? "#8a4b1f" : "var(--owned)";
+  const dark = `color-mix(in srgb, ${body} 78%, black)`;
 
-  // The pupils follow the pointer.
+  // The pupils and the head follow the pointer, or look toward `gaze`.
   useEffect(() => {
     const svg = inner.current;
-    if (!svg || !live || look.expr === "sleepy" || look.sunglasses) return;
+    if (!svg || !live) return;
+    const set = (x: number, y: number) => {
+      svg.style.setProperty("--lx", `${(x * 2.3).toFixed(2)}px`);
+      svg.style.setProperty("--ly", `${(y * 2.3).toFixed(2)}px`);
+      svg.style.setProperty("--hx", `${(x * 1.4).toFixed(2)}px`);
+      svg.style.setProperty("--tilt", `${(x * 3).toFixed(2)}deg`);
+    };
+    if (gaze) {
+      set(gaze.x, gaze.y);
+      return;
+    }
     let raf = 0;
     const on = (e: PointerEvent) => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const r = svg.getBoundingClientRect();
-        const o = lookOffset(e.clientX, e.clientY, r.left + r.width / 2, r.top + r.height * 0.4, 2.3);
-        svg.style.setProperty("--lx", `${o.x.toFixed(2)}px`);
-        svg.style.setProperty("--ly", `${o.y.toFixed(2)}px`);
+        const o = lookOffset(e.clientX, e.clientY, r.left + r.width / 2, r.top + r.height * 0.4, 1);
+        set(o.x, o.y);
       });
     };
     window.addEventListener("pointermove", on, { passive: true });
@@ -237,128 +321,168 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
       cancelAnimationFrame(raf);
       window.removeEventListener("pointermove", on);
     };
-  }, [live, look.expr, look.sunglasses]);
+  }, [live, gaze]);
 
   const pose: Pose = look.pose;
   const [aL, aR] = armAngles(pose, look.expr);
-  const jump = pose === "jump";
+  const jump = pose === "jump" || moving === "jump";
   const [ex0, ex1] = g.ex;
-  const kind = eyeKind(look.expr, look.squint);
-  const happyBlush = look.blush || look.expr === "happy" || look.expr === "proud" || look.expr === "laughing" || look.expr === "wave";
+  const blushOn = look.blush || look.expr === "happy" || look.expr === "proud" || look.expr === "laughing" || look.expr === "wave";
   const holding = look.held !== "none" && (pose === "carry" || pose === "hug");
+  const sipping = pose === "sip" && look.held === "mug";
+  const gb = `${uid}b`;
+  const gs = `${uid}s`;
+  const footY = jump ? 116 : 121;
 
   const arm = (side: 0 | 1, angle: number, wave: boolean) => {
     const [sx, sy] = g.shoulder[side];
-    const hand = pose === "stop" && side === 0;
+    const flail = moving === "jump" && live;
     return (
       <g transform={`rotate(${angle} ${sx} ${sy})`}>
-        <g className={wave ? "cp-wave" : undefined} style={{ transformOrigin: `${sx}px ${sy}px` }}>
+        <g className={cn(wave && live && "cp-wave", flail && (side === 0 ? "cp-flail-a" : "cp-flail-b"))} style={{ transformOrigin: `${sx}px ${sy}px` }}>
           <rect x={sx - g.armW / 2} y={sy - 2} width={g.armW} height={g.arm} rx={g.armW / 2} fill={body} />
-          <circle cx={sx} cy={sy + g.arm - 1} r={g.armW * 0.72} fill={body} />
-          {hand && <rect x={sx - 6} y={sy + g.arm - 7} width="12" height="9" rx="4" fill={body} />}
+          <circle cx={sx} cy={sy + g.arm - 1} r={g.armW * 0.74} fill={body} />
+          {pose === "stop" && side === 0 && <rect x={sx - 6} y={sy + g.arm - 7} width="12" height="9" rx="4" fill={body} />}
         </g>
       </g>
     );
   };
 
   return (
-    <svg ref={inner} viewBox="0 0 120 130" width={size} height={size * (130 / 120)} aria-hidden focusable="false" className={cn("shrink-0 overflow-visible", className)}>
-      {/* a gentle shadow on the shelf */}
-      <ellipse cx="60" cy="126" rx={ultra ? 34 : 28} ry="4.2" fill="var(--ink)" opacity={jump ? 0.08 : 0.16} />
+    <svg
+      ref={inner}
+      viewBox="0 0 120 130"
+      width={size}
+      height={size * (130 / 120)}
+      aria-hidden
+      focusable="false"
+      className={cn("shrink-0 overflow-visible", live && moving === "walk" && "cp-walking", live && moving === "glide" && "cp-gliding", className)}
+    >
+      <defs>
+        <linearGradient id={gb} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" style={{ stopColor: `color-mix(in srgb, ${body} 80%, white)` }} />
+          <stop offset="0.55" style={{ stopColor: body }} />
+          <stop offset="1" style={{ stopColor: `color-mix(in srgb, ${body} 82%, black)` }} />
+        </linearGradient>
+        <radialGradient id={gs} cx="0.36" cy="0.28" r="0.85">
+          <stop offset="0" stopColor="#fff" stopOpacity="0.24" />
+          <stop offset="0.5" stopColor="#fff" stopOpacity="0" />
+          <stop offset="1" stopColor="#000" stopOpacity="0.24" />
+        </radialGradient>
+      </defs>
+      {/* a soft shadow on whatever it stands on */}
+      <ellipse cx="60" cy="126" rx={ultra ? 34 : 28} ry="4.2" fill="var(--ink)" opacity={jump ? 0.07 : 0.16} />
       <g className={cn(live && "cp-bob")} style={{ transformOrigin: "60px 124px" }}>
-        {/* feet */}
-        <ellipse cx={g.feet[0]} cy={jump ? 116 : 121} rx={ultra ? 10 : 9} ry="4.4" fill={body} />
-        <ellipse cx={g.feet[1]} cy={jump ? 116 : 121} rx={ultra ? 10 : 9} ry="4.4" fill={body} />
+        <g className="cp-foot-a">
+          <ellipse cx={g.feet[0]} cy={footY} rx={ultra ? 10 : 9} ry="4.6" fill={dark} />
+        </g>
+        <g className="cp-foot-b">
+          <ellipse cx={g.feet[1]} cy={footY} rx={ultra ? 10 : 9} ry="4.6" fill={dark} />
+        </g>
         {/* torso */}
-        <rect x={g.torso.x} y={g.torso.y} width={g.torso.w} height={g.torso.h} rx={g.torso.r} fill={body} />
-        <ellipse cx="60" cy={g.torso.y + 20} rx={g.torso.w * 0.26} ry="8" fill="var(--surface)" opacity="0.22" />
+        <rect x={g.torso.x} y={g.torso.y} width={g.torso.w} height={g.torso.h} rx={g.torso.r} fill={`url(#${gb})`} />
+        <rect x={g.torso.x} y={g.torso.y} width={g.torso.w} height={g.torso.h} rx={g.torso.r} fill={`url(#${gs})`} />
+        <ellipse cx="60" cy={g.torso.y + 21} rx={g.torso.w * 0.24} ry="7.5" fill={PLATE} opacity="0.3" />
         {ultra && (
-          <g fill={accent}>
-            <path d="M60 90l-9 -5v10z" />
-            <path d="M60 90l9 -5v10z" />
-            <circle cx="60" cy="90" r="2.6" fill="var(--ink)" opacity="0.7" />
+          <g>
+            <path d="M60 90l-9.5 -5.5v11z" fill={accent} />
+            <path d="M60 90l9.5 -5.5v11z" fill={accent} />
+            <circle cx="60" cy="90" r="2.8" fill={INK} opacity="0.75" />
           </g>
         )}
-        {/* arms */}
         {arm(0, aL, false)}
         {arm(1, aR, look.expr === "wave" && pose === "stand")}
         {holding && <Held held={look.held} ultra={ultra} />}
-        {look.held !== "none" && !holding && pose !== "jump" && look.held === "mug" && (
-          <g transform={`translate(${ultra ? 96 : 84} 104) scale(0.7)`}>
+        {sipping && <Held held="mug" ultra sip />}
+        {look.held === "mug" && !holding && !sipping && pose !== "jump" && (
+          <g transform={`translate(${ultra ? 98 : 86} 106) scale(0.7)`}>
             <Held held="mug" ultra={false} />
           </g>
         )}
-        {/* head */}
-        {ultra ? (
-          <ellipse cx="60" cy="48" rx="41" ry="37" fill={body} />
-        ) : (
-          <>
-            <circle cx="60" cy="50" r="36" fill={body} />
-            {!look.cap && (
-              <g>
-                <rect x="55.4" y="13" width="9.2" height="7" fill={body} />
-                <rect x="49" y="4" width="22" height="12" rx="3.2" fill="var(--rented)" />
-                <path d="M54 16v3M60 16v3M66 16v3" stroke="var(--rented-ink)" strokeWidth="1.4" strokeLinecap="round" opacity="0.7" />
-                <circle cx="54" cy="9" r="1.5" fill="var(--surface)" opacity="0.85" />
+
+        {/* the head turns a little toward what it is looking at */}
+        <g className={cn("cp-head", look.micro === "shake" && "cp-hshake")} style={{ transformOrigin: "60px 84px", transform: live ? "translate(var(--hx, 0px), 0) rotate(var(--tilt, 0deg))" : undefined }}>
+          {ultra ? (
+            <>
+              <ellipse cx="60" cy="48" rx="41" ry="37" fill={`url(#${gb})`} />
+              <ellipse cx="60" cy="48" rx="41" ry="37" fill={`url(#${gs})`} />
+              <path d="M21.5 35.3A41 37 0 0 1 70.6 12.3" stroke="#fff" strokeOpacity="0.42" strokeWidth="2.4" strokeLinecap="round" fill="none" />
+            </>
+          ) : (
+            <>
+              <circle cx="60" cy="50" r="36" fill={`url(#${gb})`} />
+              <circle cx="60" cy="50" r="36" fill={`url(#${gs})`} />
+              <path d="M26.2 37.7A36 36 0 0 1 69.3 15.2" stroke="#fff" strokeOpacity="0.42" strokeWidth="2.4" strokeLinecap="round" fill="none" />
+              {!look.cap && (
+                <g>
+                  {/* the antenna and the adapter chip wobble a little */}
+                  <g className={cn(live && "cp-antenna")} style={{ transformOrigin: "60px 14px" }}>
+                    <path d="M60 14V3" stroke={dark} strokeWidth="2" strokeLinecap="round" />
+                    <circle cx="60" cy="2.6" r="2.8" fill={accent} stroke={INK} strokeOpacity="0.25" strokeWidth="0.8" />
+                  </g>
+                  <g className={cn(live && "cp-chip")} style={{ transformOrigin: "60px 17px" }}>
+                    <rect x="48" y="9" width="24" height="11.5" rx="3.4" fill="var(--rented)" />
+                    <rect x="48" y="9" width="24" height="5" rx="3" fill="#fff" opacity="0.2" />
+                    <path d="M53 17.2v3.6M60 17.2v3.6M67 17.2v3.6" stroke="var(--rented-ink)" strokeWidth="1.4" strokeLinecap="round" opacity="0.75" />
+                    <circle cx="53" cy="12.4" r="1.4" fill="#fff" opacity="0.85" />
+                  </g>
+                </g>
+              )}
+            </>
+          )}
+          {/* face plate, with a little depth at its edge */}
+          <rect x={g.plate.x} y={g.plate.y} width={g.plate.w} height={g.plate.h} rx={g.plate.r} fill={PLATE} />
+          <rect x={g.plate.x + 1} y={g.plate.y + 1} width={g.plate.w - 2} height={g.plate.h - 2} rx={g.plate.r - 1} fill="none" stroke={INK} strokeOpacity="0.1" strokeWidth="2" />
+          <Brows look={look} ex={g.ex} ey={g.ey} ultra={ultra} />
+          {!look.sunglasses && (
+            <>
+              <Eye x={ex0} y={g.ey} idx={0} look={look} geom={g} ultra={ultra} uid={uid} iris={iris} live={live} />
+              <Eye x={ex1} y={g.ey} idx={1} look={look} geom={g} ultra={ultra} uid={uid} iris={iris} live={live} />
+            </>
+          )}
+          {ultra && !look.sunglasses && (
+            <g fill="none" stroke={INK} strokeWidth="2.3" className={cn(look.adjust && "cp-adjust")}>
+              <circle cx={ex0} cy={g.ey} r="10.2" />
+              <circle cx={ex1} cy={g.ey} r="10.2" />
+              <path d={`M${ex0 + 10.2} ${g.ey - 1}q${(ex1 - ex0 - 20.4) / 2} -3 ${ex1 - ex0 - 20.4} 0`} />
+              <path className={cn(live && "cp-glint")} d={`M${ex0 - 6} ${g.ey - 5}l5 -3`} stroke="#fff" strokeWidth="2.2" strokeLinecap="round" opacity="0.8" />
+            </g>
+          )}
+          {look.sunglasses && (
+            <g>
+              <g fill="#15151a">
+                <rect x={ex0 - 10.5} y={g.ey - 7.5} width="21" height="15" rx="6" />
+                <rect x={ex1 - 10.5} y={g.ey - 7.5} width="21" height="15" rx="6" />
+                <rect x={ex0 + 10} y={g.ey - 3.5} width={ex1 - ex0 - 20} height="3" />
               </g>
-            )}
-          </>
-        )}
-        <ellipse cx={ultra ? 40 : 42} cy={ultra ? 24 : 30} rx={ultra ? 14 : 11} ry="6" fill="var(--surface)" opacity="0.2" transform={`rotate(-24 ${ultra ? 40 : 42} ${ultra ? 24 : 30})`} />
-        {/* face plate */}
-        <rect x={g.plate.x} y={g.plate.y} width={g.plate.w} height={g.plate.h} rx={g.plate.r} fill="var(--surface)" />
-        <Brows expr={look.expr} ex={g.ex} ey={g.ey} ultra={ultra} squint={look.squint} />
-        {!look.sunglasses && (
-          <>
-            <Eye x={ex0} y={g.ey} kind={kind} k={`l${kind}`} />
-            <Eye x={ex1} y={g.ey} kind={kind} k={`r${kind}`} />
-          </>
-        )}
-        {ultra && !look.sunglasses && (
-          <g fill="none" stroke={INK} strokeWidth="2.2" className={cn(look.adjust && "cp-adjust")}>
-            <circle cx={ex0} cy={g.ey} r="9.6" />
-            <circle cx={ex1} cy={g.ey} r="9.6" />
-            <path d={`M${ex0 + 9.6} ${g.ey - 1}q${(ex1 - ex0 - 19.2) / 2} -3 ${ex1 - ex0 - 19.2} 0`} />
-            <path d={`M${ex0 - 6} ${g.ey - 6}q3 -2 6 -1`} stroke="var(--surface)" strokeWidth="1.6" opacity="0.0" />
+              <path d={`M${ex0 - 7} ${g.ey - 4}l6 -1.6M${ex1 - 7} ${g.ey - 4}l6 -1.6`} stroke="#fff" strokeWidth="1.8" strokeLinecap="round" opacity="0.5" />
+            </g>
+          )}
+          <g fill={accent} style={{ opacity: blushOn ? 0.36 : 0, transition: "opacity 0.4s" }}>
+            <ellipse cx={ex0 - 9} cy={g.ey + 11} rx="4.8" ry="3.1" />
+            <ellipse cx={ex1 + 9} cy={g.ey + 11} rx="4.8" ry="3.1" />
           </g>
-        )}
-        {look.sunglasses && (
-          <g fill="#15151a">
-            <rect x={ex0 - 10} y={g.ey - 7} width="20" height="14" rx="5.5" />
-            <rect x={ex1 - 10} y={g.ey - 7} width="20" height="14" rx="5.5" />
-            <rect x={ex0 + 9} y={g.ey - 3} width={ex1 - ex0 - 18} height="2.8" />
-            <path d={`M${ex0 - 6} ${g.ey - 4}l5 -1M${ex1 - 6} ${g.ey - 4}l5 -1`} stroke="#fff" strokeWidth="1.6" strokeLinecap="round" opacity="0.55" />
-          </g>
-        )}
-        {happyBlush && (
-          <g fill={accent} opacity="0.3">
-            <ellipse cx={ex0 - 8} cy={g.ey + 9} rx="4.6" ry="3" />
-            <ellipse cx={ex1 + 8} cy={g.ey + 9} rx="4.6" ry="3" />
-          </g>
-        )}
-        <Mouth expr={look.expr} x={60} y={g.my} ultra={ultra} />
-        {look.expr === "laughing" && <path className="cp-tear" d={`M${ex1 + 6} ${g.ey + 3}q3 4 0 7q-3 -3 0 -7z`} fill="var(--owned)" opacity="0.7" />}
-        {/* graduation cap */}
-        {!ultra && look.cap && (
-          <g>
-            <path d="M42 22h36l-3 10q-15 6 -30 0z" fill="#17203a" />
-            <path d="M28 22l32 -13l32 13l-32 13z" fill="#202b4d" stroke="#0e1426" strokeWidth="1" />
-            <circle cx="60" cy="22" r="2" fill="var(--rented)" />
-            <path d="M60 22l28 4v12" stroke="var(--rented)" strokeWidth="1.8" fill="none" strokeLinecap="round" />
-            <circle cx="88" cy="40" r="2.6" fill="var(--rented)" />
-          </g>
-        )}
-        {/* the night lamp: a small headlamp and a soft cone of light */}
-        {!ultra && look.lamp && (
-          <g>
-            <path d="M26 44l-16 40l30 -8z" fill="var(--warn)" opacity="0.16" className="cp-glow" />
-            <path d="M28 40q-4 -10 6 -22" fill="none" stroke="var(--ink-2)" strokeWidth="1.8" strokeLinecap="round" />
-            <circle cx="26" cy="42" r="12" fill="var(--warn)" opacity="0.18" className="cp-glow" />
-            <rect x="20" y="37" width="11" height="9" rx="3.5" fill="var(--warn)" stroke={INK} strokeWidth="1.4" />
-          </g>
-        )}
-        {/* sweat drop, pop-ups and the rest of what an expression adds around the head */}
-        {look.sweat && <path className="cp-drop" d={`M${ultra ? 96 : 90} 26q-4 6 0 9q4 -3 0 -9z`} fill="var(--owned)" opacity="0.75" />}
+          <Mouth look={look} x={60} y={g.my} ultra={ultra} talking={talking && live} />
+          {look.expr === "laughing" && <path className="cp-tear" d={`M${ex1 + 7} ${g.ey + 4}q3 4 0 7q-3 -3 0 -7z`} fill="var(--owned)" opacity="0.7" />}
+          {!ultra && look.cap && (
+            <g>
+              <path d="M42 22h36l-3 10q-15 6 -30 0z" fill="#17203a" />
+              <path d="M28 22l32 -13l32 13l-32 13z" fill="#202b4d" stroke="#0e1426" strokeWidth="1" />
+              <circle cx="60" cy="22" r="2" fill="var(--rented)" />
+              <path d="M60 22l28 4v12" stroke="var(--rented)" strokeWidth="1.8" fill="none" strokeLinecap="round" />
+              <circle cx="88" cy="40" r="2.6" fill="var(--rented)" />
+            </g>
+          )}
+          {!ultra && look.lamp && (
+            <g>
+              <path d="M26 44l-16 40l30 -8z" fill="var(--warn)" opacity="0.16" className={cn(live && "cp-glow")} />
+              <path d="M28 40q-4 -10 6 -22" fill="none" stroke="var(--ink-2)" strokeWidth="1.8" strokeLinecap="round" />
+              <circle cx="26" cy="42" r="12" fill="var(--warn)" opacity="0.18" className={cn(live && "cp-glow")} />
+              <rect x="20" y="37" width="11" height="9" rx="3.5" fill="var(--warn)" stroke={INK} strokeWidth="1.4" />
+            </g>
+          )}
+        </g>
+        {look.sweat && <path className={cn(live && "cp-drop")} d={`M${ultra ? 98 : 92} 26q-4 6 0 9q4 -3 0 -9z`} fill="var(--owned)" opacity="0.75" />}
         {look.expr === "thinking" && (
           <g fill="var(--ink-2)">
             <circle className={cn(live && "cp-dot")} cx="94" cy="20" r="2.4" />

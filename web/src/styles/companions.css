@@ -40,6 +40,108 @@
 .cp-spark {
   animation: cp-spark 1.1s ease-out both;
 }
+/* eyelids: the top lid closes for a blink and comes back to its resting amount (--rest) */
+.cp-lid {
+  animation: cp-lid 5s infinite;
+}
+@keyframes cp-lid {
+  0%, 93%, 100% { transform: scaleY(var(--rest, 0)); }
+  96% { transform: scaleY(1); }
+}
+/* talking: three mouth shapes, one visible at a time */
+.cp-v {
+  animation: cp-v 0.6s steps(1, end) infinite;
+}
+@keyframes cp-v {
+  0%, 33.3% { opacity: 1; }
+  33.4%, 100% { opacity: 0; }
+}
+/* the walk cycle: a quicker bob, feet that alternate, and a lean (the lean is a motion value on the wrapper) */
+.cp-walking .cp-bob {
+  animation: cp-walk 0.34s ease-in-out infinite;
+}
+.cp-gliding .cp-bob {
+  animation: cp-glide 1.2s ease-in-out infinite;
+}
+.cp-walking .cp-foot-a,
+.cp-walking .cp-foot-b {
+  animation: cp-step 0.34s ease-in-out infinite;
+}
+.cp-walking .cp-foot-b {
+  animation-delay: -0.17s;
+}
+.cp-walking .cp-chip,
+.cp-walking .cp-antenna {
+  animation-duration: 0.34s;
+}
+@keyframes cp-walk {
+  0%, 100% { transform: translateY(0) rotate(-1.2deg); }
+  50% { transform: translateY(-3px) rotate(1.2deg); }
+}
+@keyframes cp-glide {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+@keyframes cp-step {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3.5px); }
+}
+/* secondary motion: the adapter chip and the antenna wobble, the glasses glint */
+.cp-chip {
+  animation: cp-wobble 2.6s ease-in-out infinite;
+}
+.cp-antenna {
+  animation: cp-wobble 1.9s ease-in-out infinite reverse;
+}
+@keyframes cp-wobble {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+.cp-glint {
+  animation: cp-glint 7s ease-in-out infinite;
+}
+@keyframes cp-glint {
+  0%, 82%, 100% { opacity: 0.15; transform: translate(0, 0); }
+  90% { opacity: 1; transform: translate(9px, 4px); }
+}
+.cp-flail-a {
+  animation: cp-flail 0.22s ease-in-out infinite alternate;
+}
+.cp-flail-b {
+  animation: cp-flail 0.22s ease-in-out infinite alternate-reverse;
+}
+@keyframes cp-flail {
+  from { transform: rotate(-16deg); }
+  to { transform: rotate(16deg); }
+}
+/* micro-expressions */
+.cp-dart {
+  animation: cp-dart 0.8s ease-in-out both;
+}
+@keyframes cp-dart {
+  0%, 100% { translate: 0 0; }
+  20% { translate: -2.2px 0; }
+  45% { translate: 2.2px -0.6px; }
+  70% { translate: -1px 0.8px; }
+}
+.cp-twitch {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: cp-twitch 0.5s ease-out both;
+}
+@keyframes cp-twitch {
+  0%, 100% { transform: scale(1, 1); }
+  40% { transform: scale(1.18, 0.9); }
+}
+.cp-hshake {
+  animation: cp-hshake 0.55s ease-in-out both;
+}
+@keyframes cp-hshake {
+  0%, 100% { rotate: 0deg; }
+  20% { rotate: -6deg; }
+  45% { rotate: 6deg; }
+  70% { rotate: -3deg; }
+}
 .cp-root[data-paused="true"] * {
   animation-play-state: paused !important;
 }

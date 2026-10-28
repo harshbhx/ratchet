@@ -14,6 +14,8 @@ const placement = await import("../src/components/companions/placement.ts");
 const reactions = await import("../src/components/companions/reactions.ts");
 const story = await import("../src/components/companions/story.ts");
 const game = await import("../src/components/companions/game.ts");
+const perch = await import("../src/components/companions/perch.ts");
+const scroll = await import("../src/components/companions/scroll.ts");
 const { parseExams } = await import("../src/lib/exams-model.ts");
 
 const exams = parseExams(readFileSync(new URL("../src/data/exams.json", import.meta.url), "utf8"));
@@ -348,4 +350,113 @@ test("the companions' browser storage lives in one file, behind try/catch, with 
   const text = readFileSync(new URL("companion-storage.ts", src), "utf8");
   assert.deepEqual([...text.matchAll(/_KEY = "([^"]+)"/g)].map((m) => m[1]).sort(), ["ratchet-companions-hidden", "ratchet-companions-session"]);
   assert.equal((text.match(/\btry\b/g) ?? []).length, (text.match(/\bcatch\b/g) ?? []).length);
+});
+
+// ---------- perches, following the scroll, the auto-jump ----------
+const VP = { w: 1280, h: 800 };
+const NANO = { w: 84, h: 91 };
+const ULTRA = { w: 108, h: 117 };
+const noZones = { cta: [], text: [] };
+const card = (id, left, top, right = left + 400, bottom = top + 200) => ({ id, kind: "card", rect: { left, top, right, bottom } });
+
+test("Nano perches on the right end of a card's top edge, Ultra on the left end", () => {
+  const items = [card("a", 100, 400, 700)];
+  const n = perch.candidatesFromItems(items, "nano");
+  const u = perch.candidatesFromItems(items, "ultra");
+  assert.deepEqual([n[0].x, n[0].y, u[0].x, u[0].y], [664, 400, 140, 400]);
+  assert.ok(n.every((c) => c.x > 120 && c.x < 680));
+});
+
+test("the nearest good perch wins: the middle of the screen, the right side for Nano, the left for Ultra", () => {
+  const items = [card("far-top", 800, 120, 1200), card("mid-right", 700, 520, 1200), card("mid-left", 60, 380, 560), card("low", 700, 740, 1200)];
+  const ctx = { vp: VP, size: NANO, zones: noZones };
+  const n = perch.choosePerch(perch.candidatesFromItems(items, "nano"), "nano", ctx);
+  assert.equal(n.cand.id.split(":")[0], "mid-right");
+  const u = perch.choosePerch(perch.candidatesFromItems(items, "ultra"), "ultra", { ...ctx, size: ULTRA });
+  assert.equal(u.cand.id.split(":")[0], "mid-left");
+});
+
+test("a perch under a call to action or on body text loses to a clear one; one outside the viewport is never chosen", () => {
+  const items = [card("a", 700, 500, 1200), card("b", 700, 600, 1200)];
+  const cands = perch.candidatesFromItems(items, "nano");
+  const best = perch.choosePerch(cands, "nano", { vp: VP, size: NANO, zones: noZones }).cand;
+  const blocked = { cta: [{ left: best.x - 50, right: best.x + 50, top: best.y - 100, bottom: best.y - 5 }], text: [] };
+  const next = perch.choosePerch(cands, "nano", { vp: VP, size: NANO, zones: blocked }).cand;
+  assert.notEqual(next.id, best.id);
+  const text = { cta: [], text: [{ left: best.x - 50, right: best.x + 50, top: best.y - 100, bottom: best.y - 5 }] };
+  assert.notEqual(perch.choosePerch(cands, "nano", { vp: VP, size: NANO, zones: text }).cand.id, best.id);
+  const off = [{ id: "x", kind: "floor", x: 10, y: 20 }, { id: "y", kind: "floor", x: 1300, y: 790 }, { id: "z", kind: "floor", x: 640, y: 30 }];
+  assert.equal(perch.choosePerch(off, "nano", { vp: VP, size: NANO, zones: noZones }), null, "under the header, off the side");
+  assert.ok(perch.perchCost({ id: "w", kind: "floor", x: 640, y: 794 }, "nano", { vp: VP, size: NANO, zones: noZones }) < Infinity);
+});
+
+test("the current perch is kept unless another is clearly better, and the two keep apart", () => {
+  const items = [card("a", 700, 500, 1200), card("b", 700, 520, 1200)];
+  const cands = perch.candidatesFromItems(items, "nano");
+  const first = perch.choosePerch(cands, "nano", { vp: VP, size: NANO, zones: noZones }).cand;
+  const other = cands.find((c) => c.id !== first.id);
+  const kept = perch.choosePerch(cands, "nano", { vp: VP, size: NANO, zones: noZones, current: other.id }).cand;
+  assert.equal(kept.id, other.id, "hysteresis: a small gain does not move him");
+  const crowded = perch.choosePerch(cands, "nano", { vp: VP, size: NANO, zones: noZones, other: { x: first.x, y: first.y } }).cand;
+  assert.notEqual(crowded.id, first.id);
+  assert.ok(perch.choosePerch(cands, "nano", { vp: VP, size: NANO, zones: noZones }, 0.99).cand);
+  assert.equal(perch.choosePerch([], "nano", { vp: VP, size: NANO, zones: noZones }), null);
+});
+
+test("floor perches exist at each side; at the very top and the foot of the page they gather", () => {
+  const n = perch.floorCandidates("nano", VP);
+  const u = perch.floorCandidates("ultra", VP);
+  assert.ok(n.every((c) => c.x > VP.w / 2) && u.every((c) => c.x < VP.w / 2));
+  assert.deepEqual([perch.gathers(0, 800, 9000), perch.gathers(79, 800, 9000), perch.gathers(80, 800, 9000), perch.gathers(8200, 800, 9000), perch.gathers(8159, 800, 9000)], [true, true, false, true, false]);
+  const pair = perch.gatherPair(VP, { nano: NANO, ultra: ULTRA }, noZones);
+  assert.ok(Math.abs(pair.nano.x - pair.ultra.x) < 140 && pair.nano.y === pair.ultra.y);
+  const cta = { left: 1000, right: 1280, top: 600, bottom: 800 };
+  const away = perch.gatherPair(VP, { nano: NANO, ultra: ULTRA }, { cta: [cta], text: [] });
+  assert.ok(away.nano.x < 1000 - 40, "they gather away from a call to action");
+});
+
+test("a perch follows the content as the page scrolls, and is replaced when it slides out of the band", () => {
+  assert.equal(perch.followY(500, 0, 120), 380);
+  assert.equal(perch.followY(500, 300, 300), 500);
+  assert.equal(perch.followY(500, 300, 100), 700, "scrolling back up moves it down");
+  assert.equal(perch.needsRepick(380, 800), false);
+  assert.equal(perch.needsRepick(60, 800), true, "under the header");
+  assert.equal(perch.needsRepick(795, 800), true, "off the bottom");
+});
+
+test("travel: Nano walks short steps and jumps far or when the page is flying; Ultra always glides", () => {
+  const a = { x: 900, y: 500 };
+  const near = perch.travelPlan(a, { x: 960, y: 520 }, "nano", false);
+  assert.equal(near.mode, "walk");
+  assert.ok(near.ms >= 500 && near.arc === 0);
+  assert.equal(perch.travelPlan(a, { x: 960, y: 700 }, "nano", false).mode, "jump");
+  assert.equal(perch.travelPlan(a, { x: 300, y: 500 }, "nano", false).mode, "jump");
+  const fast = perch.travelPlan(a, { x: 960, y: 520 }, "nano", true);
+  assert.equal(fast.mode, "jump");
+  assert.ok(fast.arc >= 40 && fast.arc <= 140 && fast.ms >= 420 && fast.ms <= 900);
+  const g = perch.travelPlan(a, { x: 100, y: 100 }, "ultra", true);
+  assert.deepEqual([g.mode, g.arc], ["glide", 0]);
+  assert.ok(g.ms >= 650 && g.ms <= 1700);
+});
+
+test("scroll speed from samples, and when Nano jumps to keep up", () => {
+  let s = [];
+  assert.equal(scroll.velocity(s), 0);
+  s = scroll.pushSample(s, 0, 0);
+  assert.equal(scroll.velocity(s), 0, "one sample says nothing");
+  s = scroll.pushSample(s, 50, 100);
+  assert.equal(Math.round(scroll.velocity(s)), 2000);
+  s = scroll.pushSample(s, 400, 110);
+  assert.ok(s.length < 3, "old samples fall out of the window");
+  assert.deepEqual([scroll.scrollMode(10), scroll.scrollMode(500), scroll.scrollMode(2500)], ["still", "slow", "fast"]);
+  assert.equal(scroll.shouldAutoJump(2500, 1000), true);
+  assert.equal(scroll.shouldAutoJump(2500, 100), false, "he must land first");
+  assert.equal(scroll.shouldAutoJump(900, 5000), false, "a slow scroll does not trigger it");
+  assert.ok(scroll.repickEveryMs("nano", 3000) < scroll.repickEveryMs("ultra", 3000), "Nano keeps up, Ultra rarely moves");
+  assert.ok(scroll.repickEveryMs("nano", 100) >= 600);
+});
+
+test("a micro-expression field exists at rest", () => {
+  assert.equal(model.REST.micro, "none");
+  assert.ok(model.POSES.includes("sip"));
 });

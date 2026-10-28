@@ -3,11 +3,11 @@
 
 export type Who = "nano" | "ultra";
 export type Expr = "idle" | "happy" | "thinking" | "proud" | "sleepy" | "surprised" | "laughing" | "determined" | "sad" | "wave";
-export type Pose = "stand" | "jump" | "pointLeft" | "pointRight" | "carry" | "stop" | "hug" | "pat";
+export type Pose = "stand" | "jump" | "pointLeft" | "pointRight" | "carry" | "stop" | "hug" | "pat" | "sip";
 export type Held = "none" | "book" | "ball" | "card" | "papers" | "mug";
 
 export const EXPRESSIONS: readonly Expr[] = ["idle", "happy", "thinking", "proud", "sleepy", "surprised", "laughing", "determined", "sad", "wave"];
-export const POSES: readonly Pose[] = ["stand", "jump", "pointLeft", "pointRight", "carry", "stop", "hug", "pat"];
+export const POSES: readonly Pose[] = ["stand", "jump", "pointLeft", "pointRight", "carry", "stop", "hug", "pat", "sip"];
 
 /** Everything that changes how one character is drawn. */
 export interface Look {
@@ -24,9 +24,11 @@ export interface Look {
   pop: "none" | "!" | "?" | "sparkle" | "heart";
   /** Ultra's glasses adjust (one short animation). */
   adjust: boolean;
+  /** A quick one-off: eyes dart, the smile twitches, the head shakes. */
+  micro: "none" | "dart" | "twitch" | "shake";
 }
 
-export const REST: Look = { expr: "idle", pose: "stand", held: "none", sunglasses: false, squint: false, lamp: false, cap: false, blush: false, sweat: false, pop: "none", adjust: false };
+export const REST: Look = { expr: "idle", pose: "stand", held: "none", sunglasses: false, squint: false, lamp: false, cap: false, blush: false, sweat: false, pop: "none", adjust: false, micro: "none" };
 
 /** Local night is Night School: 20:00 to 05:59. */
 export function isNight(d: Date): boolean {

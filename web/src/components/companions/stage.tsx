@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, animate, motion, useReducedMotion } from "motion/react";
 import { useLocation, useNavigate } from "react-router";
 import examsText from "@/data/exams.json?raw";
 import { parseExams } from "@/lib/exams-model";
@@ -14,6 +14,8 @@ import { readSession, writeSession, type Session } from "./companion-storage";
 import type { GamePhase } from "./game";
 import { LESSON_TOTAL, earn, lessonsComplete, lessonsForSection, type LessonId } from "./lessons";
 import { createBurst } from "./physics";
+import type { Move } from "./perch";
+import { useRoamer, useRoaming } from "./roaming";
 import { AVOID_SELECTOR, chooseSlot, type Slot } from "./placement";
 import { DUO_LINES, DUO_MOVES, EASTER_EGG, WATCHED_SECTIONS, liveReaction, pokeReaction, sectionReactions, shouldReact, type DuoMove, type Poke } from "./reactions";
 import { ProgressRing, Sheet } from "./sheet";
@@ -23,8 +25,13 @@ import { StoryBar } from "./story-bar";
 import { useActor } from "./actor";
 
 const FACTS = factsFromExams(parseExams(examsText));
-const SHELF = { w: 212, h: 156 };
 const DOCK = { w: 64, h: 64 };
+const RING = { w: 44, h: 44 };
+/** The character rectangles (the SVG is 120 by 130): Nano 84 wide on a desktop, 48 on a phone; Ultra 108 and 60. */
+const SIZES = {
+  desktop: { nano: { w: 84, h: 91 }, ultra: { w: 108, h: 117 } },
+  phone: { nano: { w: 48, h: 52 }, ultra: { w: 60, h: 65 } },
+};
 const THROWN: Record<Who, string[]> = {
   nano: ["Wheee!", "Again, again!", "I'm a student, not luggage!"],
   ultra: ["Gently, please.", "Put me down. Dignity first.", "Noted. Do not repeat."],
@@ -57,13 +64,19 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const [sheet, setSheet] = useState(false);
   const [burst, setBurst] = useState(0);
   const [slot, setSlot] = useState<Slot>({ side: "right", lift: 0, clear: true });
-  const [barH, setBarH] = useState(0);
+  const [moving, setMoving] = useState<Record<Who, Move | null>>({ nano: null, ultra: null });
+  const [visible, setVisible] = useState<Record<Who, boolean>>({ nano: true, ultra: true });
+  const [mobileActive, setMobileActive] = useState<Who>("nano");
   const [story, dispatch] = useReducer((s: typeof STORY_IDLE, a: Parameters<typeof storyReducer>[1]) => storyReducer(s, a, 9), STORY_IDLE);
   const [wantStory, setWantStory] = useState(false);
 
   const nano = useActor();
   const ultra = useActor();
   const actors = useMemo(() => ({ nano, ultra }), [nano, ultra]);
+  const rn = useRoamer();
+  const ru = useRoamer();
+  const roamers = useMemo(() => ({ nano: rn, ultra: ru }), [rn, ru]);
+  const dockRef = useRef<HTMLDivElement | null>(null);
   const steps = useMemo(() => storySteps(FACTS), []);
 
   const overTimers = useRef<Record<Who, number>>({ nano: 0, ultra: 0 });
@@ -367,17 +380,6 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     return () => window.removeEventListener("keydown", on);
   }, [story.status, exitStory]);
 
-  useEffect(() => {
-    if (story.status === "idle") return setBarH(0);
-    const el = barRef.current;
-    if (!el) return;
-    const measure = () => setBarH(el.getBoundingClientRect().height + 8);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [story.status, phone]);
-
   // ---------- what the page tells us ----------
   useEffect(() => {
     const on = (e: Event) => {
@@ -436,7 +438,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
 
   // The shelf stays clear of the primary calls to action.
   useEffect(() => {
-    const size = phone ? DOCK : SHELF;
+    const size = phone || reduce ? DOCK : RING;
     let raf = 0;
     const run = () => {
       raf = 0;
@@ -461,7 +463,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
       window.removeEventListener("scroll", req);
       window.removeEventListener("resize", req);
     };
-  }, [phone, pathname]);
+  }, [phone, reduce, pathname]);
 
   // Reactions to the landing sections: lessons for every key section, a comment once per section per visit.
   useEffect(() => {
@@ -525,7 +527,43 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     };
   }, [pathname, act, busy, earnLesson, runLines]);
 
-  // Idle life: a greeting, then small moves every so often, and banter every 25 to 40 seconds.
+  // ---------- roaming ----------
+  const sizes = phone ? SIZES.phone : SIZES.desktop;
+  const roam = useRoaming({
+    enabled: plan.physics,
+    phone,
+    active: mobileActive,
+    sizes,
+    actors,
+    roamers,
+    extraZones: () => {
+      const out: { left: number; top: number; right: number; bottom: number }[] = [];
+      const bar = barRef.current?.getBoundingClientRect();
+      if (bar) out.push({ left: bar.left, top: bar.top, right: bar.right, bottom: bar.bottom });
+      const d = dockRef.current?.getBoundingClientRect();
+      if (d && d.width) out.push({ left: d.left, top: d.top, right: d.right, bottom: d.bottom });
+      return out;
+    },
+    onMove: (who, m) => setMoving((o) => (o[who] === m ? o : { ...o, [who]: m })),
+    onLook: act,
+    onVisible: (who, v) => setVisible((o) => (o[who] === v ? o : { ...o, [who]: v })),
+    hold: () => live.current.sheet || dragging.current,
+  });
+
+  // On a phone one of them walks at a time, the other waits in the dock.
+  useEffect(() => {
+    if (!phone || !plan.physics) return;
+    const id = window.setInterval(() => setMobileActive((w) => (w === "nano" ? "ultra" : "nano")), 30_000);
+    return () => window.clearInterval(id);
+  }, [phone, plan.physics]);
+  useEffect(() => {
+    roam.repick();
+    const id = window.setTimeout(roam.repick, 700);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname, mobileActive]);
+
+  // Idle life: a greeting, then small moves every so often, and banter every 25 to 40 seconds (Ultra walks over to Nano to talk).
   useEffect(() => {
     if (plan.autonomous) {
       act("nano", { expr: "wave" }, 2600);
@@ -534,27 +572,46 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     const picker = createPicker(pool);
     let talk = 0;
     let move = 0;
+    let rel = 0;
     const fireTalk = () => {
       if (busy() || duoBusy.current || speaking.current) {
         talk = window.setTimeout(fireTalk, 4000);
         return;
       }
       const b = picker.next();
-      if (b) runLines(b.lines);
+      if (b) {
+        const total = b.lines.reduce((n, l) => n + readMs(l.text) + 250, 0);
+        const walk = plan.physics && !phone;
+        if (walk) roam.meet();
+        window.setTimeout(() => runLines(b.lines), walk ? 1100 : 0);
+        window.clearTimeout(rel);
+        rel = window.setTimeout(roam.release, total + 1800);
+      }
       talk = window.setTimeout(fireTalk, nextDelayMs());
     };
     const fireMove = () => {
-      move = window.setTimeout(fireMove, 7000 + Math.random() * 7000);
+      move = window.setTimeout(fireMove, 6000 + Math.random() * 6000);
       if (!plan.autonomous || busy() || duoBusy.current || speaking.current) return;
       const r = Math.random();
-      if (r < 0.3) void nano.hop(26);
-      else if (r < 0.45) void ultra.nod();
-      else if (r < 0.62) void nano.slide(10).then(() => sleep(500)).then(() => nano.home());
-      else if (r < 0.74) act("nano", { expr: "thinking", pop: "?" }, 1800);
-      else if (r < 0.82 && !dark) {
+      if (r < 0.14) void nano.hop(26);
+      else if (r < 0.24) {
+        // excited: three little bounces
+        act("nano", { expr: "happy", pop: "sparkle" }, 2000);
+        void nano.hop(20).then(() => nano.hop(16)).then(() => nano.hop(12));
+      } else if (r < 0.31) void ultra.nod();
+      else if (r < 0.4) {
+        // a stretch
+        act("nano", { pose: "jump", expr: "happy" }, 1100);
+        void animate(nano.sy, [1, 1.1, 1], { duration: 1 });
+      } else if (r < 0.5) act("ultra", { pose: "sip", held: "mug", expr: "happy" }, 2600);
+      else if (r < 0.6) roam.wander("nano");
+      else if (r < 0.66) roam.wander("ultra");
+      else if (r < 0.72) act("nano", { expr: "thinking", pop: "?" }, 1800);
+      else if (r < 0.78 && !dark) {
         setSquinting(true);
         window.setTimeout(() => setSquinting(false), 1300);
-      } else if (r < 0.9) act("ultra", { adjust: true }, 900);
+      } else if (r < 0.84) act("ultra", { adjust: true }, 900);
+      else if (r < 0.92) act(Math.random() < 0.5 ? "nano" : "ultra", { micro: Math.random() < 0.5 ? "twitch" : "shake" }, 900);
       else void duo(DUO_MOVES[Math.floor(Math.random() * DUO_MOVES.length)]!);
     };
     talk = window.setTimeout(fireTalk, nextDelayMs());
@@ -562,8 +619,10 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     return () => {
       window.clearTimeout(talk);
       window.clearTimeout(move);
+      window.clearTimeout(rel);
     };
-  }, [night, plan.autonomous, dark, act, busy, duo, nano, ultra, runLines]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [night, plan.autonomous, plan.physics, phone, dark, act, busy, duo, nano, ultra, runLines]);
 
   useEffect(
     () => () => {
@@ -578,25 +637,60 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   // ---------- render ----------
   const n = session.lessons.ids.length;
   const storyOn = story.status !== "idle";
-  const size = phone ? DOCK : SHELF;
-  const lift = slot.lift + (storyOn && !phone ? barH : 0);
-  const shiftX = slot.side === "left" ? -(vw - 24 - size.w) : 0;
-  const move = reduce ? { duration: 0 } : ({ type: "spring", stiffness: 140, damping: 20 } as const);
+  const roaming = plan.physics;
+  const walkers: Who[] = !roaming ? [] : phone ? [mobileActive] : ["nano", "ultra"];
+  const shown = (w: Who) => walkers.includes(w) && visible[w];
+  // Which face the dock shows: the one not out walking (Nano when both are out or on reduced motion).
+  const dockWho: Who = phone && roaming ? (visible[mobileActive] ? (mobileActive === "nano" ? "ultra" : "nano") : mobileActive) : "nano";
+  const ringOnly = roaming && !phone;
+  const dockSize = ringOnly ? RING : DOCK;
+  const shiftX = slot.side === "left" ? -(vw - 24 - dockSize.w) : 0;
+  const dockMove = reduce ? { duration: 0 } : ({ type: "spring", stiffness: 140, damping: 20 } as const);
+  const speakerShownOnRoamer = !!speech && shown(speech.who);
 
-  const faces = (who: Who) => (
-    <Companion
-      who={who}
-      look={looks[who]}
-      size={who === "nano" ? 84 : 108}
-      actor={actors[who]}
-      live={plan.ambient}
-      draggable={plan.physics}
-      onPoke={() => poke(who)}
-      onJump={() => jump(who)}
-      onGrab={() => onGrab(who)}
-      onThrow={() => onThrow(who)}
-    />
-  );
+  const gazeFor = (who: Who) => {
+    if (!speech || speech.who === who || !shown(speech.who) || !shown(who)) return null;
+    const dx = roamers[speech.who].px.get() - roamers[who].px.get();
+    const dy = roamers[speech.who].py.get() - roamers[who].py.get();
+    const d = Math.hypot(dx, dy) || 1;
+    return { x: dx / d, y: dy / d };
+  };
+
+  const roamer = (who: Who) => {
+    const r = roamers[who];
+    const size = sizes[who];
+    const svgSize = phone ? (who === "nano" ? 48 : 60) : who === "nano" ? 84 : 108;
+    const left = r.px.get() < vw / 2;
+    return (
+      <motion.div
+        key={who}
+        style={{ x: r.px, y: r.py, width: size.w, height: size.h, marginLeft: -size.w / 2, marginTop: -size.h }}
+        className={`pointer-events-none fixed left-0 top-0 z-40 ${sheet || !visible[who] ? "invisible" : ""}`}
+      >
+        <AnimatePresence>
+          {speech?.who === who && <Bubble key={speech.text} who={who} text={speech.text} reduce={reduce} align={left ? "left" : "right"} />}
+        </AnimatePresence>
+        {who === "nano" && <Sparkles burst={burst} />}
+        <motion.div style={{ rotate: r.lean, originX: 0.5, originY: 1 }}>
+          <Companion
+            who={who}
+            look={looks[who]}
+            size={svgSize}
+            actor={actors[who]}
+            live={plan.ambient}
+            draggable={plan.physics}
+            moving={moving[who]}
+            talking={speech?.who === who}
+            gaze={gazeFor(who)}
+            onPoke={() => poke(who)}
+            onJump={() => jump(who)}
+            onGrab={() => onGrab(who)}
+            onThrow={() => onThrow(who)}
+          />
+        </motion.div>
+      </motion.div>
+    );
+  };
 
   return (
     <div className="cp-root contents" data-paused={tabHidden}>
@@ -604,49 +698,41 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
         {liveText}
       </div>
 
-      {!phone && (
+      {walkers.map((w) => roamer(w))}
+
+      {!(phone && storyOn) && (
         <motion.div
-          animate={{ x: shiftX, y: -lift }}
-          transition={move}
-          style={{ width: size.w, height: size.h }}
+          ref={dockRef}
+          animate={{ x: shiftX, y: -slot.lift }}
+          transition={dockMove}
+          style={{ width: dockSize.w, height: dockSize.h }}
           className={`pointer-events-none fixed bottom-3 right-3 z-40 ${sheet ? "invisible" : ""}`}
         >
-          <div aria-hidden className="absolute inset-x-2 bottom-0 h-2 rounded-full bg-line-strong/70" />
-          <div className="absolute inset-x-0 bottom-[5px] flex items-end justify-center gap-1">
-            <div className="relative">
-              <AnimatePresence>{speech?.who === "nano" && <Bubble key={speech.text} who="nano" text={speech.text} reduce={reduce} />}</AnimatePresence>
-              {faces("nano")}
-            </div>
-            <div className="relative">
-              <AnimatePresence>{speech?.who === "ultra" && <Bubble key={speech.text} who="ultra" text={speech.text} reduce={reduce} />}</AnimatePresence>
-              {faces("ultra")}
-            </div>
-          </div>
-          <Sparkles burst={burst} />
-          <button
-            type="button"
-            onClick={() => setSheet(true)}
-            aria-label={`Nano learned ${n} of ${LESSON_TOTAL} lessons from your visit. Open Nano and Ultra.`}
-            className="pointer-events-auto absolute bottom-0 left-[calc(50%-17px)] rounded-full"
-          >
-            <ProgressRing n={n} size={34} className="drop-shadow" />
-          </button>
-        </motion.div>
-      )}
-
-      {phone && !storyOn && (
-        <motion.div animate={{ x: shiftX, y: -lift }} transition={move} style={{ width: size.w, height: size.h }} className={`pointer-events-none fixed bottom-3 right-3 z-40 ${sheet ? "invisible" : ""}`}>
           <AnimatePresence>
-            {speech && <Bubble key={speech.text} who={speech.who} text={speech.text} reduce={reduce} className="!left-auto !right-0" />}
+            {speech && !speakerShownOnRoamer && <Bubble key={speech.text} who={speech.who} text={speech.text} reduce={reduce} align="right" />}
           </AnimatePresence>
           <button
             type="button"
             onClick={() => setSheet(true)}
-            aria-label={`Open Nano and Ultra. Nano learned ${n} of ${LESSON_TOTAL} lessons from your visit.`}
-            className="pointer-events-auto relative flex size-16 items-end justify-center overflow-visible rounded-full border border-line-strong bg-surface shadow-card"
+            aria-label={
+              ringOnly
+                ? `Nano learned ${n} of ${LESSON_TOTAL} lessons from your visit. Open Nano and Ultra.`
+                : `Open Nano and Ultra. Nano learned ${n} of ${LESSON_TOTAL} lessons from your visit.`
+            }
+            className={
+              ringOnly
+                ? "pointer-events-auto absolute inset-0 flex items-center justify-center rounded-full border border-line-strong bg-surface shadow-card"
+                : "pointer-events-auto relative flex size-16 items-end justify-center overflow-visible rounded-full border border-line-strong bg-surface shadow-card"
+            }
           >
-            <Character who="nano" look={looks.nano} size={50} live={plan.ambient} className="mb-1" />
-            <ProgressRing n={n} size={26} className="absolute -right-1 -top-1" />
+            {ringOnly ? (
+              <ProgressRing n={n} size={34} />
+            ) : (
+              <>
+                <Character who={dockWho} look={looks[dockWho]} size={50} live={plan.ambient} talking={speech?.who === dockWho} className="mb-1" />
+                <ProgressRing n={n} size={26} className="absolute -right-1 -top-1" />
+              </>
+            )}
           </button>
         </motion.div>
       )}

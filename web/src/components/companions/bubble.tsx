@@ -5,8 +5,9 @@ import type { Who } from "./companion-model";
  * A speech bubble with a springy tail. Decoration for sighted visitors (`aria-hidden`): the same words go to the stage's polite
  * live region. Under reduced motion it simply appears.
  */
-export function Bubble({ who, text, reduce, className = "" }: { who: Who; text: string; reduce: boolean; className?: string }) {
-  const nano = who === "nano";
+export function Bubble({ who, text, reduce, align, className = "" }: { who: Who; text: string; reduce: boolean; align?: "left" | "right"; className?: string }) {
+  const nano = align ? align === "left" : who === "nano";
+  const isNano = who === "nano";
   return (
     <motion.div
       aria-hidden
@@ -19,8 +20,8 @@ export function Bubble({ who, text, reduce, className = "" }: { who: Who; text: 
     >
       <div className="relative rounded-2xl border border-line-strong bg-surface px-3 py-2 text-[13px] leading-snug text-ink shadow-card">
         <span className="mb-0.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted">
-          <span className={`size-1.5 rounded-full ${nano ? "bg-owned" : "bg-rented"}`} />
-          {nano ? "Nano" : "Ultra"}
+          <span className={`size-1.5 rounded-full ${isNano ? "bg-owned" : "bg-rented"}`} />
+          {isNano ? "Nano" : "Ultra"}
         </span>
         {text}
         <span
