@@ -52,9 +52,6 @@ const ask = (src: string) =>
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
     </button>
   </div>
-  <a class="rt-pa__tour" href="/?tour=1" aria-label="Take the guided tour of the docs" title="Take the guided tour">
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></svg>
-  </a>
 
   <div class="rt-pa__menu" id="rt-pa-menu" role="menu" aria-label="Page actions" hidden>
     <div class="rt-pa__head">
@@ -481,24 +478,6 @@ const ask = (src: string) =>
     border-color: var(--rt-line, var(--sl-color-hairline));
     background: var(--rt-surface-2, var(--sl-color-gray-6));
     outline: none;
-  }
-  .rt-pa__tour {
-    display: grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    border: 1px solid var(--rt-line, var(--sl-color-hairline));
-    border-radius: 999px;
-    color: var(--sl-color-gray-2);
-    transition: color 0.15s, border-color 0.15s;
-  }
-  .rt-pa__tour:hover {
-    color: var(--sl-color-white);
-    border-color: var(--rt-owned, var(--sl-color-accent));
-  }
-  .rt-pa__tour:focus-visible {
-    outline: 2px solid var(--sl-color-accent);
-    outline-offset: 2px;
   }
   .rt-pa__row--wide {
     grid-column: 1 / -1;
