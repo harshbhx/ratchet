@@ -1,4 +1,4 @@
-import{f as e,g as t,i as n,p as r}from"./utils-B9eYnuci.js";import{t as i}from"./use-reduced-motion-dG4TTJkp.js";var a=t(r(),1),o=e(),s=`#version 300 es
+import{h as e,m as t,o as n,v as r}from"./utils-CnmWD783.js";import{t as i}from"./use-reduced-motion-Bb5SJzY4.js";var a=r(e(),1),o=t(),s=`#version 300 es
 in vec2 p;
 void main() { gl_Position = vec4(p, 0.0, 1.0); }`,c=`#version 300 es
 precision highp float;

@@ -4,10 +4,10 @@ import { Link } from "react-router";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUpRight, X } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
-import { ButtonA } from "@/components/ui/button";
 import { useTheme } from "@/lib/hooks";
 import { DUR, EASE } from "@/lib/motion";
-import { cn, LIVE_URL } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { LiveButton, ThemeIcon, type GatewayState } from "./site-header";
 import { isCurrentRoute, MORE_NAV, PAGE_NAV, STORY_NAV, type NavItem } from "./nav-model";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -22,12 +22,14 @@ export function MobileMenu({
   onClose,
   pathname,
   activeSection,
+  gateway,
   returnFocus,
 }: {
   open: boolean;
   onClose: () => void;
   pathname: string;
   activeSection: string | null;
+  gateway: GatewayState;
   returnFocus: RefObject<HTMLElement | null>;
 }) {
   const titleId = useId();
@@ -138,16 +140,25 @@ export function MobileMenu({
     <AnimatePresence>
       {open && (
         <motion.div
-          ref={panel}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={titleId}
-          className="fixed inset-0 z-50 flex flex-col bg-bg md:hidden"
+          className="fixed inset-0 z-50 md:hidden"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0, transition: { duration: DUR.fast * 0.75, ease: EASE } }}
           transition={{ duration: DUR.fast, ease: EASE }}
         >
+          {/* The scrim: a tap outside the sheet closes it. Not a tab stop; Escape and the Close button are the keyboard ways. */}
+          <div aria-hidden onClick={onClose} className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]" />
+          <motion.div
+            ref={panel}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            className="absolute inset-y-0 right-0 flex w-full max-w-sm flex-col border-l border-line bg-bg shadow-[-24px_0_48px_-24px_rgb(0_0_0/0.35)] sm:rounded-l-3xl"
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%", transition: { duration: DUR.fast * 0.75, ease: EASE } }}
+            transition={{ duration: DUR.base, ease: EASE }}
+          >
           <h2 id={titleId} className="sr-only">
             Menu
           </h2>
@@ -179,19 +190,11 @@ export function MobileMenu({
           </div>
           <div className="shrink-0 border-t border-line bg-bg px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
             <div className="flex items-center gap-3">
-              <ButtonA
-                href={LIVE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                size="lg"
-                className="flex-1"
-                aria-label="Live gateway, opens in a new tab"
-              >
-                Live gateway <ArrowUpRight aria-hidden />
-              </ButtonA>
+              <LiveButton state={gateway} pathname={pathname} size="lg" className="flex-1" />
               <SheetThemeToggle />
             </div>
           </div>
+          </motion.div>
         </motion.div>
       )}
     </AnimatePresence>,
@@ -204,9 +207,10 @@ function SheetThemeToggle() {
   return (
     <button
       type="button"
-      onClick={toggle}
-      className="inline-flex h-12 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface px-4 text-[15px] font-medium text-ink transition-colors hover:bg-surface-2 focus-visible:rounded-full"
+      onClick={(e) => toggle(e.currentTarget)}
+      className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-full border border-line-strong bg-surface px-4 text-[15px] font-medium text-ink transition-colors hover:bg-surface-2 focus-visible:rounded-full"
     >
+      <ThemeIcon theme={theme} />
       {theme === "dark" ? "Light theme" : "Dark theme"}
     </button>
   );

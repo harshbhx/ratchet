@@ -12,7 +12,8 @@ alias, a task's match rules, a response_format schema's auto task or, opt-in, th
 level (`ratchet/access.py`, ADR 0061): in live mode the dashboard API needs an admin or dashboard key unless
 RATCHET_PUBLIC_DASHBOARD=1. Errors on `/v1/*` use OpenAI's envelope (`ratchet/openai_compat.py`); every other route
 keeps FastAPI's `{"detail": ...}`.
-Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard, `/judges` the judges' console; the
+Pages: `/` landing, `/scout` multi-agent demo, `/dashboard` Ratchet dashboard, `/judges` the judges' console,
+`/live` the live gateway; the
 single-file pages without a build stay at `/lite`, `/lite/scout` and `/lite/dashboard`.
 """
 
@@ -1479,6 +1480,12 @@ def scout_page() -> HTMLResponse:
 def judges_page() -> HTMLResponse:
     """The judges' console (React app only; without the build, the placeholder page with links to the others)."""
     return _spa_or(HERE / "web" / "judges.html", "Ratchet for judges")
+
+
+@app.get("/live", response_class=HTMLResponse)
+def live_page() -> HTMLResponse:
+    """The live gateway inside the site: a real request, Scout, the dashboard (React app only; placeholder without the build)."""
+    return _spa_or(HERE / "web" / "live.html", "Ratchet live gateway")
 
 
 # The original single-file pages stay available (no JavaScript build, no fonts).

@@ -357,3 +357,91 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* A hairline border with a light that travels around it (the CTA card, the hero's product card). Without @property the
+   border is a static two-colour gradient; under reduced motion it stops. */
+@property --beam-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.beam-border::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--beam-angle), transparent 0 62%, var(--owned) 80%, var(--rented) 92%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: beam-spin 8s linear infinite;
+  pointer-events: none;
+}
+@keyframes beam-spin {
+  to { --beam-angle: 360deg; }
+}
+
+/* A button's sheen: a soft band of light sweeps across on hover and focus. */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(105deg, transparent 35%, rgb(255 255 255 / 0.35) 50%, transparent 65%);
+  transform: translateX(-120%);
+  transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.btn-shine:hover::after,
+.btn-shine:focus-visible::after {
+  transform: translateX(120%);
+}
+
+/* Meteors: a few thin streaks that cross a card on a long loop. Decoration only. */
+.meteor {
+  position: absolute;
+  top: -10%;
+  width: 1px;
+  height: 90px;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--ink) 38%, transparent));
+  transform: rotate(35deg);
+  opacity: 0;
+  animation: meteor 9s linear infinite;
+}
+@keyframes meteor {
+  0% { transform: translate3d(0, 0, 0) rotate(35deg); opacity: 0; }
+  6% { opacity: 0.9; }
+  30% { transform: translate3d(-320px, 420px, 0) rotate(35deg); opacity: 0; }
+  100% { transform: translate3d(-320px, 420px, 0) rotate(35deg); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .beam-border::before { animation: none; }
+  .btn-shine::after { transition: none; }
+  .meteor { display: none; }
+}
+
+/* The animated theme switch (lib/theme-transition.ts): while it runs, the old and new pages stack without the default cross-fade, and the
+   new one is revealed by a growing circle that the script animates. Scoped to the class the script sets, so page navigation is untouched. */
+html.theme-reveal::view-transition-old(root),
+html.theme-reveal::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+html.theme-reveal::view-transition-old(root) {
+  z-index: 1;
+}
+html.theme-reveal::view-transition-new(root) {
+  z-index: 2;
+}
+
+/* One stroke for every Lucide icon on the site. */
+.lucide {
+  stroke-width: 1.75;
+}

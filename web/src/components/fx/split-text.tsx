@@ -47,7 +47,7 @@ export function SplitText({
           return (
             <span key={key} className={cn("inline-block overflow-hidden align-bottom pb-[0.08em] -mb-[0.08em]", cls)}>
               <motion.span
-                className="inline-block will-change-transform"
+                className={cn("inline-block will-change-transform", cls)}
                 initial={{ y: "110%", opacity: 0 }}
                 animate={{ y: "0%", opacity: 1 }}
                 transition={{ duration, ease: EASE, delay: delay + i * stagger }}

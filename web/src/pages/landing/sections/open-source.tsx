@@ -1,14 +1,10 @@
-import { ArrowRight, ArrowUpRight, BookOpenText } from "lucide-react";
-import { BackgroundBeams } from "@/components/fx/background-beams";
-import { Magnet } from "@/components/fx/magnet";
-import { MovingBorderLink } from "@/components/fx/moving-border";
-import { TextGenerate } from "@/components/fx/text-generate";
-import { ButtonA, ButtonLink } from "@/components/ui/button";
+import { ArrowUpRight, BookOpenText } from "lucide-react";
+import { ButtonA } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container } from "@/components/ui/section";
-import { DOCS_URL, LIVE_URL, REPO_URL } from "@/lib/utils";
-import { LogoMark } from "@/components/ui/logo";
+import { DOCS_URL, REPO_URL } from "@/lib/utils";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
+import { ClosingCta } from "./closing-cta";
 
 const QUICKSTART = `pip install -e ".[dev]"
 
@@ -83,36 +79,13 @@ export function OpenSource() {
           </Reveal>
         </div>
 
-        <Reveal className="mt-20 sm:mt-28">
-          <div className="relative overflow-hidden rounded-[28px] border border-line bg-surface px-5 py-14 text-center shadow-card sm:px-10 sm:py-20">
-            <BackgroundBeams className="opacity-80 [mask-image:radial-gradient(ellipse_80%_90%_at_50%_100%,black,transparent)]" />
-            <div className="relative">
-              <LogoMark className="mx-auto mb-7 size-12" />
-              <TextGenerate
-                as="h2"
-                text="Your traffic can teach. Keep what it learns."
-                className="mx-auto max-w-[22ch] text-balance text-3xl font-semibold tracking-[-0.03em] text-ink sm:text-[2.75rem] sm:leading-[1.08]"
-              />
-              <p className="mx-auto mt-5 max-w-[52ch] text-pretty text-[17px] leading-relaxed text-ink-2">
-                Run Scout and watch each call get routed. Then open the dashboard to see the gateway's own traffic, costs and releases.
-              </p>
-              <div className="mt-8 flex flex-wrap justify-center gap-3">
-                <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="lg">
-                  Try the live gateway <ArrowUpRight aria-hidden />
-                </ButtonA>
-                <MovingBorderLink to="/scout">
-                  Try Scout live <ArrowRight aria-hidden />
-                </MovingBorderLink>
-                <Magnet>
-                  <ButtonLink to="/dashboard" variant="outline" size="lg">
-                    Open the dashboard
-                  </ButtonLink>
-                </Magnet>
-              </div>
-            </div>
-          </div>
-        </Reveal>
       </Container>
+      {/* Full width: only the side gutters, up to a cap on very wide screens. */}
+      <div id="closing-cta" className="mt-20 w-full px-4 sm:mt-28 sm:px-6 lg:px-10">
+        <div className="mx-auto max-w-[1960px]">
+          <ClosingCta />
+        </div>
+      </div>
     </Chapter>
   );
 }

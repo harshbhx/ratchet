@@ -21,6 +21,7 @@ Sections after the route table: [OpenAI endpoints](#openai-endpoints), [Authenti
 | GET | `/dashboard` | both | [public](#access-levels) | Dashboard (React app; fallback `ratchet/dashboard.html`) |
 | GET | `/scout` | both | [public](#access-levels) | Scout page (React app; fallback `ratchet/web/scout.html`) |
 | GET | `/judges` | both | [public](#access-levels) | The judges' console: what is real, the gateway's own read endpoints chapter by chapter, and a guided tour (React app; a placeholder page without the build) |
+| GET | `/live` | both | [public](#access-levels) | The live gateway inside the site: send a real request, then Scout and the dashboard (React app; a placeholder page without the build) |
 | GET | `/assets/*` | both | [public](#access-levels) | Built JavaScript, CSS and fonts of the React app (a static mount, not in `access.py`) |
 | GET | `/lite`, `/lite/scout`, `/lite/dashboard` | both | [public](#access-levels) | The hand-written pages (no build step, no JavaScript framework) |
 | GET | `/favicon.svg` | both | [public](#access-levels) | The site icon, from the React build (404 without it) |
@@ -101,7 +102,7 @@ Sections after the route table: [OpenAI endpoints](#openai-endpoints), [Authenti
 | POST | `/scout/run` | both | [public](#access-levels) | Run Scout, return all events at the end |
 | GET | `/docs`, `/redoc`, `/openapi.json` | both | [public](#access-levels) | FastAPI's interactive docs and schema (not in `access.py`); they exist only with `RATCHET_OPENAPI=1` (the default in mock mode, not in live mode) |
 
-The pages are the React app built into `ratchet/web/dist/`. If the build is missing, `/`, `/scout` and `/dashboard` fall back to the hand-written files named in the table, and `/judges` returns a small placeholder page.
+The pages are the React app built into `ratchet/web/dist/`. If the build is missing, `/`, `/scout` and `/dashboard` fall back to the hand-written files named in the table, and `/judges` and `/live` return a small placeholder page.
 
 ## OpenAI endpoints
 
