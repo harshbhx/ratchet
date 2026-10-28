@@ -22,7 +22,7 @@ export interface Look {
   blush: boolean;
   sweat: boolean;
   /** A small pop-up over the head. */
-  pop: "none" | "!" | "?" | "sparkle" | "heart";
+  pop: "none" | "!" | "?" | "+1" | "sparkle" | "heart";
   /** Ultra's glasses adjust (one short animation). */
   adjust: boolean;
   /** A quick one-off: eyes dart, the smile twitches, the head shakes. */
@@ -35,11 +35,13 @@ export interface Look {
   brow: "none" | "raise";
   /** The adapter chip glows (a level up). */
   glow: boolean;
+  /** How many of the seven lessons Nano has learned: the segments lit on his adapter chip. */
+  learn: number;
   /** Sunglasses are worn pushed up on the head; down means over the eyes (for a moment, when the theme turns dark). */
   shadesDown: boolean;
 }
 
-export const REST: Look = { expr: "idle", pose: "stand", held: "none", sunglasses: false, squint: false, lamp: false, cap: false, blush: false, sweat: false, pop: "none", adjust: false, micro: "none", fx: "none", text: "", brow: "none", glow: false, shadesDown: false };
+export const REST: Look = { expr: "idle", pose: "stand", held: "none", sunglasses: false, squint: false, lamp: false, cap: false, blush: false, sweat: false, pop: "none", adjust: false, micro: "none", fx: "none", text: "", brow: "none", glow: false, shadesDown: false, learn: 0 };
 
 /** Local night is Night School: 20:00 to 05:59. */
 export function isNight(d: Date): boolean {
@@ -55,6 +57,8 @@ export interface Context {
   squinting: boolean;
   /** The sunglasses are down over the eyes for a moment, after the page turns dark. */
   shadesDown?: boolean;
+  /** Lessons learned so far (0 to 7). */
+  learn?: number;
 }
 
 /** How each character looks at rest. Nano: sunglasses in the dark theme, a squint in the light one, a lamp and a book at night. */
@@ -64,6 +68,7 @@ export function baseLook(who: Who, c: Context): Look {
       ...REST,
       sunglasses: c.dark,
       shadesDown: c.dark && !!c.shadesDown,
+      learn: c.learn ?? 0,
       squint: !c.dark && c.squinting,
       lamp: c.night,
       cap: c.graduated,
@@ -72,7 +77,7 @@ export function baseLook(who: Who, c: Context): Look {
       expr: c.graduated ? "proud" : "idle",
     };
   }
-  return { ...REST, held: c.night ? "papers" : "mug", pose: c.night ? "carry" : "stand", expr: c.graduated ? "happy" : "idle" };
+  return { ...REST, held: c.night ? "papers" : "none", pose: c.night ? "carry" : "stand", expr: c.graduated ? "happy" : "idle" };
 }
 
 export interface MotionPlan {
@@ -112,6 +117,17 @@ export function isTyping(el: { tagName?: string; isContentEditable?: boolean } |
 export const PHONE_MAX = 639;
 export function isPhone(width: number): boolean {
   return width <= PHONE_MAX;
+}
+
+/** An activity that is its own prop (juggling tokens, a pocket watch, a door) and so replaces whatever is held. */
+export function isSoloFx(fx: Fx): boolean {
+  return fx === "juggle" || fx === "watch" || fx === "door";
+}
+
+/** How many props are in view for a look: never more than one. Pen and page-turning are the held papers and book in use, not extra props. */
+export function propCount(look: Pick<Look, "held" | "fx">): number {
+  if (isSoloFx(look.fx)) return 1;
+  return look.held !== "none" ? 1 : 0;
 }
 
 /** The most closed a lid may rest for an expression that is not sleepy: 0 is wide open, 1 is shut. Eyes must read as open. */

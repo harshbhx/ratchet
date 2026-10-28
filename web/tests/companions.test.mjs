@@ -277,7 +277,7 @@ test("sections: each is remarked on once per visit; the exam line carries the re
 });
 
 test("the two move with each other: high five, a pat, a passed card and hiding", () => {
-  assert.deepEqual([...reactions.DUO_MOVES].sort(), ["fistbump", "hide", "highfive", "levelup", "pass", "pat", "sneak"]);
+  assert.deepEqual([...reactions.DUO_MOVES].sort(), ["correct", "fistbump", "hide", "highfive", "levelup", "pass", "pat", "sneak"]);
   for (const m of reactions.DUO_MOVES) assert.ok(reactions.DUO_LINES[m].length >= 2);
 });
 
@@ -365,7 +365,8 @@ test("Nano perches on the right end of a card's top edge, Ultra on the left end"
   const items = [card("a", 100, 400, 700)];
   const n = perch.candidatesFromItems(items, "nano");
   const u = perch.candidatesFromItems(items, "ultra");
-  assert.deepEqual([n[0].x, n[0].y, u[0].x, u[0].y], [664, 400, 140, 400]);
+  assert.deepEqual([n[0].x, n[0].y, u[0].x, u[0].y], [700 - perch.PERCH_INSET, 400, 100 + perch.PERCH_INSET, 400]);
+  assert.equal(n.length, 1, "one consistent offset from the corner");
   assert.ok(n.every((c) => c.x > 120 && c.x < 680));
 });
 
@@ -393,7 +394,7 @@ test("a perch under a call to action or on body text loses to a clear one; one o
 });
 
 test("the current perch is kept unless another is clearly better, and the two keep apart", () => {
-  const items = [card("a", 700, 500, 1200), card("b", 700, 520, 1200)];
+  const items = [card("a", 700, 500, 1200), card("b", 300, 520, 900)];
   const cands = perch.candidatesFromItems(items, "nano");
   const first = perch.choosePerch(cands, "nano", { vp: VP, size: NANO, zones: noZones }).cand;
   const other = cands.find((c) => c.id !== first.id);
@@ -540,4 +541,61 @@ test("the new duo moves have their lines: a sneaked answer is blocked, a lesson 
   assert.equal(reactions.DUO_LINES.sneak[1].who, "ultra");
   assert.match(reactions.DUO_LINES.levelup[1].text, /level up/i);
   assert.ok(reactions.DUO_LINES.fistbump.length >= 2);
+});
+
+// ---------- Nano is learning ----------
+test("the chip is the learning meter: Nano shows how many of the seven lessons he has learned", () => {
+  const c = { night: false, dark: false, graduated: false, squinting: false };
+  assert.equal(model.baseLook("nano", c).learn, 0);
+  assert.equal(model.baseLook("nano", { ...c, learn: 3 }).learn, 3);
+  assert.equal(model.baseLook("nano", { ...c, learn: 7 }).learn, 7);
+  assert.equal(model.REST.learn, 0);
+  assert.equal(lessons.LESSON_TOTAL, 7, "one segment per lesson");
+});
+
+test("Ultra teaches each key section's one idea on a small card of two to four words", () => {
+  const sc = scenesMod.scenes(facts);
+  for (const id of ["rent", "how", "learn", "integrate"]) {
+    const t = sc[id].ultra;
+    assert.equal(t.held, "tag", id);
+    const words = t.text.split(/\s+/).length;
+    assert.ok(words >= 2 && words <= 4, `${id}: ${t.text}`);
+  }
+  assert.equal(sc.learn.once, "correct", "Night School shows a guess, a correction and a second try");
+  assert.deepEqual([sc.safety.ultra.pose, sc.safety.nano.held ?? "none"], ["stop", "none"], "the gate: Ultra blocks, Nano does not go through");
+  assert.equal(sc["real-run"].nano.text, "39%", "the exam score is read from exams.json");
+});
+
+test("a guess, a correction and a right second try, kept honest", () => {
+  const l = reactions.DUO_LINES.correct;
+  assert.deepEqual(l.map((x) => x.who), ["nano", "ultra", "nano", "ultra"]);
+  assert.match(l[1].text, /not quite/i);
+  assert.match(l[3].text, /matches/i);
+  assert.ok(!reactions.CALM_DUOS.includes("sneak") && !reactions.CALM_DUOS.includes("hide"), "the unprompted moments are the calm ones");
+  assert.ok(reactions.CALM_DUOS.includes("correct") && reactions.CALM_DUOS.includes("levelup"));
+});
+
+test("never more than one prop in view, and a pen or a page turn always has its paper or book", () => {
+  const sc = scenesMod.scenes(facts);
+  for (const [id, t] of Object.entries(sc)) {
+    for (const [who, side] of [["nano", t.nano], ["ultra", t.ultra]]) {
+      const look = { ...model.REST, ...side };
+      assert.ok(model.propCount(look) <= 1, `${id} ${who}`);
+      if (side.fx === "pen") assert.equal(side.held, "papers", `${id} ${who}: a pen needs the paper`);
+      if (side.fx === "read") assert.equal(side.held, "book", `${id} ${who}: page turns need the book`);
+    }
+  }
+  assert.equal(model.propCount({ held: "card", fx: "juggle" }), 1, "a solo activity replaces what is held");
+  assert.equal(model.propCount({ held: "none", fx: "none" }), 0);
+  assert.equal(model.baseLook("ultra", { night: false, dark: false, graduated: false, squinting: false }).held, "none", "no mug at rest by day");
+});
+
+test("the finale: the full meter earns a cap, and the words are about the page, not the real student", () => {
+  const c = { night: false, dark: false, graduated: true, squinting: false, learn: 7 };
+  const look = model.baseLook("nano", c);
+  assert.deepEqual([look.cap, look.learn, look.expr], [true, 7, "proud"]);
+  assert.equal(model.baseLook("nano", { ...c, graduated: false }).cap, false, "the cap is brief: it comes off");
+  const src = readFileSync(new URL("../src/components/companions/stage.tsx", import.meta.url), "utf8");
+  assert.match(src, /Learned from this page\. The real student still needs the gate\./);
+  assert.doesNotMatch(src, /promoted|now serves|is serving/i);
 });

@@ -235,6 +235,15 @@
   from { transform: scale(0.7); opacity: 0.2; }
   to { transform: scale(1.3); opacity: 0.55; }
 }
+/* the newest lit segment of the learning meter glows for a moment */
+.cp-seg {
+  animation: cp-seg 1.1s ease-out 2;
+}
+@keyframes cp-seg {
+  0% { opacity: 0.2; }
+  40% { opacity: 1; }
+  100% { opacity: 0.96; }
+}
 .cp-root[data-paused="true"] * {
   animation-play-state: paused !important;
 }

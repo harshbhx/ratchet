@@ -25,7 +25,7 @@ export interface Zones {
 }
 
 /** Elements a character can stand on (the top edge), and the text it should stay off. */
-export const PERCH_SELECTOR = "[data-companion-perch], main section h2, main .shadow-card";
+export const PERCH_SELECTOR = "[data-companion-perch], main .shadow-card";
 export const TEXT_SELECTOR = "main p, main h1, main h2, main h3, main li, main pre, main label, main input, main figcaption, main th, main td, main dd, main blockquote";
 
 /** The rectangle of a character whose feet are at `p`. */
@@ -45,15 +45,17 @@ export interface Item {
   rect: Rect;
 }
 
-/** Points on the top edge of each element: Nano near its right end, Ultra near its left end (two each, for wide elements). */
+/** How far in from a card's corner a character stands. */
+export const PERCH_INSET = 32;
+
+/** A point on the top edge of each element: Nano near its right corner, Ultra near its left corner. */
 export function candidatesFromItems(items: Item[], who: Who): Cand[] {
   const out: Cand[] = [];
   for (const it of items) {
     const { left, right, top } = it.rect;
-    const xs = who === "nano" ? [right - 36, right - 190] : [left + 40, left + 200];
-    xs.forEach((x, i) => {
-      if (x > left + 20 && x < right - 20) out.push({ id: `${it.id}:${i}`, kind: it.kind, x, y: top });
-    });
+    // One consistent offset from the card's corner, so the pair stand on the same grid line down the page.
+    const x = who === "nano" ? right - PERCH_INSET : left + PERCH_INSET;
+    if (x > left + 20 && x < right - 20) out.push({ id: `${it.id}:0`, kind: it.kind, x, y: top });
   }
   return out;
 }

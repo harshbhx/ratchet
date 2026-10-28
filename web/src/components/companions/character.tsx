@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useId, useImperativeHandle, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { eyeSpec, lookOffset, type Expr, type Look, type Pose, type Who } from "./companion-model";
+import { eyeSpec, isSoloFx, lookOffset, type Expr, type Look, type Pose, type Who } from "./companion-model";
 
 /**
  * Nano and Ultra, drawn from simple shapes (original artwork, no external assets). Nano is the student: small, round, blue, with an
@@ -308,8 +308,10 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
   const jump = pose === "jump" || moving === "jump";
   const [ex0, ex1] = g.ex;
   const blushOn = look.blush || look.expr === "happy" || look.expr === "proud" || look.expr === "laughing" || look.expr === "wave";
-  const holding = look.held !== "none" && (pose === "carry" || pose === "hug");
-  const sipping = (pose === "sip" || pose === "watch") && look.held === "mug" && look.fx !== "watch";
+  // One prop at a time: an activity that is its own prop (juggling, a pocket watch, a door) replaces whatever is held.
+  const solo = isSoloFx(look.fx);
+  const holding = !solo && look.held !== "none" && (pose === "carry" || pose === "hug");
+  const sipping = !solo && pose === "sip" && look.held === "mug";
   const shadesOver = look.sunglasses && look.shadesDown;
   const gb = `${uid}b`;
   const gs = `${uid}s`;
@@ -328,6 +330,22 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
       </g>
     );
   };
+
+  // The adapter chip: a learning meter, one segment lit for each lesson learned. It stays visible under the graduation cap.
+  const chip = (
+    <>
+      {look.glow && <circle cx="60" cy="14" r="17" fill="var(--warn)" className={cn(live && "cp-levelup")} opacity="0.35" />}
+                  <g className={cn(live && "cp-chip")} style={{ transformOrigin: "60px 17px" }}>
+                    <rect x="48" y="9" width="24" height="11.5" rx="3.4" fill={look.glow ? "#ffd27a" : "var(--rented)"} />
+                    <rect x="48" y="9" width="24" height="5" rx="3" fill="#fff" opacity="0.2" />
+                    {/* the chip is a learning meter: one segment lights for each lesson learned */}
+                    {Array.from({ length: 7 }, (_, i) => (
+                      <rect key={i} x={49.2 + i * 3.2} y="10.6" width="2.6" height="4.6" rx="0.8" fill={i < look.learn ? "#fff" : "var(--rented-ink)"} opacity={i < look.learn ? 0.96 : 0.4} className={live && look.learn === i + 1 ? "cp-seg" : undefined} />
+                    ))}
+                    <path d="M53 17.8v2.6M60 17.8v2.6M67 17.8v2.6" stroke="var(--rented-ink)" strokeWidth="1.2" strokeLinecap="round" opacity="0.6" />
+                  </g>
+    </>
+  );
 
   return (
     <svg
@@ -404,11 +422,6 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
           </g>
         )}
         {sipping && <Held held="mug" ultra sip />}
-        {look.held === "mug" && !holding && !sipping && pose !== "jump" && (
-          <g transform={`translate(${ultra ? 98 : 86} 106) scale(0.7)`}>
-            <Held held="mug" ultra={false} />
-          </g>
-        )}
 
         {/* the head turns a little toward what it is looking at */}
         <g className={cn("cp-head", look.micro === "shake" && "cp-hshake")} style={{ transformOrigin: "60px 84px", transform: live ? "translate(var(--hx, 0px), 0) rotate(var(--tilt, 0deg))" : undefined }}>
@@ -432,13 +445,7 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
                     <path d="M60 14V3" stroke={dark} strokeWidth="2" strokeLinecap="round" />
                     <circle cx="60" cy="2.6" r="2.8" fill={accent} stroke={INK} strokeOpacity="0.25" strokeWidth="0.8" />
                   </g>
-                  {look.glow && <circle cx="60" cy="14" r="17" fill="var(--warn)" className={cn(live && "cp-levelup")} opacity="0.35" />}
-                  <g className={cn(live && "cp-chip")} style={{ transformOrigin: "60px 17px" }}>
-                    <rect x="48" y="9" width="24" height="11.5" rx="3.4" fill={look.glow ? "#ffd27a" : "var(--rented)"} />
-                    <rect x="48" y="9" width="24" height="5" rx="3" fill="#fff" opacity="0.2" />
-                    <path d="M53 17.2v3.6M60 17.2v3.6M67 17.2v3.6" stroke="var(--rented-ink)" strokeWidth="1.4" strokeLinecap="round" opacity="0.75" />
-                    <circle cx="53" cy="12.4" r="1.4" fill="#fff" opacity="0.85" />
-                  </g>
+                  {chip}
                 </g>
               )}
             </>
@@ -494,7 +501,7 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
             <g>
               <path d="M42 22h36l-3 10q-15 6 -30 0z" fill="#17203a" />
               <path d="M28 22l32 -13l32 13l-32 13z" fill="#202b4d" stroke="#0e1426" strokeWidth="1" />
-              <circle cx="60" cy="22" r="2" fill="var(--rented)" />
+              <g transform="translate(60 30) scale(0.8) translate(-60 -15)">{chip}</g>
               <path d="M60 22l28 4v12" stroke="var(--rented)" strokeWidth="1.8" fill="none" strokeLinecap="round" />
               <circle cx="88" cy="40" r="2.6" fill="var(--rented)" />
             </g>
@@ -523,12 +530,12 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
         )}
         {look.pop !== "none" && (
           <g className={cn(live && "cp-pop")} style={{ transformOrigin: "98px 20px" }}>
-            {look.pop === "sparkle" && <path d="M98 6l2.6 7.4L108 16l-7.4 2.6L98 26l-2.6 -7.4L88 16l7.4 -2.6z" fill="var(--warn)" stroke={INK} strokeWidth="0.8" />}
+            {look.pop === "sparkle" && <path d="M98 6l2.6 7.4L108 16l-7.4 2.6L98 26l-2.6 -7.4L88 16l7.4 -2.6z" fill="var(--rented)" stroke={INK} strokeWidth="0.8" />}
             {look.pop === "heart" && <path d="M98 24c-9 -6 -9 -14 -3 -14c3 0 3 3 3 3s0 -3 3 -3c6 0 6 8 -3 14z" fill="var(--bad)" />}
-            {(look.pop === "!" || look.pop === "?") && (
+            {(look.pop === "!" || look.pop === "?" || look.pop === "+1") && (
               <g>
                 <circle cx="98" cy="14" r="9" fill="var(--surface)" stroke={INK} strokeWidth="1.6" />
-                <text x="98" y="19.5" textAnchor="middle" fill={INK} style={{ fontSize: 15, fontWeight: 800 }}>
+                <text x="98" y="19" textAnchor="middle" fill={look.pop === "+1" ? "var(--owned-ink)" : INK} style={{ fontSize: look.pop === "+1" ? 10.5 : 15, fontWeight: 800 }}>
                   {look.pop}
                 </text>
               </g>

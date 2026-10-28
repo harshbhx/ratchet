@@ -26,17 +26,19 @@ export function scenes(f: Facts): Record<string, Scene> {
       nano: { expr: "proud", held: "score", text: pct(f.r2e1), pose: "carry", pop: "sparkle" },
       ultra: { expr: "idle", held: "papers", pose: "carry", fx: "pen" },
     },
-    try: { nano: { expr: "happy", pose: "pointLeft" }, ultra: { expr: "idle", held: "mug" } },
+    try: { nano: { expr: "happy", pose: "pointLeft" }, ultra: { expr: "idle" } },
     "whats-in": { nano: { expr: "thinking" }, ultra: { expr: "idle", fx: "pen", held: "papers", pose: "carry" } },
-    rent: { nano: { expr: "thinking", pop: "?" }, ultra: { expr: "idle", held: "mug" } },
+    // Ultra teaches the section's one idea on a small card; the chip on Nano's head fills a segment when the lesson lands.
+    rent: { nano: { expr: "thinking", pop: "?" }, ultra: { expr: "idle", held: "tag", text: "Pay per token", pose: "carry" } },
     catch: { nano: { expr: "sad" }, ultra: { expr: "determined", pose: "fold" } },
-    why: { nano: { expr: "happy", fx: "juggle", pose: "carry" }, ultra: { expr: "idle", brow: "raise" } },
+    why: { nano: { expr: "thinking" }, ultra: { expr: "idle", brow: "raise" } },
     // How a request is routed: Nano carries the request card, Ultra receives it.
-    how: { nano: { expr: "determined", held: "card", pose: "carry" }, ultra: { expr: "idle", pose: "pointLeft" }, once: "pass" },
+    how: { nano: { expr: "determined", held: "card", pose: "carry" }, ultra: { expr: "idle", held: "tag", text: "Student first", pose: "carry" }, once: "pass" },
     lifecycle: { nano: { expr: "thinking", held: "card", pose: "carry" }, ultra: { expr: "idle", pose: "watch", fx: "watch" } },
     // The gate: Ultra in front of a door, blocking Nano.
     safety: { nano: { expr: "sad", sweat: true }, ultra: { expr: "determined", pose: "stop", fx: "door" }, once: "sneak" },
-    learn: { nano: { expr: "happy", held: "book", pose: "carry", fx: "read" }, ultra: { expr: "idle", held: "papers", pose: "carry", fx: "pen" } },
+    // Night School: Ultra teaches, Nano takes notes, and now and then a guess is corrected and tried again.
+    learn: { nano: { expr: "happy", held: "book", pose: "carry", fx: "read" }, ultra: { expr: "idle", held: "tag", text: "Teacher labels", pose: "carry" }, once: "correct" },
     bill: { nano: { expr: "surprised" }, ultra: { expr: "idle", fx: "pen", held: "papers", pose: "carry" } },
     trust: { nano: { expr: "determined" }, ultra: { expr: "proud", pose: "fold" } },
     scout: { nano: { expr: "thinking", held: "card", pose: "carry" }, ultra: { expr: "idle", pose: "pointLeft" } },
@@ -45,15 +47,15 @@ export function scenes(f: Facts): Record<string, Scene> {
       nano: { expr: "proud", held: "tag", text: "Nebius AI Cloud", pose: "carry" },
       ultra: { expr: "idle", held: "tag", text: "Token Factory", pose: "carry" },
     },
-    integrate: { nano: { expr: "wave", held: "tag", text: "base_url", pose: "carry" }, ultra: { expr: "happy" } },
+    integrate: { nano: { expr: "wave" }, ultra: { expr: "happy", held: "tag", text: "One line change", pose: "carry" } },
     nebius: { nano: { expr: "thinking" }, ultra: { expr: "idle", fx: "watch", pose: "watch" } },
-    run: { nano: { expr: "happy", fx: "juggle", pose: "carry" }, ultra: { expr: "proud", pose: "fold" } },
+    run: { nano: { expr: "happy" }, ultra: { expr: "proud", pose: "fold" } },
     // The closing card: both cheer.
     "closing-cta": { nano: { expr: "laughing", pose: "jump", pop: "sparkle" }, ultra: { expr: "happy", pose: "jump" }, once: "highfive" },
     // The foot of the page: both wave goodbye.
     footer: { nano: { expr: "wave" }, ultra: { expr: "wave" } },
     // Other pages.
-    live: { nano: { expr: "happy", pose: "pointLeft" }, ultra: { expr: "idle", held: "mug" } },
+    live: { nano: { expr: "happy", pose: "pointLeft" }, ultra: { expr: "idle" } },
     judges: { nano: { expr: "determined", held: "book", pose: "carry", fx: "read" }, ultra: { expr: "idle", held: "papers", pose: "carry", fx: "pen" } },
     "scout-page": { nano: { expr: "thinking", held: "card", pose: "carry" }, ultra: { expr: "idle", pose: "pointLeft" } },
     dashboard: { nano: { expr: "idle" }, ultra: { expr: "idle", pose: "watch", fx: "watch" } },

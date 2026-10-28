@@ -18,14 +18,14 @@ export function Bubble({ who, text, reduce, align, className = "" }: { who: Who;
       style={{ transformOrigin: nano ? "20% 100%" : "80% 100%" }}
       className={`pointer-events-none absolute bottom-full z-10 mb-2 w-max max-w-[min(15rem,70vw)] ${nano ? "left-0" : "right-0"} ${className}`}
     >
-      <div className="relative rounded-2xl border border-line-strong bg-surface px-3 py-2 text-[13px] leading-snug text-ink shadow-card">
+      <div className="relative rounded-2xl border border-line bg-surface px-3.5 py-2.5 text-[13px] leading-snug text-ink shadow-card">
         <span className="mb-0.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted">
           <span className={`size-1.5 rounded-full ${isNano ? "bg-owned" : "bg-rented"}`} />
           {isNano ? "Nano" : "Ultra"}
         </span>
         {text}
         <span
-          className={`absolute -bottom-[5px] size-2.5 rotate-45 border-b border-r border-line-strong bg-surface ${nano ? "left-8" : "right-10"}`}
+          className={`absolute -bottom-[5px] size-2.5 rotate-45 border-b border-r border-line bg-surface ${nano ? "left-8" : "right-10"}`}
         />
       </div>
     </motion.div>

@@ -4,7 +4,7 @@
 
 /** Spring constants for the fall back to the shelf and the slide home (mass 1). */
 export const SPRING = { stiffness: 170, damping: 11, mass: 1 } as const;
-export const SLIDE = { stiffness: 90, damping: 13, mass: 1 } as const;
+export const SLIDE = { stiffness: 80, damping: 17, mass: 1 } as const;
 
 export interface Sim {
   /** Seconds until the position stays within `eps` of the target. */

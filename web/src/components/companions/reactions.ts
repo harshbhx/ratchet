@@ -39,8 +39,10 @@ export const EASTER_EGG: Line[] = [
   { who: "ultra", text: "Focus.", expr: "determined" },
 ];
 
-export type DuoMove = "highfive" | "pat" | "pass" | "hide" | "sneak" | "levelup" | "fistbump";
-export const DUO_MOVES: DuoMove[] = ["highfive", "pat", "pass", "hide", "sneak", "levelup", "fistbump"];
+export type DuoMove = "highfive" | "pat" | "pass" | "hide" | "sneak" | "levelup" | "fistbump" | "correct";
+export const DUO_MOVES: DuoMove[] = ["highfive", "pat", "pass", "hide", "sneak", "levelup", "fistbump", "correct"];
+/** The calm ones, for the occasional unprompted moment. */
+export const CALM_DUOS: DuoMove[] = ["highfive", "fistbump", "pat", "pass", "levelup", "correct"];
 
 /** Moves the two make with each other, and what they say. */
 export const DUO_LINES: Record<DuoMove, Line[]> = {
@@ -67,6 +69,13 @@ export const DUO_LINES: Record<DuoMove, Line[]> = {
   levelup: [
     { who: "ultra", text: "Lesson complete. Here is your card.", expr: "happy" },
     { who: "nano", text: "Level up! Did my chip just glow?", expr: "proud" },
+  ],
+  // A guess, a correction, a second try: how a student learns from a teacher, kept light.
+  correct: [
+    { who: "nano", text: "Is it a LEFT JOIN?", expr: "happy" },
+    { who: "ultra", text: "Not quite. Check the rows.", expr: "determined" },
+    { who: "nano", text: "INNER JOIN, then?", expr: "thinking" },
+    { who: "ultra", text: "That matches. Noted.", expr: "happy" },
   ],
   fistbump: [
     { who: "nano", text: "Fist bump!", expr: "happy" },

@@ -17,7 +17,7 @@ import { createBurst } from "./physics";
 import type { Move } from "./perch";
 import { useRoamer, useRoaming } from "./roaming";
 import { AVOID_SELECTOR, chooseSlot, type Slot } from "./placement";
-import { DUO_LINES, DUO_MOVES, EASTER_EGG, WATCHED_SECTIONS, liveReaction, pokeReaction, sectionReactions, shouldReact, type DuoMove, type Poke } from "./reactions";
+import { CALM_DUOS, DUO_LINES, EASTER_EGG, WATCHED_SECTIONS, liveReaction, pokeReaction, sectionReactions, shouldReact, type DuoMove, type Poke } from "./reactions";
 import { ProgressRing, Sheet } from "./sheet";
 import { Sparkles } from "./sparkles";
 import { routeScene, scenes } from "./scenes";
@@ -60,6 +60,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const sessionRef = useRef(session);
   const [squinting, setSquinting] = useState(false);
   const [shadesDown, setShadesDown] = useState(false);
+  const [capOn, setCapOn] = useState(false);
   const [over, setOver] = useState<Record<Who, Partial<Look>>>({ nano: {}, ultra: {} });
   const [speech, setSpeech] = useState<{ who: Who; text: string } | null>(null);
   const [liveText, setLiveText] = useState("");
@@ -105,7 +106,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const live = useRef({ story: story.status, sheet });
   live.current = { story: story.status, sheet };
 
-  const ctx = { night, dark, graduated: session.graduated, squinting: !reduce && squinting, shadesDown: !reduce && shadesDown };
+  const ctx = { night, dark, graduated: capOn, squinting: !reduce && squinting, shadesDown: !reduce && shadesDown, learn: session.lessons.ids.length };
   // What each looks like: the resting look, then what the section they are at has them doing, then whatever just happened to them.
   const activeScene = story.status === "idle" && !reduce ? sceneMap[pathname === "/" ? sceneId : (routeScene(pathname) ?? "")] : undefined;
   const looks: Record<Who, Look> = {
@@ -156,10 +157,14 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   // ---------- lessons ----------
   const celebrate = useCallback(() => {
     setBurst((b) => b + 1);
+    // The meter is full: Nano graduates a level, cap on for a few seconds. This is what he learned from this page; the real student
+    // still has to pass the gate, and the caption says so.
+    setCapOn(true);
+    window.setTimeout(() => setCapOn(false), 8000);
     window.setTimeout(() => {
       runLines([
-        { who: "nano", text: `${LESSON_TOTAL} for ${LESSON_TOTAL}. Cap, please!`, expr: "proud" },
-        { who: "ultra", text: "Fine. Take the cap.", expr: "happy" },
+        { who: "nano", text: "Learned from this page. The real student still needs the gate.", expr: "proud" },
+        { who: "ultra", text: "Correct. The gate decides.", expr: "happy" },
       ]);
       if (!reduce) void ultra.nod();
     }, 500);
@@ -176,8 +181,9 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
       setSession(next);
       writeSession(next);
       if (done && !cur.graduated) celebrate();
+      else act("nano", { pop: "+1", glow: true }, 1700);
     },
-    [celebrate],
+    [celebrate, act],
   );
 
   // ---------- moves between the two ----------
@@ -236,6 +242,22 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
           setBurst((b) => b + 1);
           if (plan.physics) await Promise.all([ultra.home(), nano.hop(22)]);
           await sleep(1800);
+        } else if (m === "correct") {
+          // A wrong guess, a correction, a second try that is right.
+          const lines = DUO_LINES.correct;
+          const wait = (i: number) => sleep(readMs(lines[i]!.text) + 250);
+          act("nano", { held: "tag", text: "LEFT JOIN", pose: "carry", expr: "happy" });
+          act("ultra", { held: "papers", fx: "pen", pose: "carry", expr: "idle" });
+          await wait(0);
+          act("ultra", { held: "papers", fx: "pen", pose: "carry", expr: "determined", micro: "shake" });
+          act("nano", { held: "tag", text: "LEFT JOIN", pose: "carry", expr: "sad", sweat: true });
+          await wait(1);
+          act("nano", { held: "tag", text: "INNER JOIN", pose: "carry", expr: "determined" });
+          await wait(2);
+          act("ultra", { held: "papers", fx: "pen", pose: "carry", expr: "happy" });
+          act("nano", { held: "tag", text: "INNER JOIN", pose: "carry", expr: "proud", glow: true, pop: "sparkle" });
+          if (plan.physics) await ultra.nod();
+          await sleep(1200);
         } else if (m === "fistbump") {
           act("nano", { pose: "pointRight", expr: "happy" });
           act("ultra", { pose: "pointLeft", expr: "happy" });
@@ -713,28 +735,18 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
       talk = window.setTimeout(fireTalk, nextDelayMs());
     };
     // Personality loops, one every 6 to 12 seconds, picked at random: small stories each of them acts out.
+    // Quiet ones only: the big moves (a hop, a spin) are kept for a section arriving or something the reader does.
     const nanoLoops: Array<() => void> = [
-      () => act("nano", { fx: "juggle", pose: "carry", expr: "happy" }, 3600),
       () => act("nano", { held: "book", pose: "carry", fx: "read", expr: "thinking" }, 3800),
-      () => {
-        // a tiny dance: three bounces that lean left, right, left
-        act("nano", { expr: "happy", pop: "sparkle" }, 2400);
-        void nano.hop(16).then(() => nano.hop(14)).then(() => nano.hop(12));
-      },
+      () => act("nano", { expr: "wave" }, 2200),
       () => {
         if (night) act("nano", { fx: "yawn", expr: "sleepy" }, 2300);
         else {
           act("nano", { pose: "jump", expr: "happy" }, 1100);
-          void animate(nano.sy, [1, 1.1, 1], { duration: 1 });
+          void animate(nano.sy, [1, 1.06, 1], { duration: 1.2 });
         }
       },
-      () => {
-        // a little cartwheel: a spin with a hop
-        act("nano", { expr: "laughing" }, 1400);
-        void nano.hop(24);
-        void nano.spin();
-      },
-      () => act("nano", { expr: "wave" }, 2200),
+      () => act("nano", { expr: "thinking", pop: "?" }, 2000),
     ];
     const ultraLoops: Array<() => void> = [
       () => act("ultra", { pose: "sip", held: "mug", expr: "happy" }, 2800),
@@ -750,7 +762,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     ];
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]!;
     const fireMove = () => {
-      move = window.setTimeout(fireMove, 6000 + Math.random() * 6000);
+      move = window.setTimeout(fireMove, 10000 + Math.random() * 10000);
       if (!plan.autonomous || busy() || duoBusy.current || speaking.current) return;
       const r = Math.random();
       const kinds = placeRef.current;
@@ -771,18 +783,14 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
         void actors[w].slide(dir * 34).then(() => sleep(1300)).then(() => actors[w].home());
         return;
       }
-      if (r < 0.34) pick(nanoLoops)();
-      else if (r < 0.62) pick(ultraLoops)();
-      else if (r < 0.72) roam.wander("nano");
-      else if (r < 0.78) roam.wander("ultra");
-      else if (r < 0.84 && !dark) {
-        setSquinting(true);
-        window.setTimeout(() => setSquinting(false), 700);
-      } else if (r < 0.9) act(Math.random() < 0.5 ? "nano" : "ultra", { micro: Math.random() < 0.5 ? "twitch" : "shake" }, 900);
-      else void togetherRef.current(DUO_MOVES[Math.floor(Math.random() * DUO_MOVES.length)]!);
+      if (r < 0.38) pick(nanoLoops)();
+      else if (r < 0.74) pick(ultraLoops)();
+      else if (r < 0.82) roam.wander("nano");
+      else if (r < 0.9) act(Math.random() < 0.5 ? "nano" : "ultra", { micro: Math.random() < 0.5 ? "twitch" : "shake" }, 900);
+      else void togetherRef.current(pick(CALM_DUOS));
     };
     talk = window.setTimeout(fireTalk, nextDelayMs());
-    move = window.setTimeout(fireMove, 6000);
+    move = window.setTimeout(fireMove, 12000);
     return () => {
       window.clearTimeout(talk);
       window.clearTimeout(move);
@@ -842,7 +850,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
         className={`pointer-events-none fixed left-0 top-0 z-40 ${sheet || !visible[who] ? "invisible" : ""}`}
       >
         <AnimatePresence>
-          {speech?.who === who && <Bubble key={speech.text} who={who} text={speech.text} reduce={reduce} align={left ? "left" : "right"} className={place[who] === "peek" ? (who === "nano" ? "!right-9" : "!left-9") : ""} />}
+          {speech?.who === who && <Bubble key={speech.text} who={who} text={speech.text} reduce={reduce} align={left ? "left" : "right"} className={place[who] === "peek" ? (who === "nano" ? "!right-14" : "!left-14") : ""} />}
         </AnimatePresence>
         {who === "nano" && <Sparkles burst={burst} />}
         <motion.div style={{ rotate: r.lean, originX: 0.5, originY: 1 }}>
