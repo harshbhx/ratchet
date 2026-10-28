@@ -31,6 +31,8 @@ export interface Line {
   text: string;
   /** The speaker's face while the line is up. */
   expr?: Expr;
+  /** A small button in the bubble: "Quiz me" opens the quiz in the sheet. */
+  action?: "quiz";
 }
 export interface Banter {
   id: string;
@@ -72,6 +74,7 @@ export function banterLines(f: Facts): Banter[] {
     { id: "dashboard", lines: [U("The dashboard shows releases, costs, rollbacks."), N("Rollbacks. My least favourite word.", "sad")] },
     { id: "numbers", lines: [N("Every number here is live, measured or linked.", "proud"), U("No invented figures. We checked. Twice.")] },
     { id: "cheeky", lines: [N("Ask me anything!", "happy"), U("Ask him something small. He's still learning.")] },
+    { id: "quiz", lines: [{ who: "nano", text: "Want to quiz me? Real exam questions.", expr: "happy", action: "quiz" }] },
     { id: "poke", lines: [N("Poke me. I dare you.", "happy"), U("He means it. I've counted.")] },
     { id: "drag", lines: [U("You can pick us up, you know."), N("Gently, though. I'm a student, not luggage!", "surprised")] },
     { id: "glasses", lines: [N("Ultra, why the round glasses?", "thinking"), U("They make the answers look rounder.")] },

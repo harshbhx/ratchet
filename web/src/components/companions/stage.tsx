@@ -16,6 +16,11 @@ import { LESSON_TOTAL, earn, lessonsComplete, lessonsForSection, type LessonId }
 import { createBurst } from "./physics";
 import type { Move } from "./perch";
 import { useRoamer, useRoaming } from "./roaming";
+import { holdDelay, isEmptyTarget, pressKind, type ElLike } from "./comehere";
+import { HIDE_CLIP, HIDE_MS, addScroll, canHide, endHide, newSeek, startHide } from "./hideseek";
+import { QUIZ_LINES, type QuizRow } from "./quiz-model";
+import type { QuizPhase } from "./quiz";
+import { charRect } from "./perch";
 import { AVOID_SELECTOR, chooseSlot, type Slot } from "./placement";
 import { CALM_DUOS, DUO_LINES, EASTER_EGG, WATCHED_SECTIONS, liveReaction, pokeReaction, sectionReactions, shouldReact, type DuoMove, type Poke } from "./reactions";
 import { ProgressRing, Sheet } from "./sheet";
@@ -61,8 +66,22 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   const [squinting, setSquinting] = useState(false);
   const [shadesDown, setShadesDown] = useState(false);
   const [capOn, setCapOn] = useState(false);
+  const [quizAuto, setQuizAuto] = useState(0);
+  const [hiding, setHiding] = useState(false);
+  const [fit, setFit] = useState<Record<Who, number>>({ nano: 1, ultra: 1 });
+  const [carrying, setCarrying] = useState(false);
+  const hidingRef = useRef(false);
+  hidingRef.current = hiding;
+  const carryingRef = useRef(false);
+  carryingRef.current = carrying;
+  const foundRef = useRef<(how: "found" | "timeout") => void>(() => {});
+  const teachRef = useRef<() => void>(() => {});
+  const sceneIdRef = useRef("hero");
+  const seek = useRef(newSeek());
+  const lastY = useRef(typeof window === "undefined" ? 0 : window.scrollY);
+  const hideTimer = useRef(0);
   const [over, setOver] = useState<Record<Who, Partial<Look>>>({ nano: {}, ultra: {} });
-  const [speech, setSpeech] = useState<{ who: Who; text: string } | null>(null);
+  const [speech, setSpeech] = useState<{ who: Who; text: string; action?: "quiz" } | null>(null);
   const [liveText, setLiveText] = useState("");
   const [sheet, setSheet] = useState(false);
   const [burst, setBurst] = useState(0);
@@ -121,16 +140,16 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     if (ms) overTimers.current[who] = window.setTimeout(() => setOver((o) => ({ ...o, [who]: {} })), ms);
   }, []);
 
-  const say = useCallback((who: Who, text: string, ms = readMs(text)) => {
-    setSpeech({ who, text });
+  const say = useCallback((who: Who, text: string, ms = readMs(text), action?: "quiz") => {
+    setSpeech({ who, text, action });
     setLiveText(text);
     window.clearTimeout(speechTimer.current);
     speaking.current = true;
     speechTimer.current = window.setTimeout(() => {
       speaking.current = false;
       setSpeech(null);
-    }, ms);
-  }, []);
+    }, ms + (action ? 2500 : 0));
+  }, [reduce]);
 
   const runLines = useCallback(
     (lines: Line[], gap = 250) => {
@@ -140,7 +159,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
         const l = lines[i++];
         if (!l) return;
         const ms = readMs(l.text);
-        say(l.who, l.text, ms);
+        say(l.who, l.text, ms, l.action);
         if (l.expr) act(l.who, { expr: l.expr }, ms + 300);
         scriptTimer.current = window.setTimeout(step, ms + gap);
       };
@@ -151,7 +170,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
 
   const busy = useCallback(() => {
     const l = live.current;
-    return l.story !== "idle" || l.sheet || dragging.current || document.hidden || isTyping(document.activeElement) || Date.now() - lastScroll.current < 1500;
+    return l.story !== "idle" || l.sheet || dragging.current || hidingRef.current || document.hidden || isTyping(document.activeElement) || Date.now() - lastScroll.current < 1500;
   }, []);
 
   // ---------- lessons ----------
@@ -181,7 +200,9 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
       setSession(next);
       writeSession(next);
       if (done && !cur.graduated) celebrate();
-      else act("nano", { pop: "+1", glow: true }, 1700);
+      else {
+        act("nano", { pop: "+1", glow: true }, 1700);
+      }
     },
     [celebrate, act],
   );
@@ -284,6 +305,14 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
   // ---------- play ----------
   const poke = useCallback(
     (who: Who) => {
+      if (hidingRef.current && who === "nano") {
+        foundRef.current("found");
+        return;
+      }
+      if (carryingRef.current && who === "nano") {
+        teachRef.current();
+        return;
+      }
       earnLesson("hello");
       const t = Date.now();
       const a = actors[who];
@@ -580,7 +609,8 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
             const id = idOf(e.target);
             if (e.isIntersecting) {
               visible.add(id);
-              lessonsForSection(id).forEach(earnLesson);
+              // The lesson lands after a few seconds of reading the section, unless the reader teaches it sooner (the lesson card on Ultra).
+              timers.push(window.setTimeout(() => visible.has(id) && lessonsForSection(id).forEach(earnLesson), 6000));
               tryReact(id);
             } else visible.delete(id);
           }
@@ -623,8 +653,14 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     onMove: (who, m) => setMoving((o) => (o[who] === m ? o : { ...o, [who]: m })),
     onLook: act,
     onVisible: (who, v) => setVisible((o) => (o[who] === v ? o : { ...o, [who]: v })),
-    onScene: setSceneId,
-    onPlace: (who, kind) => setPlace((o) => (o[who] === kind ? o : { ...o, [who]: kind })),
+    onScene: (id) => {
+      sceneIdRef.current = id;
+      setSceneId(id);
+    },
+    onPlace: (who, kind, scale) => {
+      setPlace((o) => (o[who] === kind ? o : { ...o, [who]: kind }));
+      setFit((o) => (o[who] === scale ? o : { ...o, [who]: scale }));
+    },
     onSettle: () => {
       // The page has stopped: both look at the section in front of them for a moment.
       setLookScene(true);
@@ -694,6 +730,177 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
     window.addEventListener("pointermove", on, { passive: true });
     return () => window.removeEventListener("pointermove", on);
   }, [plan.autonomous, roamers, actors, act]);
+
+  const roamRef = useRef(roam);
+  roamRef.current = roam;
+
+  // ---------- quiz ----------
+  const openQuiz = useCallback(() => {
+    setSheet(true);
+    setQuizAuto((n) => n + 1);
+  }, []);
+  const onQuizPhase = useCallback(
+    (p: QuizPhase, _row: QuizRow) => {
+      if (p === "ask") {
+        act("nano", { expr: "thinking", pop: "?" });
+        act("ultra", {});
+        say("nano", QUIZ_LINES.ask.nano);
+        return;
+      }
+      earnLesson("exam");
+      const right = p === "right";
+      // Ultra marks with the red pen: a tick for the rows that match, a cross for the rows that do not. Nano is proud, or sheepish.
+      act("ultra", { held: "papers", fx: "pen", pose: "carry", expr: right ? "happy" : "determined", micro: right ? "none" : "shake" }, 5000);
+      act("nano", right ? { expr: "proud", pop: "sparkle" } : { expr: "sad", blush: true, sweat: true }, 5000);
+      const l = right ? QUIZ_LINES.right : QUIZ_LINES.wrong;
+      runLines([
+        { who: "ultra", text: l.ultra },
+        { who: "nano", text: l.nano },
+      ]);
+    },
+    [act, earnLesson, runLines, say],
+  );
+
+  // ---------- teach Nano: drag the lesson card onto him, or focus it and press Enter on Nano ----------
+  const teach = useCallback(() => {
+    setCarrying(false);
+    const ids = lessonsForSection(sceneIdRef.current);
+    const fresh = ids.find((id) => !sessionRef.current.lessons.ids.includes(id));
+    if (fresh) {
+      earnLesson(fresh);
+      say("nano", "Noted. Thank you!", 2200);
+    } else {
+      say("nano", "Already in my notes.", 2000);
+    }
+  }, [earnLesson, say]);
+  teachRef.current = teach;
+  useEffect(() => {
+    if (!carrying) return;
+    const on = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCarrying(false);
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, [carrying]);
+
+  // ---------- come here: a click on an empty part of the page walks Nano over; press and hold and he follows the pointer ----------
+  useEffect(() => {
+    if (!plan.physics) return;
+    let down: { x: number; y: number; t: number; type: string } | null = null;
+    let holdT = 0;
+    let following: Who | null = null;
+    let moved = 0;
+    const who = (): Who => (phoneRef.current ? activeRef.current : "nano");
+    const reset = () => {
+      window.clearTimeout(holdT);
+      down = null;
+    };
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0 || !e.isPrimary || live.current.sheet || live.current.story !== "idle" || dragging.current || hidingRef.current) return;
+      if (!isEmptyTarget(e.target as unknown as ElLike)) return;
+      down = { x: e.clientX, y: e.clientY, t: performance.now(), type: e.pointerType };
+      moved = 0;
+      holdT = window.setTimeout(() => {
+        if (!down) return;
+        following = who();
+        roamRef.current.followStart(following);
+        act(following, { expr: "happy" });
+      }, holdDelay(e.pointerType));
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!down) return;
+      moved = Math.max(moved, Math.hypot(e.clientX - down.x, e.clientY - down.y));
+      if (following) roamRef.current.followMove(following, { x: e.clientX, y: e.clientY });
+      else if (e.pointerType === "touch" && moved > 24) reset();
+    };
+    const onUp = (e: PointerEvent) => {
+      if (!down) return;
+      const dt = performance.now() - down.t;
+      window.clearTimeout(holdT);
+      if (following) {
+        roamRef.current.followEnd(following);
+        act(following, { expr: "happy" }, 1200);
+        following = null;
+        down = null;
+        return;
+      }
+      const kind = pressKind(down.type, dt, moved);
+      down = null;
+      if (kind === "tap") {
+        const w = who();
+        if (roamRef.current.goTo(w, { x: e.clientX, y: e.clientY })) {
+          act(w, { expr: "wave" }, 1500);
+        }
+      }
+    };
+    const onCancel = () => {
+      if (following) {
+        roamRef.current.followEnd(following);
+        following = null;
+      }
+      reset();
+    };
+    window.addEventListener("pointerdown", onDown, { passive: true });
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("pointerup", onUp, { passive: true });
+    window.addEventListener("pointercancel", onCancel, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      reset();
+    };
+  }, [plan.physics, act]);
+
+  // ---------- hide and seek: after a long scroll, now and then, Nano ducks behind a card; a click finds him ----------
+  foundRef.current = (how) => {
+    if (!hidingRef.current) return;
+    window.clearTimeout(hideTimer.current);
+    setHiding(false);
+    seek.current = endHide(seek.current, Date.now());
+    roamRef.current.unpin("nano");
+    if (how === "found") {
+      earnLesson("hello");
+      act("nano", { expr: "laughing", pop: "sparkle" }, 2400);
+      say("nano", "You found me!", 2600);
+    } else {
+      act("nano", { expr: "wave" }, 2000);
+      say("nano", "Here I am!", 2200);
+    }
+  };
+  useEffect(() => {
+    if (!plan.physics || phone) return;
+    const onScroll = () => {
+      const y = window.scrollY;
+      seek.current = addScroll(seek.current, y - lastY.current);
+      lastY.current = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      if (hidingRef.current) return;
+      // Only when the reader has stopped for a while, not just paused.
+      if (now - lastScroll.current < 4000) return;
+      if (!canHide(seek.current, now, { busy: busy() || duoBusy.current || speaking.current, roaming: true })) return;
+      // Only sometimes: a third of the checks, three seconds apart, once the reader has stopped.
+      if (Math.random() > 0.34) return;
+      if (!roamRef.current.hide("nano")) return;
+      seek.current = startHide(seek.current, now);
+      setHiding(true);
+      // A hint that it is a game: a question mark over his head, and his antenna wiggles (see companions.css).
+      act("nano", { expr: "idle", pop: "?" });
+      hideTimer.current = window.setTimeout(() => foundRef.current("timeout"), HIDE_MS);
+    }, 3000);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.clearInterval(id);
+      window.clearTimeout(hideTimer.current);
+    };
+  }, [plan.physics, phone, busy, act]);
+  useEffect(() => {
+    if ((sheet || story.status !== "idle") && hidingRef.current) foundRef.current("timeout");
+  }, [sheet, story.status]);
 
   // On a phone one of them walks at a time, the other waits in the dock.
   useEffect(() => {
@@ -839,18 +1046,39 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
 
   const roamer = (who: Who) => {
     const r = roamers[who];
-    const size = sizes[who];
-    const svgSize = phone ? (who === "nano" ? 48 : 60) : who === "nano" ? 84 : 108;
+    const f = fit[who];
+    const size = { w: sizes[who].w * f, h: sizes[who].h * f };
+    const svgSize = (phone ? (who === "nano" ? 48 : 60) : who === "nano" ? 84 : 108) * f;
+    const hidden = who === "nano" && hiding;
+    const teachText = who === "ultra" && !hiding && activeScene?.ultra.held === "tag" && activeScene.ultra.text && lessonsForSection(sceneId).length > 0 ? activeScene.ultra.text : "";
     const left = r.px.get() < vw / 2;
     return (
       <motion.div
         key={who}
-        style={{ x: r.px, y: r.py, width: size.w, height: size.h, marginLeft: -size.w / 2, marginTop: -size.h }}
+        style={{ x: r.px, y: r.py, width: size.w, height: size.h, marginLeft: -size.w / 2, marginTop: -size.h, clipPath: hidden ? `inset(0 0 ${HIDE_CLIP * 100}% 0)` : undefined }}
         data-place={place[who]}
-        className={`pointer-events-none fixed left-0 top-0 z-40 ${sheet || !visible[who] ? "invisible" : ""}`}
+        data-hiding={hidden ? "true" : undefined}
+        className={`pointer-events-none fixed left-0 top-0 z-[35] ${sheet || !visible[who] ? "invisible" : ""}`}
       >
+        {!hidden && ["gutter", "gap", "floor"].includes(place[who]) && (
+          <div
+            aria-hidden
+            className="absolute left-1/2 h-[3px] -translate-x-1/2 rounded-full bg-line-strong/80 shadow-[0_2px_6px_rgb(0_0_0/0.14)]"
+            style={{ bottom: -1, width: Math.max(size.w * 1.2, 56) }}
+          />
+        )}
         <AnimatePresence>
-          {speech?.who === who && <Bubble key={speech.text} who={who} text={speech.text} reduce={reduce} align={left ? "left" : "right"} className={place[who] === "peek" ? (who === "nano" ? "!right-14" : "!left-14") : ""} />}
+          {speech?.who === who && !hidden && (
+            <Bubble
+              key={speech.text}
+              who={who}
+              text={speech.text}
+              reduce={reduce}
+              align={left ? "left" : "right"}
+              className={place[who] === "peek" ? (who === "nano" ? "!right-14" : "!left-14") : ""}
+              action={speech.action === "quiz" ? { label: "Quiz me", onClick: openQuiz } : undefined}
+            />
+          )}
         </AnimatePresence>
         {who === "nano" && <Sparkles burst={burst} />}
         <motion.div style={{ rotate: r.lean, originX: 0.5, originY: 1 }}>
@@ -868,8 +1096,34 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
             onJump={() => jump(who)}
             onGrab={() => onGrab(who)}
             onThrow={() => onThrow(who)}
+            label={hidden ? "Nano is hiding. Press Enter to find him." : carrying && who === "nano" ? "Nano. Press Enter to give him the lesson card." : undefined}
           />
         </motion.div>
+        {teachText && (
+          <div className="pointer-events-none absolute left-1/2 -translate-x-1/2" style={{ top: size.h * 0.8 - 8 }}>
+            <motion.button
+              type="button"
+              drag={plan.physics}
+              dragSnapToOrigin
+              dragMomentum={false}
+              aria-label={`Lesson card: ${teachText}. Press Enter, then press Enter on Nano to teach him. Or drag it onto Nano.`}
+              aria-pressed={carrying}
+              onClick={() => setCarrying((c) => !c)}
+              onDragEnd={(_, info) => {
+                const nr = roamers.nano;
+                const nf = fit.nano;
+                const rect = charRect({ x: nr.px.get(), y: nr.py.get() }, { w: sizes.nano.w * nf + 48, h: sizes.nano.h * nf + 48 });
+                const x = info.point.x - window.scrollX;
+                const y = info.point.y - window.scrollY;
+                if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) teachRef.current();
+              }}
+              style={{ touchAction: "none", width: Math.max(44, size.w * 0.62) }}
+              className={`pointer-events-auto flex h-[15px] cursor-grab items-center justify-center rounded-full border border-ink bg-surface px-1 text-[7px] font-bold leading-none text-ink focus-visible:outline-2 ${carrying ? "ring-2 ring-owned" : ""}`}
+            >
+              <span className="truncate">{teachText}</span>
+            </motion.button>
+          </div>
+        )}
       </motion.div>
     );
   };
@@ -903,7 +1157,7 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
             }
             className={
               ringOnly
-                ? "pointer-events-auto absolute inset-0 flex items-center justify-center rounded-full border border-line-strong bg-surface shadow-card"
+                ? "pointer-events-auto absolute right-0 top-0 flex size-11 items-center justify-center rounded-full border border-line-strong bg-surface shadow-card"
                 : "pointer-events-auto relative flex size-16 items-end justify-center overflow-visible rounded-full border border-line-strong bg-surface shadow-card"
             }
           >
@@ -957,6 +1211,8 @@ export default function Stage({ pending, onPendingHandled }: { pending: Companio
           onJump={jump}
           onPhase={onPhase}
           onSend={send}
+          quizAuto={quizAuto}
+          onQuizPhase={onQuizPhase}
         />
       )}
     </div>

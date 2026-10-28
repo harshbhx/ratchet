@@ -861,7 +861,8 @@ def test_dashboard_admin_key_stays_in_memory():
     hooks = (src / "lib" / "hooks.ts").read_text(encoding="utf-8")
     assert re.findall(r"localStorage\.setItem\(([^,]+),", hooks) == ['"ratchet-theme"']
     companions = (src / "components" / "companions" / "companion-storage.ts").read_text(encoding="utf-8")
-    assert sorted(re.findall(r'_KEY = "([^"]+)"', companions)) == ["ratchet-companions-hidden", "ratchet-companions-session"]
+    keys = sorted(re.findall(r'_KEY = "([^"]+)"', companions))
+    assert keys == ["ratchet-companions-hidden", "ratchet-companions-session"]
 
     holders = [p for p in src.rglob("*.ts*") if "adminKey" in p.read_text(encoding="utf-8")]
     assert holders, "no file holds the admin key: the scan below would prove nothing"

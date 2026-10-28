@@ -391,7 +391,7 @@ export const Character = forwardRef<SVGSVGElement, CharacterProps>(function Char
           </g>
         )}
         {look.fx === "door" && (
-          <g transform="translate(-22 0)">
+          <g transform="translate(-4 24) scale(0.78)">
             <rect x="-14" y="34" width="36" height="92" rx="3" fill="var(--surface-2)" stroke={INK} strokeWidth="2" />
             <rect x="-8" y="42" width="24" height="30" rx="2" fill="none" stroke={INK} strokeOpacity="0.35" strokeWidth="1.4" />
             <rect x="-8" y="80" width="24" height="36" rx="2" fill="none" stroke={INK} strokeOpacity="0.35" strokeWidth="1.4" />

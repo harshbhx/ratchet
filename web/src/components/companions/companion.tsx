@@ -21,6 +21,7 @@ export function Companion({
   moving,
   talking,
   gaze,
+  label,
   onPoke,
   onJump,
   onGrab,
@@ -35,6 +36,8 @@ export function Companion({
   moving?: "walk" | "jump" | "glide" | null;
   talking?: boolean;
   gaze?: { x: number; y: number } | null;
+  /** Overrides the accessible name (while he hides, or while a lesson card is held). */
+  label?: string;
   onPoke: () => void;
   onJump: () => void;
   onGrab?: () => void;
@@ -100,7 +103,7 @@ export function Companion({
     >
       <motion.button
         type="button"
-        aria-label={`${NAMES[who]}. Press Enter to poke.`}
+        aria-label={label ?? `${NAMES[who]}. Press Enter to poke.`}
         onClick={() => {
           if (moved.current) return;
           onPoke();

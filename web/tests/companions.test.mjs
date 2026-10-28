@@ -17,6 +17,9 @@ const game = await import("../src/components/companions/game.ts");
 const perch = await import("../src/components/companions/perch.ts");
 const scroll = await import("../src/components/companions/scroll.ts");
 const scenesMod = await import("../src/components/companions/scenes.ts");
+const quizMod = await import("../src/components/companions/quiz-model.ts");
+const comehere = await import("../src/components/companions/comehere.ts");
+const seekMod = await import("../src/components/companions/hideseek.ts");
 const { parseExams } = await import("../src/lib/exams-model.ts");
 
 const exams = parseExams(readFileSync(new URL("../src/data/exams.json", import.meta.url), "utf8"));
@@ -27,6 +30,7 @@ const everyText = () => [
   ...Object.values(reactions.sectionReactions(facts)).flatMap((r) => r.lines.map((l) => l.text)),
   ...story.storySteps(facts).map((s) => s.caption),
   ...Object.values(reactions.DUO_LINES).flatMap((ls) => ls.map((l) => l.text)),
+  ...quizMod.quizTexts(),
   ...Object.values(scenesMod.scenes(facts)).flatMap((sc) => [sc.nano.text, sc.ultra.text].filter(Boolean)),
   ...reactions.EASTER_EGG.map((l) => l.text),
   ...["sent", "answer", "limit", "error"].flatMap((p) => reactions.liveReaction(p).map((l) => l.text)),
@@ -43,7 +47,7 @@ test("about forty banter exchanges, short lines, both voices, day and night vari
   assert.ok(lines.length >= 38, `${lines.length} exchanges`);
   assert.equal(new Set(lines.map((b) => b.id)).size, lines.length);
   for (const b of lines) {
-    assert.ok(b.lines.length >= 2);
+    assert.ok(b.lines.length >= 1);
     for (const l of b.lines) assert.ok(l.text.split(/\s+/).length <= 14, l.text);
   }
   assert.ok(lines.some((b) => b.when === "night") && lines.some((b) => b.when === "day"));
@@ -343,7 +347,7 @@ test("the routing picture: catch, three tries, unsure, pass to Ultra, no model o
 // ---------- storage ----------
 test("the companions' browser storage lives in one file, behind try/catch, with the registered keys", () => {
   const src = new URL("../src/components/companions/", import.meta.url);
-  const files = ["companion-storage.ts", "companion-bus.ts", "companion-host.tsx", "stage.tsx", "sheet.tsx", "companion.tsx", "character.tsx", "actor.ts"];
+  const files = ["companion-storage.ts", "companion-bus.ts", "companion-host.tsx", "stage.tsx", "sheet.tsx", "companion.tsx", "character.tsx", "actor.ts", "quiz.tsx", "quiz-model.ts", "comehere.ts", "hideseek.ts", "roaming.ts"];
   for (const f of files) {
     const text = readFileSync(new URL(f, src), "utf8");
     const uses = /localStorage|sessionStorage|indexedDB|document\.cookie/.test(text);
@@ -598,4 +602,194 @@ test("the finale: the full meter earns a cap, and the words are about the page, 
   const src = readFileSync(new URL("../src/components/companions/stage.tsx", import.meta.url), "utf8");
   assert.match(src, /Learned from this page\. The real student still needs the gate\./);
   assert.doesNotMatch(src, /promoted|now serves|is serving/i);
+});
+
+// ---------- Quiz Nano: real exam rows, recorded answers, recorded marks ----------
+const quizText = readFileSync(new URL("../src/data/quiz.json", import.meta.url), "utf8");
+
+test("the quiz sample loads, is balanced, and every answer carries its recorded mark", () => {
+  const q = quizMod.parseQuiz(quizText);
+  assert.equal(q.source, "harshbhx/ratchet-text2sql-exams");
+  assert.ok(q.rows.length >= 40 && q.rows.length <= 60, `${q.rows.length} rows`);
+  for (const exam of ["exam1", "exam2"]) {
+    const mine = q.rows.filter((r) => r.exam === exam);
+    assert.ok(mine.length >= 20, exam);
+    const right = mine.filter((r) => r.nano.right).length;
+    assert.ok(right >= 8 && mine.length - right >= 8, `${exam}: a real mix of right and wrong (${right} of ${mine.length})`);
+  }
+  assert.equal(new Set(q.rows.map((r) => `${r.exam}:${r.i}`)).size, q.rows.length, "no row twice");
+  assert.throws(() => quizMod.parseQuiz('{"rows":[]}'));
+  assert.throws(() => quizMod.parseQuiz(JSON.stringify({ rows: [{ exam: "exam1", i: 0, question: "q", reference: "r", nano: { sql: "x" }, ultra: { sql: "x", right: true }, base: { sql: "x", right: true } }] })), "an answer without a recorded mark is refused");
+});
+
+test("the marks are the recorded ones: nothing is re-judged", () => {
+  const q = quizMod.parseQuiz(quizText);
+  for (const r of q.rows) {
+    const m = quizMod.markOf(r);
+    assert.deepEqual([m.nano, m.ultra, m.base], [r.nano.right, r.ultra.right, r.base.right]);
+  }
+  const wrong = q.rows.find((r) => !r.nano.right);
+  const right = q.rows.find((r) => r.nano.right);
+  const w = quizMod.reveal(wrong);
+  assert.deepEqual(w.map((b) => b.label), [quizMod.NANO_LABEL, quizMod.ULTRA_LABEL, quizMod.REFERENCE_LABEL]);
+  assert.equal(w[1].right, wrong.ultra.right, "Ultra's own recorded answer, with its own recorded mark");
+  assert.equal(w[2].sql, wrong.reference);
+  assert.equal(quizMod.reveal(right).length, 1, "when Nano was right only his answer shows");
+  assert.match(quizMod.verdictLine(true), /right/i);
+  assert.match(quizMod.verdictLine(false), /wrong/i);
+});
+
+test("the quiz deals every question once before it repeats", () => {
+  const q = quizMod.parseQuiz(quizText);
+  const p2 = quizMod.quizPicker(q.rows);
+  const first = new Set(Array.from({ length: q.rows.length }, () => { const r = p2.next(); return `${r.exam}:${r.i}`; }));
+  assert.equal(first.size, q.rows.length);
+});
+
+test("the quiz says where its answers come from, and never calls them live", () => {
+  assert.match(quizMod.PROVENANCE, /harshbhx\/ratchet-text2sql-exams/);
+  assert.match(quizMod.PROVENANCE, /recorded/i);
+  assert.match(quizMod.PROVENANCE, /no model was called/i);
+  assert.match(quizMod.examNote("exam2"), /evaluation only/);
+  assert.match(quizMod.examNote("exam2"), /different lab/);
+  assert.match(quizMod.examNote("exam1"), /teacher/);
+  assert.match(quizMod.MARK_NOTE, /rows are compared/);
+  for (const t of quizMod.quizTexts()) {
+    assert.doesNotMatch(t, /demo|simulat/i, t);
+    assert.doesNotMatch(t, /answers? (it|him) (gave )?live|just now|in real time|live model/i, t);
+  }
+});
+
+// ---------- come here ----------
+const el = (opts = {}) => ({ tagName: "DIV", closest: () => null, childNodes: [], ...opts });
+
+test("only an empty part of the page calls Nano: never content, a link, a field, text or a call to action", () => {
+  assert.equal(comehere.isEmptyTarget(el()), true);
+  assert.equal(comehere.isEmptyTarget(null), false);
+  assert.equal(comehere.isEmptyTarget(el({ closest: () => ({}) })), false, "inside a link, card or paragraph");
+  assert.equal(comehere.isEmptyTarget(el({ childNodes: [{ nodeType: 3, textContent: "  hello " }] })), false, "holds text of its own");
+  assert.equal(comehere.isEmptyTarget(el({ childNodes: [{ nodeType: 3, textContent: "  \n " }, { nodeType: 1, textContent: "x" }] })), true, "whitespace and child elements do not count");
+  for (const sel of ["a", "button", "input", "textarea", "p", "h2", "li", ".shadow-card", "[data-companion-avoid]", "svg", "img"]) {
+    assert.ok(comehere.CONTENT_SELECTOR.includes(sel), sel);
+  }
+});
+
+test("a click walks him over, a hold makes him follow; a finger needs a long press", () => {
+  assert.equal(comehere.pressKind("mouse", 120, 2), "tap");
+  assert.equal(comehere.pressKind("mouse", 120, 40), "none", "a drag is not a click");
+  assert.equal(comehere.pressKind("mouse", 600, 3), "hold");
+  assert.equal(comehere.pressKind("touch", 150, 2), "none", "an ordinary tap is not taken");
+  assert.equal(comehere.pressKind("touch", 700, 5), "hold");
+  assert.equal(comehere.pressKind("touch", 700, 60), "none", "a scroll is not a long press");
+  assert.ok(comehere.holdDelay("touch") > comehere.holdDelay("mouse"));
+});
+
+test("he only comes to a place he may stand: on screen, off call-to-action, off text", () => {
+  const vp = { w: 1280, h: 800 };
+  const none = { cta: [], text: [] };
+  assert.equal(comehere.validDestination({ x: 640, y: 500 }, NANO, none, vp), true);
+  assert.equal(comehere.validDestination({ x: 640, y: 60 }, NANO, none, vp), false, "under the header");
+  assert.equal(comehere.validDestination({ x: 1275, y: 500 }, NANO, none, vp), false, "off the side");
+  assert.equal(comehere.validDestination({ x: 640, y: 500 }, NANO, { cta: [{ left: 600, right: 700, top: 420, bottom: 520 }], text: [] }, vp), false);
+  assert.equal(comehere.validDestination({ x: 640, y: 500 }, NANO, { cta: [], text: [{ left: 560, right: 720, top: 400, bottom: 510 }] }, vp), false);
+  const last = { x: 300, y: 500 };
+  assert.deepEqual(comehere.followPoint({ x: 640, y: 500 }, last, NANO, { cta: [{ left: 0, right: 1280, top: 0, bottom: 800 }], text: [] }, vp), last, "a call to action in the way: he stays");
+});
+
+// ---------- hide and seek ----------
+test("hide and seek: only after a long scroll, once a visit at most, never while busy", () => {
+  const ok = { busy: false, roaming: true };
+  let st = seekMod.newSeek();
+  assert.equal(seekMod.canHide(st, 1e6, ok), false, "not before the reader has scrolled far");
+  st = seekMod.addScroll(st, 2000);
+  st = seekMod.addScroll(st, -900);
+  assert.equal(st.far, 2900);
+  assert.equal(seekMod.canHide(st, 1e6, ok), true);
+  assert.equal(seekMod.canHide(st, 1e6, { ...ok, busy: true }), false);
+  assert.equal(seekMod.canHide(st, 1e6, { ...ok, roaming: false }), false, "reduced motion and phones: no hiding");
+  st = seekMod.startHide(st, 1e6);
+  assert.deepEqual([st.hides, st.far], [1, 0]);
+  assert.equal(seekMod.canHide(seekMod.addScroll(st, 5000), 1e6 + 1000, ok), false, "he is hiding");
+  st = seekMod.endHide(st, 1e6 + 30000);
+  st = seekMod.addScroll(st, 5000);
+  assert.equal(seekMod.canHide(st, 1e6 + 40000, ok), false, "a long gap between hides");
+  assert.equal(seekMod.MAX_HIDES, 1);
+  assert.equal(st.hides, 1);
+  assert.equal(seekMod.canHide(st, 9e6, ok), false, "once is the most: rarer, so it reads as a game");
+});
+
+test("the hiding place is behind a card's top edge, with room, clear of text and calls to action", () => {
+  const vp = { w: 1280, h: 800 };
+  const cards = [card("top", 100, 90, 600), card("narrow", 100, 400, 200), card("a", 100, 400, 1100), card("low", 100, 740, 1100)];
+  const rng = () => 0.5;
+  const spot = seekMod.hideSpot(cards, vp, NANO, noZones, rng);
+  assert.ok(spot && spot.id === "hide:a", "a card with room, well inside the screen");
+  assert.ok(spot.x > 150 && spot.x < 1050);
+  assert.equal(Math.round(spot.y), Math.round(400 + NANO.h * seekMod.HIDE_CLIP), "his feet are behind the card: only the top of him shows");
+  const text = { cta: [], text: [{ left: 0, right: 1280, top: 300, bottom: 400 }] };
+  assert.equal(seekMod.hideSpot(cards, vp, NANO, text, rng), null, "text just above the card: nowhere to peek");
+  assert.equal(seekMod.hideSpot([], vp, NANO, noZones, rng), null);
+  assert.ok(seekMod.HIDE_CLIP > 0.5 && seekMod.HIDE_CLIP < 0.8);
+  // Never right under a section's title.
+  const underTitle = [card("t", 100, 300, 1100)];
+  assert.equal(seekMod.hideSpot(underTitle, vp, NANO, noZones, rng, [240]), null, "a card just under a title");
+  assert.ok(seekMod.hideSpot(underTitle, vp, NANO, noZones, rng, [20]), "a title far above does not matter");
+});
+
+// ---------- room beside the content ----------
+test("the gutter beside the content: Nano and Ultra stand whole in it, drawn a little smaller if it is narrow", () => {
+  const vp = { w: 1280, h: 800 };
+  const content = [{ left: 96, right: 1184, top: 100, bottom: 700 }];
+  const g = perch.gutterOf(vp, content);
+  assert.deepEqual(g, { left: 96, right: 96 });
+  const n = perch.gutterCandidates("nano", vp, NANO, g);
+  assert.ok(n.length > 5 && n.every((c) => c.kind === "gutter" && c.scale >= perch.MIN_FIT));
+  assert.ok(n[0].x + (NANO.w * n[0].scale) / 2 <= vp.w - 4, "never clipped by the edge");
+  assert.ok(n[0].x - (NANO.w * n[0].scale) / 2 >= 1184, "and clear of the content");
+  const u = perch.gutterCandidates("ultra", vp, ULTRA, g);
+  assert.ok(u.length > 5 && u[0].scale < 1 && u[0].scale >= perch.MIN_FIT, "Ultra is drawn smaller to fit");
+  assert.ok(u[0].x - (ULTRA.w * u[0].scale) / 2 >= 4);
+  assert.deepEqual(perch.gutterCandidates("ultra", vp, ULTRA, { left: 40, right: 40 }), [], "a 40px gutter is too narrow: elsewhere");
+  assert.deepEqual(perch.gutterOf(vp, []), { left: 0, right: 0 });
+  // The gutter is chosen when nothing else is clear, and a gutter perch passes the text test.
+  const full = { cta: [], text: [{ left: 96, right: 1184, top: 0, bottom: 800 }] };
+  const pick = perch.choosePerch([...n, ...perch.floorCandidates("nano", vp)], "nano", { vp, size: NANO, zones: full });
+  assert.equal(pick.cand.kind, "gutter");
+});
+
+test("the gaps between blocks of text, and the peek beside a section title", () => {
+  const vp = { w: 1280, h: 800 };
+  const text = [{ left: 100, right: 700, top: 100, bottom: 300 }, { left: 100, right: 700, top: 420, bottom: 600 }, { left: 100, right: 700, top: 610, bottom: 700 }];
+  const gaps = perch.gapCandidates("nano", vp, NANO, text);
+  assert.equal(gaps.length, 1, "only the 120px gap is tall enough");
+  assert.equal(gaps[0].y, 412);
+  assert.ok(gaps[0].kind === "gap" && perch.perchCost(gaps[0], "nano", { vp, size: NANO, zones: { cta: [], text } }) < Infinity);
+  const peeks = perch.peekCandidates("nano", { w: 390, h: 844 }, [300, 5]);
+  assert.ok(peeks.some((c) => c.id === "peekh:300") && !peeks.some((c) => c.id === "peekh:5"), "beside the title, in view");
+  const title = peeks.find((c) => c.id === "peekh:300");
+  const plain = { ...title, id: "peek:300" };
+  const ctx = { vp: { w: 390, h: 844 }, size: { w: 48, h: 52 }, zones: noZones };
+  assert.ok(perch.perchCost(title, "nano", ctx) < perch.perchCost(plain, "nano", ctx), "alongside a title is preferred");
+});
+
+// ---------- standing on something, under the header ----------
+test("in the gutter he stands at the level of a real edge on the page, not on an arbitrary grid line", () => {
+  const vp = { w: 1280, h: 800 };
+  const g = { left: 96, right: 96 };
+  const edges = [300, 305, 520, 90, 790];
+  const c = perch.gutterCandidates("nano", vp, NANO, g, edges);
+  assert.deepEqual(c.map((x) => x.y), [300, 520, 790], "near-duplicate edges merge; edges under the header line or off the screen are dropped");
+  assert.ok(c.every((x) => x.kind === "gutter"));
+  assert.ok(perch.gutterCandidates("nano", vp, NANO, g).length > 5, "with no edge in view he stands on the grid");
+});
+
+test("nothing stands above the line under the header: perches and destinations obey the header's real bottom", () => {
+  const vp = { w: 1280, h: 800 };
+  const cand = { id: "x", kind: "gutter", x: 1232, y: 200 };
+  const ctx = { vp, size: NANO, zones: noZones };
+  assert.ok(perch.perchCost(cand, "nano", ctx) < Infinity, "default line: 72px");
+  assert.equal(perch.perchCost(cand, "nano", { ...ctx, top: 120 }), Infinity, "a taller header pushes the line down: his head would touch it");
+  assert.ok(perch.perchCost({ ...cand, y: 240 }, "nano", { ...ctx, top: 120 }) < Infinity);
+  assert.equal(comehere.validDestination({ x: 640, y: 150 }, NANO, noZones, vp, 120), false);
+  assert.equal(comehere.validDestination({ x: 640, y: 300 }, NANO, noZones, vp, 120), true);
 });

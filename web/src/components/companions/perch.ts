@@ -15,7 +15,9 @@ export interface Size {
 }
 export interface Cand extends Pt {
   id: string;
-  kind: "card" | "heading" | "floor" | "peek";
+  kind: "card" | "heading" | "floor" | "peek" | "gutter" | "gap";
+  /** Drawn smaller to fit (a narrow gutter); 1 when absent. */
+  scale?: number;
 }
 export interface Zones {
   /** Calls to action, the story bar: never stood on. */
@@ -64,9 +66,76 @@ export function candidatesFromItems(items: Item[], who: Who): Cand[] {
  * Tucked into the gutter: half out of the screen at the edge, only the head and hands in view, leaning in. Always available, so
  * there is always somewhere to be that is not on top of text.
  */
-export function peekCandidates(who: Who, vp: { w: number; h: number }): Cand[] {
+export function peekCandidates(who: Who, vp: { w: number; h: number }, headerYs: number[] = []): Cand[] {
   const out: Cand[] = [];
-  for (let y = 130; y <= vp.h - 10; y += 56) out.push({ id: `peek:${y}`, kind: "peek", x: who === "nano" ? vp.w - 2 : 2, y });
+  const x = who === "nano" ? vp.w - 2 : 2;
+  for (let y = 130; y <= vp.h - 10; y += 56) out.push({ id: `peek:${y}`, kind: "peek", x, y });
+  // Beside a section's title: the walker peeks out next to the heading, never over its text.
+  for (const y of headerYs) if (y >= 130 && y <= vp.h - 10) out.push({ id: `peekh:${Math.round(y)}`, kind: "peek", x, y });
+  return out;
+}
+
+export interface Gutters {
+  left: number;
+  right: number;
+}
+
+/** The room beside the content, from the cards and text in view: the distance from the screen's edge to the outermost content. */
+export function gutterOf(vp: { w: number; h: number }, rects: Rect[]): Gutters {
+  let left = Number.POSITIVE_INFINITY;
+  let right = 0;
+  for (const r of rects) {
+    if (r.right - r.left < 40 || r.bottom < 0 || r.top > vp.h) continue;
+    left = Math.min(left, r.left);
+    right = Math.max(right, r.right);
+  }
+  if (!Number.isFinite(left)) return { left: 0, right: 0 };
+  return { left: Math.max(0, left), right: Math.max(0, vp.w - right) };
+}
+
+/** The smallest a character may be drawn to fit a gutter, as a share of his full size. */
+export const MIN_FIT = 0.7;
+
+/**
+ * A place in the gutter beside the content: the whole character, not clipped, drawn a little smaller if the gutter is narrow. Nano takes the
+ * right gutter and Ultra the left. None when the gutter would need him smaller than MIN_FIT.
+ */
+export function gutterCandidates(who: Who, vp: { w: number; h: number }, size: Size, g: Gutters, edgeYs: number[] = []): Cand[] {
+  const side = who === "nano" ? g.right : g.left;
+  const scale = Math.min(1, (side - 14) / size.w);
+  if (scale < MIN_FIT) return [];
+  const x = who === "nano" ? vp.w - side / 2 : side / 2;
+  // He stands at the level of a real edge on the page (a card's top, a section's top line) so he reads as standing on something;
+  // only with no edge in view does he stand on the grid.
+  const rows: number[] = [];
+  for (const y of [...edgeYs].sort((a, b) => a - b)) if (!rows.some((r) => Math.abs(r - y) < 24)) rows.push(Math.round(y));
+  if (!rows.length) for (let y = 130; y <= vp.h - 10; y += 56) rows.push(y);
+  const out: Cand[] = [];
+  for (const y of rows) {
+    if (y >= 130 && y <= vp.h - 10) out.push({ id: `gutter:${y}`, kind: "gutter", x, y, scale: Math.round(scale * 100) / 100 });
+  }
+  return out;
+}
+
+/** Where a character can stand in the white space between lines of content: the gaps between blocks of text that are tall enough. */
+export function gapCandidates(who: Who, vp: { w: number; h: number }, size: Size, text: Rect[]): Cand[] {
+  const spans = text
+    .filter((r) => r.bottom > 0 && r.top < vp.h && r.right - r.left > 40)
+    .map((r) => [Math.max(0, r.top), Math.min(vp.h, r.bottom)] as const)
+    .sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const [a, b] of spans) {
+    const last = merged[merged.length - 1];
+    if (last && a <= last[1] + 2) last[1] = Math.max(last[1], b);
+    else merged.push([a, b]);
+  }
+  const out: Cand[] = [];
+  const x = who === "nano" ? vp.w * 0.8 : vp.w * 0.2;
+  for (let i = 0; i + 1 < merged.length; i++) {
+    const top = merged[i]![1];
+    const bottom = merged[i + 1]![0];
+    if (bottom - top >= size.h + 16) out.push({ id: `gap:${i}:${Math.round(top)}`, kind: "gap", x, y: bottom - 8 });
+  }
   return out;
 }
 
@@ -118,7 +187,8 @@ export interface Ctx {
  */
 export function perchCost(c: Cand, who: Who, ctx: Ctx): number {
   const { vp, size, zones } = ctx;
-  const full = charRect(c, size);
+  const sz = c.scale ? { w: size.w * c.scale, h: size.h * c.scale } : size;
+  const full = charRect(c, sz);
   const peek = c.kind === "peek";
   const top = ctx.top ?? 72;
   if (full.top < top || full.bottom > vp.h) return Number.POSITIVE_INFINITY;
@@ -129,7 +199,7 @@ export function perchCost(c: Cand, who: Who, ctx: Ctx): number {
   let txt = 0;
   for (const z of zones.cta) cta += overlapArea(r, z);
   for (const z of zones.text) txt += overlapArea(r, z);
-  if (cta / area > 0.02 || txt / area > (peek ? 0.2 : 0.06)) return Number.POSITIVE_INFINITY;
+  if (cta / area > 0.004 || txt / area > (peek ? 0.2 : 0.06)) return Number.POSITIVE_INFINITY;
   let cost = cta * 0.5 + txt * 0.2;
   const prefY = vp.h * (ctx.prefRatio ?? (who === "nano" ? 0.64 : 0.46));
   cost += Math.abs(c.y - prefY) * 0.3;
@@ -137,6 +207,8 @@ export function perchCost(c: Cand, who: Who, ctx: Ctx): number {
   if (ctx.other && Math.abs(c.x - ctx.other.x) < size.w * 1.1 && Math.abs(c.y - ctx.other.y) < size.h) cost += 60;
   if (c.kind === "floor") cost += 25;
   if (peek) cost += 35;
+  if (c.kind === "gutter") cost -= 25;
+  if (c.id.startsWith("peekh:")) cost -= 20;
   if (ctx.current && c.id === ctx.current) cost -= 40;
   return cost;
 }
@@ -179,7 +251,7 @@ export function gatherPair(vp: { w: number; h: number }, size: { nano: Size; ult
       let txt = 0;
       for (const z of zones.cta) cta += overlapArea(r, z);
       for (const z of zones.text) txt += overlapArea(r, z);
-      if (cta / area > 0.02 || txt / area > 0.06) ok = false;
+      if (cta / area > 0.004 || txt / area > 0.06) ok = false;
       cost += cta * 0.5 + txt * 0.2;
     }
     if (ok && cost < bestCost - 1) {

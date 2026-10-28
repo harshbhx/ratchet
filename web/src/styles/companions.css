@@ -244,6 +244,10 @@
   40% { opacity: 1; }
   100% { opacity: 0.96; }
 }
+/* hiding is a game: his antenna wiggles where it shows */
+.cp-root [data-hiding="true"] .cp-antenna {
+  animation: cp-wobble 0.45s ease-in-out infinite;
+}
 .cp-root[data-paused="true"] * {
   animation-play-state: paused !important;
 }

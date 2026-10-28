@@ -2,11 +2,11 @@
 // characters. Kept per visit (one browser session) and never across days. Pure: tests/companions.test.mjs.
 
 export const LESSONS = [
-  { id: "hello", label: "Say hello", hint: "Poke Nano or Ultra" },
+  { id: "hello", label: "Say hello", hint: "Poke Nano or Ultra, or find Nano when he hides" },
   { id: "rent", label: "Every request is rent", hint: "Visit the first chapter" },
   { id: "cascade", label: "How a request is routed", hint: "Visit \"How it turns\" or play the routing picture" },
   { id: "night", label: "Night School", hint: "Visit \"Watch it learn\"" },
-  { id: "exam", label: "The exam", hint: "Visit the real results" },
+  { id: "exam", label: "The exam", hint: "Visit the real results, or quiz Nano" },
   { id: "gate", label: "The gate says not yet", hint: "Visit \"One way only\"" },
   { id: "adapter", label: "Your adapter", hint: "Visit the Nebius or integration sections, send a live request or watch the story" },
 ] as const;
