@@ -4,14 +4,14 @@
 # together. The image's pip steps after torch read this file as constraints, so the two files disagreeing fails the build,
 # and tests/test_nightschool.py::test_dockerfile_is_pinned checks them offline.
 torch==2.11.0
-transformers==4.57.6
+transformers==5.20.1
 trl==1.16.0
 peft==0.21.2
 accelerate==1.15.0
-datasets==4.8.5
+datasets==5.1.0
 causal-conv1d==1.6.2.post1
 mamba-ssm==2.3.2.post1
 ninja==1.13.0
-packaging==26.2
-setuptools==82.0.1
-wheel==0.47.0
+packaging==26.0
+setuptools==81.0.0
+wheel==0.46.3

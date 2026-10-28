@@ -28,7 +28,7 @@ def record_main(argv: list[str], client: httpx.Client | None = None) -> int:
     ap.add_argument("--base-url", default="http://localhost:8000")
     ap.add_argument("--judge-code", default=os.environ.get("RATCHET_SCOUT_JUDGE_CODE") or None)
     ap.add_argument("--out", default=DEFAULT_DIR)
-    ap.add_argument("--allow-mock", action="store_true", help="keep a run from a mock-mode gateway (labelled as a simulation)")
+    ap.add_argument("--allow-mock", action="store_true", help="keep a run from a mock-mode gateway (labelled as a mock-mode run)")
     args = ap.parse_args(argv)
     try:
         rec = record(args.base_url, args.question, client=client, judge_code=args.judge_code, allow_mock=args.allow_mock)

@@ -25,9 +25,11 @@ OUTCOMES = ("done", "error", "search_unavailable")  # how a run ended (`scout_ru
 MAX_TRACKED_RUNS = 1000  # run ids whose spend row this guard still updates; older ones are forgotten
 MAX_TRACKED_IPS = 4096  # past this many per-IP windows, those with no run in the last hour are dropped
 # Refusals. None of them hints that a judge code exists.
-PUBLIC_RUNS_USED = "The public demo has reached its run limit for today. Try again tomorrow (UTC), or run Ratchet yourself."
-BUDGET_USED = "The daily demo budget is used up. Try again tomorrow (UTC), or run Ratchet yourself."
-JUDGE_USED = "Today's demo allowance, judges' share included, is used up."
+PUBLIC_RUNS_USED = (
+    "The live gateway has reached its Scout run limit for today. Try again tomorrow (UTC), or run Ratchet yourself."
+)
+BUDGET_USED = "The daily Scout budget is used up. Try again tomorrow (UTC), or run Ratchet yourself."
+JUDGE_USED = "Today's Scout allowance, judges' share included, is used up."
 
 
 @dataclass

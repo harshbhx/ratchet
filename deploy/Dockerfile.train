@@ -1,26 +1,25 @@
-# Training image for Night School (Nebius Serverless Job): CUDA 12.8 devel, torch, Transformers, PEFT, TRL and the
-# Mamba kernels Nemotron-H's layers run on. Every package is pinned to an exact version, and deploy/train-versions.txt
-# lists the same pins: the pip steps after torch read it as constraints, so the two files disagreeing, or a dependency
-# that would move a pinned package, fails the build (tests/test_nightschool.py checks the two offline). The versions
-# are candidates read on Oct 21, 2026; the first smoke job (the 200-row smoke job, `bash deploy/train_job.sh test`) will
-# confirm them, or its versions.json replaces them here and in the list together. Unsloth is not installed: its release of
-# Oct 19, 2026 requires trl<=1.15.0 (ADR 0145). Build from the repository root: docker build -f deploy/Dockerfile.train .
-FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
+# Training image for Night School (Nebius Serverless Job). It reproduces the environment of the 27 Oct 2026 round-2 retrain
+# that ran on a Nebius L40S (evidence/text2sql-round2-nebius/data/run.sh and logs/pip-freeze.txt): the same base image, so the
+# same Python 3.12, torch 2.11.0+cu128 and CUDA 12.8 devel toolchain, plus the same pinned libraries. deploy/train-versions.txt
+# lists every pin; the pip steps read it as constraints, so the two files disagreeing, or a dependency that would move a
+# pinned package, fails the build (tests/test_nightschool.py checks the two offline).
+# The Mamba kernels (causal-conv1d, mamba-ssm) are NOT compiled here: a GPU-less builder compiles for the wrong
+# architectures and for hours. As in run.sh, deploy/install_kernels.sh restores the wheels built for the L40S (sm_89) from the
+# job's bucket (/data/wheels-8.9) when the job starts, and compiles them with run.sh's flags only when they are missing.
+# Unsloth is not installed: its release of Oct 19, 2026 requires trl<=1.15.0 (ADR 0145). Build from the repository root:
+# docker build -f deploy/Dockerfile.train .
+FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel
 
-# python-is-python3: the job runs `python -m ratchet.nightschool.train`, and Ubuntu has no `python` without it.
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python-is-python3 git && rm -rf /var/lib/apt/lists/*
+# git, ninja-build and build-essential serve the compile fallback in install_kernels.sh, as run.sh's apt step did.
+RUN apt-get update && apt-get install -y --no-install-recommends git ninja-build build-essential && rm -rf /var/lib/apt/lists/*
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
-# 2.11.0 is the newest torch on the CUDA 12.8 index (download.pytorch.org/whl/cu128, read Oct 21, 2026).
-RUN pip install --no-cache-dir "torch==2.11.0" --index-url https://download.pytorch.org/whl/cu128
 COPY deploy/train-versions.txt /tmp/train-versions.txt
-# transformers 4.57.6 is the last 4.x (TRL 1.16.0 needs 4.56.2 or later); the model's own code was saved with 4.53.0.
-RUN pip install --no-cache-dir -c /tmp/train-versions.txt "trl==1.16.0" "transformers==4.57.6" "peft==0.21.2" "accelerate==1.15.0" "datasets==4.8.5"
-# Build tools for the Mamba kernels, which compile against the torch above when no prebuilt wheel matches it.
-RUN pip install --no-cache-dir -c /tmp/train-versions.txt "ninja==1.13.0" "packaging==26.2" "setuptools==82.0.1" "wheel==0.47.0"
-# A kernel that fails to build fails the image: without them the model falls back to slow code or fails on the GPU.
-RUN pip install --no-cache-dir --no-build-isolation -c /tmp/train-versions.txt "causal-conv1d==1.6.2.post1" "mamba-ssm==2.3.2.post1"
-RUN python -c "import torch, mamba_ssm, causal_conv1d; assert torch.version.cuda == '12.8', torch.version.cuda"
+# --ignore-installed: the base image's own wheel and setuptools have no pip RECORD to uninstall.
+RUN pip install --no-cache-dir --ignore-installed -c /tmp/train-versions.txt "ninja==1.13.0" "packaging==26.0" "setuptools==81.0.0" "wheel==0.46.3"
+RUN pip install --no-cache-dir -c /tmp/train-versions.txt "trl==1.16.0" "transformers==5.20.1" "peft==0.21.2" "accelerate==1.15.0" "datasets==5.1.0"
+RUN python -c "import torch, trl, transformers, peft; assert torch.__version__.startswith('2.11.0') and torch.version.cuda == '12.8', (torch.__version__, torch.version.cuda)"
 
 WORKDIR /app
+COPY deploy/install_kernels.sh /app/install_kernels.sh
 COPY ratchet /app/ratchet
 ENV PYTHONPATH=/app

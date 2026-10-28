@@ -37,7 +37,7 @@ CMD=(nebius ai job create
   --disk-size 200Gi
   --timeout 2h
   --container-command bash
-  --args "-c 'python -m ratchet.nightschool.train --data /data/night/train.jsonl --base ${BASE} --out /data/adapters/${VERSION}'")
+  --args "-c 'bash /app/install_kernels.sh && python -m ratchet.nightschool.train --data /data/night/train.jsonl --base ${BASE} --out /data/adapters/${VERSION}'")
 if [[ -n "${RATCHET_SUBNET_ID:-}" ]]; then CMD+=(--subnet-id "${RATCHET_SUBNET_ID}"); fi
 if [[ -n "${RATCHET_REGISTRY_SECRET:-}" ]]; then CMD+=(--registry-secret "${RATCHET_REGISTRY_SECRET}"); fi
 if [[ "${DRY_RUN}" == "1" ]]; then CMD+=(--dry-run); fi

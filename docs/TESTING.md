@@ -28,7 +28,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_system.py` | 21 |
 | `tests/test_hardening.py` | 105 (70 functions; one has 11 cases, two have 8, one has 6, one has 4, two have 2) |
 | `tests/test_resilience.py` | 90 (50 functions; one has 22 cases, two have 7, one has 6, one has 3) |
-| `tests/test_scout.py` | 47 |
+| `tests/test_scout.py` | 45 |
 | `tests/test_contract.py` | 59 (47 functions; one has 9 cases, one has 4) |
 | `tests/test_openai_compat.py` | 144 (37 functions; one has 87 cases, one has 22) |
 | `tests/test_traceability.py` | 47 (23 functions; one has 23 cases) |
@@ -49,7 +49,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_perf.py` | 25 |
 | `tests/test_security.py` | 12 |
 | `tests/test_observability.py` | 29 (28 functions; one has 2 cases) |
-| `tests/test_readiness.py` | 51 (20 functions; one has 31 cases, one 2) |
+| `tests/test_readiness.py` | 52 (21 functions; one has 31 cases, one 2) |
 | `tests/test_idempotency.py` | 25 |
 | `tests/test_offpath.py` | 32 |
 | `tests/test_attribution.py` | 10 |
@@ -1105,6 +1105,7 @@ The startup configuration check, the config check CLI, liveness and readiness (F
 | `test_readyz_in_mock_mode_checks_the_ledger_only` | Mock mode: `ledger` and `config` (with the warning's message) only, the flags, `Cache-Control: no-store` |
 | `test_readyz_503_when_the_ledger_cannot_be_written` | A read-only connection and a closed file ledger are 503 with `read_only` and `closed`; a lock held past the probe's wait is 200 `degraded` (`lock_timeout`, `busy_runs` 1) and 503 when the next probe still finds it held, `ready` once released; a probe that outlasts its caller (`timeout`) counts as busy too; results are cached for 15 s on the runtime's clock; no failures rows |
 | `test_readyz_reports_missing_adapters_and_queues_their_reload` | Teacher `/models` 200 and a student `/models` without the canary's `student-v3`: 200 `degraded`, `missing_adapters=['student-v3']`, the reload sent to the endpoint; each key sent to its own endpoint; no URL or key in the answer; one probe per TTL, the student's failed result for 15 s; `ready` once the adapter is listed; an ok student result reused for 5 minutes |
+| `test_readyz_retries_a_timed_out_teacher_check_once` | FR-12.30, NFR-2: a first `/models` call that times out is tried once more; a second answer is `ready`, two timeouts are `degraded` (`ConnectTimeout`), a refused connection is not retried, and the teacher's wait stays under 5 s |
 | `test_readyz_follows_the_teacher` | An open teacher breaker is 503, unless a fallback teacher or a standing-in student keeps it 200 `degraded`; a 401 model list is 503; a 500, an unreadable list, a list without the teacher model and a connection error are `degraded` (the error named by class, no URL); an open student breaker is `degraded`; without a student endpoint the hosted fallback is reported |
 | `test_readyz_recovers_from_an_open_teacher_breaker_without_traffic` | An open teacher breaker is 503 while it waits; past its wait, with no request at all for up to a day, 200 `degraded` with `probe_due` while `/models` answers, 503 while the endpoint is unreachable; half-open is `degraded`; a failed probe is 503 for the doubled wait, a successful one `ready`; a fallback teacher's due probe counts on its own endpoint, and on the teacher's only when the endpoint answers |
 | `test_hung_endpoints_never_make_the_ledger_look_unwritable` | Teacher and student `/models` that hang hold both HTTP probe threads; the ledger's own thread still answers, 200 `degraded`, also once its result is stale; the hung runs are shared, not started again |
