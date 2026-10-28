@@ -1825,7 +1825,7 @@ def test_train_job_uses_job_create(tmp_path):
     base = Settings().student_base_model
     assert shlex.split(_opt(argv, "--args") or "") == [
         "-c",
-        f"python -m ratchet.nightschool.train --data /data/night/train.jsonl --base {base} --out /data/adapters/student-v3",
+        f"bash /app/install_kernels.sh && python -m ratchet.nightschool.train --data /data/night/train.jsonl --base {base} --out /data/adapters/student-v3",
     ]
     assert not {"--subnet-id", "--registry-secret", "--dry-run"} & set(argv)
     assert "Submitted ratchet-student-v3" in r.stdout and "+ nebius ai job create" in r.stderr
