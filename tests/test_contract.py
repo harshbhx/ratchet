@@ -1344,7 +1344,9 @@ def test_replay_columns_are_logged_without_extra_calls():
     for name, kwargs, want, calls in cases:
         row, logged, made = run(**kwargs)
         assert logged[:3] == want[:3], name
-        assert (logged[3] is None) == (want[3] is None) and logged[3] == pytest.approx(want[3], rel=1e-12), name
+        assert (logged[3] is None) == (want[3] is None) and (want[3] is None or logged[3] == pytest.approx(want[3], rel=1e-12)), (
+            name
+        )
         assert made == calls, name
         if row["served_by"] == "student" and row["teacher_cost_usd"] == 0:  # no teacher answer: the formula, to the bit
             assert row["baseline_est_usd"] == row["baseline_cost_usd"], name
