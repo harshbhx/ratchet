@@ -76,6 +76,8 @@ docker push <registry>/ratchet-train:0.1
 export RATCHET_TRAIN_IMAGE=<registry>/ratchet-train:0.1
 ```
 
+A prebuilt image is published by `.github/workflows/build-train-image.yml` (run it from the Actions tab, or push to `ci/train-image`) as `ghcr.io/harshbhx/ratchet-train:<git sha>` and `:latest`; set `RATCHET_TRAIN_IMAGE=ghcr.io/harshbhx/ratchet-train:<git sha>` to use it. The package must be public for Nebius to pull it without `RATCHET_REGISTRY_SECRET`. The image holds no secrets. The workflow sets `TORCH_CUDA_ARCH_LIST=8.9` (the L40S) as the 27 Oct round-2 retrain did; the two kernels' own build scripts also add other architectures.
+
 Build from the repository root (the image copies `deploy/train-versions.txt` and `ratchet/`). The image is CUDA 12.8 devel with exact versions of torch, Transformers, PEFT, TRL, Accelerate, datasets and the Mamba kernels (`causal-conv1d`, `mamba-ssm`) that Nemotron-H's layers run on ([ADR 0145](adr/0145-train-on-the-served-prompt.md)):
 
 - `deploy/train-versions.txt` lists every pin, and each pip step after torch reads it as constraints, so a version that differs between the two files, or a dependency that would move a pinned package, fails the build. `tests/test_nightschool.py::test_dockerfile_is_pinned` checks the two files offline.
