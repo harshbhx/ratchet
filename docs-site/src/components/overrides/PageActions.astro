@@ -9,7 +9,15 @@
  * left out on a page that has no source file. Nothing is sent from this site: the page text goes to the clipboard only when the
  * reader chooses to copy it, and the assistant links carry the page's address, never its text.
  */
+import { readFileSync } from 'node:fs';
+
 const route = Astro.locals.starlightRoute;
+let version = '';
+try {
+  version = readFileSync(new URL('../../../../pyproject.toml', import.meta.url), 'utf8').match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? '';
+} catch {
+  version = '';
+}
 const title = String(route.entry.data.title ?? 'this page');
 const page = new URL(Astro.url.pathname, Astro.site ?? Astro.url).href;
 // The edit link points at the source file on GitHub (docs/ for the reference pages, docs-site/ for the guides).
@@ -17,9 +25,9 @@ const edit = route.editUrl ? route.editUrl.toString() : '';
 const blob = edit.replace('/edit/', '/blob/');
 const raw = edit.replace('https://github.com/', 'https://raw.githubusercontent.com/').replace('/edit/', '/');
 const assistants = [
-  { name: 'ChatGPT', hint: 'Ask about this page', base: 'https://chatgpt.com/?q=', icon: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12Z' },
-  { name: 'Claude', hint: 'Ask about this page', base: 'https://claude.ai/new?q=', icon: 'M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4' },
-  { name: 'Perplexity', hint: 'Search with this page as the source', base: 'https://www.perplexity.ai/search?q=', icon: 'M12 3 4 8v8l8 5 8-5V8l-8-5Zm0 0v18M4 8l8 5 8-5' },
+  { name: 'ChatGPT', hint: 'Ask about this page', base: 'https://chatgpt.com/?q=', icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' },
+  { name: 'Claude', hint: 'Ask about this page', base: 'https://claude.ai/new?q=', icon: 'M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z' },
+  { name: 'Perplexity', hint: 'Search with this page as the source', base: 'https://www.perplexity.ai/search?q=', icon: 'M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.3-4.3' },
 ];
 const ask = (src: string) =>
   encodeURIComponent(
@@ -27,7 +35,7 @@ const ask = (src: string) =>
   );
 ---
 
-<div class="rt-pa" data-title={title} data-url={page} data-raw={raw} data-blob={blob}>
+<div class="rt-pa" data-title={title} data-url={page} data-raw={raw} data-blob={blob} data-version={version}>
   <div class="rt-pa__group">
     <button type="button" class="rt-pa__main" data-copy="page">
       <span class="rt-pa__ico" data-ico="copy" aria-hidden="true">
@@ -44,10 +52,15 @@ const ask = (src: string) =>
   </div>
 
   <div class="rt-pa__menu" id="rt-pa-menu" role="menu" aria-label="Page actions" hidden>
-    <p class="rt-pa__label">This page</p>
+    <p class="rt-pa__label">This page <span class="rt-pa__chip" data-tokens hidden></span></p>
     <button type="button" class="rt-pa__item" role="menuitem" data-copy="page">
       <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg></span>
       <span class="rt-pa__text"><strong>Copy page</strong><small>As Markdown, for any assistant or editor</small></span>
+      <kbd class="rt-pa__kbd" aria-hidden="true">Shift C</kbd>
+    </button>
+    <button type="button" class="rt-pa__item" role="menuitem" data-copy="prompt">
+      <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6M12 19h8"></path></svg></span>
+      <span class="rt-pa__text"><strong>Copy as a prompt</strong><small>Markdown with a short context header</small></span>
     </button>
     {
       raw && (
@@ -71,6 +84,10 @@ const ask = (src: string) =>
       <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg></span>
       <span class="rt-pa__text"><strong>Copy link</strong><small>The address of this page</small></span>
     </button>
+    <button type="button" class="rt-pa__item" role="menuitem" data-copy="section">
+      <span class="rt-pa__tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"></path></svg></span>
+      <span class="rt-pa__text"><strong>Copy link to this section</strong><small data-section-name>The heading you are reading</small></span>
+    </button>
 
     <p class="rt-pa__label">Ask AI</p>
     {
@@ -84,6 +101,7 @@ const ask = (src: string) =>
     }
   </div>
   <span class="rt-pa__status" role="status" aria-live="polite" data-status></span>
+  <div class="rt-pa__toast" data-toast hidden></div>
 </div>
 
 <style>
@@ -181,8 +199,98 @@ const ask = (src: string) =>
     border-radius: 0.9rem;
     background: var(--sl-color-bg);
     box-shadow: 0 16px 40px rgb(0 0 0 / 0.28);
-    animation: rt-menu 0.14s ease-out;
+    animation: rt-menu 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
     transform-origin: top left;
+  }
+  /* A hairline of brand colour along the menu's top edge. */
+  .rt-pa__menu::before {
+    content: '';
+    position: absolute;
+    inset: 0 1rem auto 1rem;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--rt-owned, #3987e5), var(--rt-rented, #d95926), transparent);
+    opacity: 0.8;
+  }
+  .rt-pa__chip {
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.45rem;
+    border: 1px solid var(--rt-line, var(--sl-color-hairline));
+    border-radius: 999px;
+    color: var(--sl-color-gray-2);
+    font-size: 0.7rem;
+    font-weight: 500;
+  }
+  .rt-pa__chip[hidden] {
+    display: none;
+  }
+  .rt-pa__kbd {
+    flex: none;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--rt-line-strong, var(--sl-color-hairline));
+    border-radius: 0.35rem;
+    background: var(--rt-surface-2, transparent);
+    color: var(--sl-color-gray-2);
+    font-family: var(--rt-font-mono, monospace);
+    font-size: 0.68rem;
+  }
+  @media (hover: none) {
+    .rt-pa__kbd {
+      display: none;
+    }
+  }
+  .rt-pa__toast {
+    position: fixed;
+    z-index: 70;
+    left: 50%;
+    bottom: 1.5rem;
+    transform: translateX(-50%);
+    max-width: calc(100vw - 2rem);
+    padding: 0.55rem 0.95rem;
+    border: 1px solid var(--rt-line-strong, var(--sl-color-hairline));
+    border-radius: 0.7rem;
+    background: var(--sl-color-bg);
+    color: var(--sl-color-white);
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.3);
+    font-size: 0.82rem;
+    animation: rt-menu 0.2s ease-out;
+  }
+  .rt-pa__toast[hidden] {
+    display: none;
+  }
+  .rt-pa__toast span {
+    color: var(--sl-color-gray-2);
+  }
+  /* On a phone the menu is a sheet at the bottom of the screen. */
+  @media (max-width: 40rem) {
+    .rt-pa__menu {
+      position: fixed;
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: auto;
+      max-width: none;
+      max-height: 78dvh;
+      overflow-y: auto;
+      padding: 0.6rem 0.6rem calc(0.8rem + env(safe-area-inset-bottom));
+      border-radius: 1.1rem 1.1rem 0 0;
+      transform-origin: bottom center;
+      animation: rt-sheet 0.26s cubic-bezier(0.34, 1.2, 0.64, 1);
+    }
+    .rt-pa__item {
+      min-height: 3rem;
+    }
+    .rt-pa__toast {
+      bottom: 5rem;
+    }
+  }
+  @keyframes rt-sheet {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: none;
+    }
   }
   .rt-pa__menu[hidden] {
     display: none;
@@ -265,6 +373,7 @@ const ask = (src: string) =>
   }
   @media (prefers-reduced-motion: reduce) {
     .rt-pa__menu,
+    .rt-pa__toast,
     .rt-pa[data-state='done'] .rt-pa__ico--done {
       animation: none;
     }
@@ -408,6 +517,39 @@ const ask = (src: string) =>
     menu.querySelectorAll<HTMLAnchorElement>('a').forEach((a) => a.addEventListener('click', () => setOpen(false)));
 
     let timer = 0;
+    const toast = box.querySelector<HTMLElement>('[data-toast]');
+    let toastTimer = 0;
+    const flash = (what: string, detail: string) => {
+      if (!toast) return;
+      toast.replaceChildren();
+      toast.append(document.createTextNode(what));
+      if (detail) {
+        const s = document.createElement('span');
+        s.textContent = ` \u00b7 ${detail}`;
+        toast.append(s);
+      }
+      toast.hidden = false;
+      window.clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => (toast.hidden = true), 2600);
+    };
+    const tokens = (text: string) => {
+      const n = Math.round(text.length / 4);
+      return n >= 1000 ? `~${(n / 1000).toFixed(1)}k tokens` : `~${n} tokens`;
+    };
+    // The heading nearest the top of the reading area: where "Copy link to this section" points.
+    const section = (): HTMLElement | null => {
+      const hs = [...document.querySelectorAll<HTMLElement>('.sl-markdown-content :is(h2, h3, h4)[id]')];
+      let best: HTMLElement | null = null;
+      for (const h of hs) {
+        if (h.getBoundingClientRect().top <= 140) best = h;
+        else break;
+      }
+      return best;
+    };
+    const markdownOf = () => {
+      const article = document.querySelector<HTMLElement>('.sl-markdown-content');
+      return `# ${box.dataset.title}\n\n${article ? toMarkdown(article) : ''}\n\nSource: ${here}\n`;
+    };
     const say = (done: string, ok: boolean) => {
       if (status) status.textContent = ok ? done : 'Could not copy';
       if (ok && label) {
@@ -441,15 +583,60 @@ const ask = (src: string) =>
         return ok;
       }
     };
+    const doCopy = async (kind: string) => {
+      let text = '';
+      let what = 'Page copied';
+      let detail = '';
+      if (kind === 'link') {
+        text = here;
+        what = 'Link copied';
+        detail = here.replace(/^https?:\/\//, '');
+      } else if (kind === 'section') {
+        const h = section();
+        text = h ? `${here}#${h.id}` : here;
+        what = 'Section link copied';
+        detail = h ? (h.textContent ?? '').trim() : 'top of the page';
+      } else {
+        const md = markdownOf();
+        if (kind === 'prompt') {
+          const v = box.dataset.version ? `, version ${box.dataset.version}` : '';
+          text = `Context: this is a page of the Ratchet documentation${v}.\nTitle: ${box.dataset.title}\nURL: ${here}\n\nUse the page below to answer my questions. Quote it where you can, and say so when it does not cover something.\n\n---\n\n${md}`;
+          what = 'Prompt copied';
+        } else text = md;
+        detail = `Markdown, ${tokens(text)}`;
+      }
+      const ok = await write(text);
+      say(kind === 'link' || kind === 'section' ? 'Link copied' : 'Copied', ok);
+      if (ok) flash(what, detail);
+      if (!menu.hidden) setOpen(false, true);
+    };
     box.querySelectorAll<HTMLElement>('[data-copy]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const link = btn.dataset.copy === 'link';
-        const article = document.querySelector<HTMLElement>('.sl-markdown-content');
-        const text = link ? here : `# ${box.dataset.title}\n\n${article ? toMarkdown(article) : ''}\n\nSource: ${here}\n`;
-        const ok = await write(text);
-        say(link ? 'Link copied' : 'Copied', ok);
-        if (!menu.hidden) setOpen(false, true);
-      });
+      btn.addEventListener('click', () => doCopy(btn.dataset.copy ?? 'page'));
+    });
+
+    // Shift+C copies the page (not while typing, and not with another modifier, so Ctrl/Cmd+K and Ctrl+C are untouched).
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'C' || !e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      e.preventDefault();
+      doCopy('page');
+    });
+
+    // Size chip and the section's name, worked out when the menu opens (nothing is measured on load).
+    const chip = menu.querySelector<HTMLElement>('[data-tokens]');
+    const sectionName = menu.querySelector<HTMLElement>('[data-section-name]');
+    const refresh = () => {
+      const article = document.querySelector<HTMLElement>('.sl-markdown-content');
+      if (chip && article) {
+        chip.textContent = tokens(article.textContent ?? '');
+        chip.hidden = false;
+      }
+      const h = section();
+      if (sectionName) sectionName.textContent = h ? (h.textContent ?? '').trim() : 'The top of the page';
+    };
+    more.addEventListener('click', () => {
+      if (!menu.hidden) refresh();
     });
   });
 </script>
