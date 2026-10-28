@@ -1,12 +1,19 @@
-// The demo video's short link, video.ratchet.dualmindlab.tech: every GET or HEAD is a 302 to the video on YouTube, and each GET is
-// counted in Cloudflare D1 by UTC day, source (?from=, an allowlist) and kind (human, or a link preview or bot by its user agent).
-// What is stored: the day, the source, the two-letter country, the time and the kind. Never an IP address, a user agent, a cookie, the
-// raw query or any other identifier. Counting runs after the answer (ctx.waitUntil), so D1 can never slow or break the redirect.
+// The video link's short link, video.ratchet.dualmindlab.tech: every GET or HEAD is a 302 to the video on YouTube. Each GET and HEAD
+// is counted in Cloudflare D1 by UTC day, source (?from=, an allowlist) and kind: a person ("human") or a bot, with the reason.
+// Stored, per visit, for 30 days: the time, the source, the country, city and region and the network's name and number that
+// Cloudflare reports, three coarse words for the device (desktop/phone/tablet, the OS family, the browser family), the bot reason
+// (ua, datacenter, scanner, no-accept-language, head, verified-bot; empty for a human) and a visitor hash that changes every UTC day
+// (16 hex characters of an HMAC of the IP with a salt derived from STATS_KEY and the day: it cannot follow anyone across days or be
+// turned back into the IP). Never stored: the IP address, the full user agent, a cookie, the path or the raw query.
+// Counting runs after the answer (ctx.waitUntil), so D1 can never slow or break the redirect.
 // GET /stats reads the counts with `Authorization: Bearer <STATS_KEY>` (a Worker secret) and is a 404 without it.
-// Email alerts (one per human visit, at most EMAIL_CAP per UTC day, and a summary of yesterday at 09:00 IST) stay off until
-// EMAIL_ENABLED is "1". See docs/DEPLOYMENT.md, "The demo video link".
+// Email alerts (one per human visitor per UTC day, at most EMAIL_CAP per UTC day, and a summary of yesterday at 09:00 IST) stay off
+// until EMAIL_ENABLED is "1". See docs/DEPLOYMENT.md, "The video link".
 import { EmailMessage } from "cloudflare:email";
 import { mime, plainAddress, summaryEmail, visitEmail, type Mail } from "./mail";
+import { asnOf, cleanText, deviceLabel, deviceOf, networkLabel, verdictOf, visitorHash, type Cf, type Kind, type Reason } from "./visitor";
+
+export type { Kind, Reason } from "./visitor";
 
 export const VIDEO_URL = "https://youtu.be/GIeSmDtopfs";
 
@@ -31,7 +38,7 @@ export const SOURCES = [
 
 /** At most this many visit emails per UTC day; the daily summary counts every click. */
 export const EMAIL_CAP = 40;
-/** Visit rows (time, source, country, kind) older than this are deleted by the daily cron. */
+/** Visit rows (every field of the events table) older than this are deleted by the daily cron. */
 export const EVENT_DAYS = 30;
 const DAY_MS = 86_400_000;
 
@@ -44,13 +51,21 @@ export interface Env {
   EMAIL_TO?: string;
 }
 
-export type Kind = "human" | "bot";
-
 export interface Click {
   source: string;
   kind: Kind;
   country: string;
   at: number;
+  /** Why a bot is one; "" for a human. The rest are the details of the visit, "" (asn 0) when unknown. */
+  reason?: Reason;
+  city?: string;
+  region?: string;
+  asn?: number;
+  org?: string;
+  device?: string;
+  os?: string;
+  browser?: string;
+  visitor?: string;
 }
 
 export function sourceOf(url: URL): string {
@@ -59,23 +74,43 @@ export function sourceOf(url: URL): string {
   return (SOURCES as readonly string[]).includes(raw) ? raw : "other";
 }
 
-/**
- * Link previews, crawlers, scripts and checkers, by user agent: every name with "bot" in it (Slackbot, Twitterbot, Discordbot,
- * LinkedInBot, TelegramBot, Googlebot, bingbot, Applebot, ...), the preview fetchers without it, command-line and library clients,
- * headless browsers, and this repository's own link check and deploy smoke.
- */
-const BOT_UA =
-  /bot|crawl|spider|preview|slurp|facebookexternalhit|facebookcatalog|whatsapp|embedly|iframely|mastodon|curl|wget|python-requests|python-urllib|aiohttp|httpx|go-http-client|okhttp|java\/|libwww|node-fetch|undici|axios|headlesschrome|phantomjs|lighthouse|link-?check|smoke|monitor|uptime|scanner|scrapy/i;
+const cfOf = (request: Request): Cf | undefined => (request as { cf?: Cf }).cf;
 
-/** "bot" for a preview, crawler, script, prefetch or empty user agent; otherwise "human". The user agent is never stored. */
-export function kindOf(request: Request): Kind {
-  const ua = (request.headers.get("user-agent") ?? "").trim();
-  if (ua === "" || BOT_UA.test(ua)) return "bot";
-  const purpose = [request.headers.get("sec-purpose"), request.headers.get("purpose"), request.headers.get("x-purpose")].join(" ");
-  if (/prefetch|prerender|preview/i.test(purpose)) return "bot";
-  const category = (request as { cf?: { verifiedBotCategory?: unknown } }).cf?.verifiedBotCategory;
-  if (typeof category === "string" && category.trim() !== "") return "bot";
-  return "human";
+/** Human or bot, and why (the rules are in visitor.ts). The user agent and the headers are read here and never stored. */
+export function verdictOfRequest(request: Request): { kind: Kind; reason: Reason } {
+  const h = request.headers;
+  return verdictOf({
+    method: request.method,
+    userAgent: h.get("user-agent") ?? "",
+    acceptLanguage: h.get("accept-language") ?? "",
+    purpose: [h.get("sec-purpose"), h.get("purpose"), h.get("x-purpose")].join(" "),
+    cf: cfOf(request),
+  });
+}
+
+/** "bot" for a preview, crawler, script, scanner, prefetch or HEAD; otherwise "human". */
+export const kindOf = (request: Request): Kind => verdictOfRequest(request).kind;
+
+/** Everything a visit keeps, from the request: never the IP address (only its daily hash) or the user agent (only three words). */
+export async function clickOf(request: Request, env: Env, url: URL, at: number): Promise<Click> {
+  const cf = cfOf(request);
+  const { kind, reason } = verdictOfRequest(request);
+  const d = deviceOf(request.headers.get("user-agent") ?? "");
+  return {
+    source: sourceOf(url),
+    kind,
+    reason,
+    country: countryOf(request),
+    city: cleanText(cf?.city),
+    region: cleanText(cf?.region),
+    asn: asnOf(cf),
+    org: cleanText(cf?.asOrganization),
+    device: d.device,
+    os: d.os,
+    browser: d.browser,
+    visitor: await visitorHash(request.headers.get("cf-connecting-ip"), env.STATS_KEY, dayOf(at)),
+    at,
+  };
 }
 
 /** The two-letter country Cloudflare puts on the request, or "XX". */
@@ -124,26 +159,69 @@ async function send(env: Env, mail: Mail, at: number): Promise<void> {
   await env.EMAIL!.send(new EmailMessage(from, to, mime({ ...mail, from, to, at, messageId })));
 }
 
-/** Count one GET, then (for a human, with email on, under the day's cap) send its alert. Runs after the redirect went out. */
+/** Count one visit, then (for a human, with email on, the day's first visit of that visitor, under the day's cap) send its alert. */
 export async function record(env: Env, click: Click): Promise<void> {
   const db = env.DB;
   if (!db) return;
   const day = dayOf(click.at);
+  const visitor = click.visitor ?? "";
   await db.batch([
     db
       .prepare("INSERT INTO clicks (day, source, kind, n) VALUES (?1, ?2, ?3, 1) ON CONFLICT (day, source, kind) DO UPDATE SET n = n + 1")
       .bind(day, click.source, click.kind),
-    db.prepare("INSERT INTO events (ts, source, country, kind) VALUES (?1, ?2, ?3, ?4)").bind(tsOf(click.at), click.source, click.country, click.kind),
+    db
+      .prepare(
+        "INSERT INTO events (ts, source, country, kind, city, region, asn, org, device, os, browser, reason, visitor) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+      )
+      .bind(
+        tsOf(click.at),
+        click.source,
+        click.country,
+        click.kind,
+        click.city ?? "",
+        click.region ?? "",
+        click.asn ?? 0,
+        click.org ?? "",
+        click.device ?? "",
+        click.os ?? "",
+        click.browser ?? "",
+        click.reason ?? "",
+        visitor,
+      ),
   ]);
   if (click.kind !== "human" || !emailOn(env)) return;
+  const start = `${day}T00:00:00Z`;
+  const end = `${dayOf(click.at + DAY_MS)}T00:00:00Z`;
+  // One email per visitor per UTC day: this visit is the visitor's first of the day only when it is their only row so far.
+  if (visitor !== "") {
+    const seen = await db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE visitor = ?1 AND kind = 'human' AND ts >= ?2 AND ts < ?3")
+      .bind(visitor, start, end)
+      .first<number>("n");
+    if (Number(seen ?? 0) > 1) return;
+  }
   // Take one of the day's email slots in one statement: past the cap the UPSERT's WHERE fails and nothing is returned.
   const slot = await db
     .prepare("INSERT INTO mail (day, visits) VALUES (?1, 1) ON CONFLICT (day) DO UPDATE SET visits = visits + 1 WHERE visits < ?2 RETURNING visits")
     .bind(day, EMAIL_CAP)
     .first<number>("visits");
   if (slot === null || slot === undefined) return;
-  const today = await db.prepare("SELECT COALESCE(SUM(n), 0) AS n FROM clicks WHERE day = ?1 AND kind = 'human'").bind(day).first<number>("n");
-  const mail = visitEmail({ source: click.source, country: click.country, at: click.at, today: Number(today ?? 0), day, slot, cap: EMAIL_CAP });
+  const unique = await db
+    .prepare("SELECT COUNT(DISTINCT visitor) AS n FROM events WHERE kind = 'human' AND visitor <> '' AND ts >= ?1 AND ts < ?2")
+    .bind(start, end)
+    .first<number>("n");
+  const mail = visitEmail({
+    source: click.source,
+    city: click.city ?? "",
+    country: click.country,
+    network: networkLabel(click.org ?? "", click.asn ?? 0),
+    device: deviceLabel(click),
+    at: click.at,
+    unique: Number(unique ?? 0),
+    day,
+    slot,
+    cap: EMAIL_CAP,
+  });
   await send(env, mail, click.at);
 }
 
@@ -176,19 +254,52 @@ export interface Stats {
   by_source: Row[];
   by_day: (Row & { day: string })[];
   countries_30d: { country: string; human: number; bot: number }[];
+  /** Bot visits by reason; "" is a row from before reasons were kept. */
+  bots_by_reason_30d: { reason: string; n: number }[];
+  top_networks_30d: { human: { network: string; n: number }[]; bot: { network: string; n: number }[] };
+  top_cities_30d: { city: string; country: string; n: number }[];
+  devices_30d: { device: string; n: number }[];
+  unique_humans_by_day: { day: string; n: number }[];
   emails: { day: string; visits: number; summary: boolean }[];
 }
 
 export async function readStats(db: D1Database, now: number): Promise<Stats> {
   const since = tsOf(now - EVENT_DAYS * DAY_MS);
-  const [clicks, countries, mail] = await Promise.all([
+  const [clicks, countries, mail, reasons, networks, cities, devices, uniques] = await Promise.all([
     db.prepare("SELECT day, source, kind, n FROM clicks ORDER BY day DESC, source").all<{ day: string; source: string; kind: string; n: number }>(),
     db
       .prepare("SELECT country, kind, COUNT(*) AS n FROM events WHERE ts >= ?1 GROUP BY country, kind")
       .bind(since)
       .all<{ country: string; kind: string; n: number }>(),
     db.prepare("SELECT day, visits, summary FROM mail ORDER BY day DESC").all<{ day: string; visits: number; summary: number }>(),
+    db
+      .prepare("SELECT reason, COUNT(*) AS n FROM events WHERE ts >= ?1 AND kind = 'bot' GROUP BY reason ORDER BY n DESC, reason")
+      .bind(since)
+      .all<{ reason: string; n: number }>(),
+    db
+      .prepare("SELECT kind, asn, org, COUNT(*) AS n FROM events WHERE ts >= ?1 GROUP BY kind, asn, org ORDER BY n DESC, org LIMIT 400")
+      .bind(since)
+      .all<{ kind: string; asn: number; org: string; n: number }>(),
+    db
+      .prepare("SELECT city, country, COUNT(*) AS n FROM events WHERE ts >= ?1 AND kind = 'human' GROUP BY city, country ORDER BY n DESC, city LIMIT 10")
+      .bind(since)
+      .all<{ city: string; country: string; n: number }>(),
+    db
+      .prepare("SELECT device, os, browser, COUNT(*) AS n FROM events WHERE ts >= ?1 AND kind = 'human' GROUP BY device, os, browser ORDER BY n DESC LIMIT 15")
+      .bind(since)
+      .all<{ device: string; os: string; browser: string; n: number }>(),
+    db
+      .prepare(
+        "SELECT substr(ts, 1, 10) AS day, COUNT(DISTINCT visitor) AS n FROM events WHERE ts >= ?1 AND kind = 'human' AND visitor <> '' GROUP BY day ORDER BY day DESC",
+      )
+      .bind(since)
+      .all<{ day: string; n: number }>(),
   ]);
+  const topNetworks = (kind: string) =>
+    (networks.results ?? [])
+      .filter((r) => r.kind === kind)
+      .slice(0, 5)
+      .map((r) => ({ network: networkLabel(String(r.org ?? ""), Number(r.asn) || 0), n: Number(r.n) || 0 }));
   const byDay = new Map<string, Row & { day: string }>();
   const bySource = new Map<string, Row>();
   const totals = { human: 0, bot: 0 };
@@ -213,11 +324,17 @@ export async function readStats(db: D1Database, now: number): Promise<Stats> {
   return {
     video: VIDEO_URL,
     generated_at: new Date(now).toISOString(),
-    stored: "UTC day, source, kind, two-letter country and time; never an IP address, user agent or cookie",
+    stored:
+      "per visit, for 30 days: time, source, kind, bot reason, country, city, region, network name and number, device class, OS and browser family, and a visitor hash that changes every UTC day; never an IP address, the full user agent or a cookie",
     totals,
     by_source: [...bySource.values()].sort((a, b) => most(a, b) || a.source.localeCompare(b.source)),
     by_day: [...byDay.values()],
     countries_30d: [...byCountry.values()].sort((a, b) => most(a, b) || a.country.localeCompare(b.country)),
+    bots_by_reason_30d: (reasons.results ?? []).map((r) => ({ reason: String(r.reason ?? ""), n: Number(r.n) || 0 })),
+    top_networks_30d: { human: topNetworks("human"), bot: topNetworks("bot") },
+    top_cities_30d: (cities.results ?? []).map((r) => ({ city: String(r.city ?? ""), country: String(r.country ?? ""), n: Number(r.n) || 0 })),
+    devices_30d: (devices.results ?? []).map((r) => ({ device: deviceLabel(r), n: Number(r.n) || 0 })),
+    unique_humans_by_day: (uniques.results ?? []).map((r) => ({ day: String(r.day), n: Number(r.n) || 0 })),
     emails: (mail.results ?? []).map((r) => ({ day: r.day, visits: Number(r.visits) || 0, summary: Number(r.summary) === 1 })),
   };
 }
@@ -234,10 +351,15 @@ export function statsHtml(s: Stats): string {
 <meta name="robots" content="noindex"><title>Video link stats</title>
 <style>body{font:14px/1.5 system-ui,sans-serif;margin:16px;color:#111;background:#fff}table{border-collapse:collapse;margin:0 0 20px}th,td{border:1px solid #ccc;padding:4px 8px;text-align:left}td:nth-child(n+2){font-variant-numeric:tabular-nums}@media (prefers-color-scheme:dark){body{color:#eee;background:#111}th,td{border-color:#444}}</style></head><body>
 <h1>Video link stats</h1><p>Generated ${esc(s.generated_at)}. Stored: ${esc(s.stored)}.</p>
-<p>Total: ${esc(s.totals.human)} human clicks, ${esc(s.totals.bot)} link previews and bots.</p>
+<p>Total: ${esc(s.totals.human)} human clicks, ${esc(s.totals.bot)} bots (link previews, scanners, crawlers).</p>
 <h2>By source</h2>${table(["Source", "Human", "Previews and bots"], s.by_source.map((r) => [r.source, r.human, r.bot]))}
 <h2>By day (UTC)</h2>${table(["Day", "Source", "Human", "Previews and bots"], s.by_day.map((r) => [r.day, r.source, r.human, r.bot]))}
 <h2>Countries, last ${EVENT_DAYS} days</h2>${table(["Country", "Human", "Previews and bots"], s.countries_30d.map((r) => [r.country, r.human, r.bot]))}
+<h2>Unique humans per day (UTC)</h2>${table(["Day", "Unique humans"], s.unique_humans_by_day.map((r) => [r.day, r.n]))}
+<h2>Bots by reason, last ${EVENT_DAYS} days</h2>${table(["Reason", "Visits"], s.bots_by_reason_30d.map((r) => [r.reason || "not recorded", r.n]))}
+<h2>Top networks, humans</h2>${table(["Network", "Visits"], s.top_networks_30d.human.map((r) => [r.network, r.n]))}
+<h2>Top networks, bots</h2>${table(["Network", "Visits"], s.top_networks_30d.bot.map((r) => [r.network, r.n]))}
+<h2>Cities and devices, humans</h2>${table(["City", "Country", "Visits"], s.top_cities_30d.map((r) => [r.city || "unknown", r.country, r.n]))}${table(["Device", "Visits"], s.devices_30d.map((r) => [r.device, r.n]))}
 </body></html>
 `;
 }
@@ -290,10 +412,29 @@ export async function daily(env: Env, now: number): Promise<void> {
           .prepare("SELECT country, COUNT(*) AS n FROM events WHERE ts >= ?1 AND ts < ?2 AND kind = 'human' GROUP BY country ORDER BY n DESC, country")
           .bind(start, end)
           .all<{ country: string; n: number }>();
+        const reasons = await db
+          .prepare("SELECT reason, COUNT(*) AS n FROM events WHERE ts >= ?1 AND ts < ?2 AND kind = 'bot' GROUP BY reason")
+          .bind(start, end)
+          .all<{ reason: string; n: number }>();
+        const networks = (kind: string) =>
+          db
+            .prepare("SELECT asn, org, COUNT(*) AS n FROM events WHERE ts >= ?1 AND ts < ?2 AND kind = ?3 GROUP BY asn, org ORDER BY n DESC, org LIMIT 5")
+            .bind(start, end, kind)
+            .all<{ asn: number; org: string; n: number }>();
+        const [humanNets, botNets] = await Promise.all([networks("human"), networks("bot")]);
+        const unique = await db
+          .prepare("SELECT COUNT(DISTINCT visitor) AS n FROM events WHERE ts >= ?1 AND ts < ?2 AND kind = 'human' AND visitor <> ''")
+          .bind(start, end)
+          .first<number>("n");
+        const named = (r: { asn: number; org: string; n: number }) => ({ network: networkLabel(String(r.org ?? ""), Number(r.asn) || 0), n: Number(r.n) || 0 });
         const emails = await db.prepare("SELECT visits FROM mail WHERE day = ?1").bind(day).first<number>("visits");
         const mail = summaryEmail({
           day,
           sources: [...sources.values()],
+          reasons: (reasons.results ?? []).map((r) => ({ reason: String(r.reason ?? ""), n: Number(r.n) || 0 })),
+          unique: Number(unique ?? 0),
+          humanNetworks: (humanNets.results ?? []).map(named),
+          botNetworks: (botNets.results ?? []).map(named),
           countries: (countries.results ?? []).map((c) => ({ country: c.country, n: Number(c.n) || 0 })),
           emails: Number(emails ?? 0),
           cap: EMAIL_CAP,
@@ -322,11 +463,15 @@ export default {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response(null, { status: 405, headers: { allow: "GET, HEAD", "cache-control": "no-store" } });
     }
-    // HEAD (link checkers, the deploy smoke) gets the same redirect and is never counted.
-    if (request.method === "GET" && !HOUSEKEEPING.test(url.pathname)) {
+    // A HEAD (link checkers, the deploy smoke) gets the same redirect and is counted as a bot (reason "head"), never as a person.
+    if (!HOUSEKEEPING.test(url.pathname)) {
       try {
-        const click: Click = { source: sourceOf(url), kind: kindOf(request), country: countryOf(request), at: Date.now() };
-        ctx.waitUntil(record(env, click).catch((err) => logFailure("count_failed", err)));
+        const at = Date.now();
+        ctx.waitUntil(
+          clickOf(request, env, url, at)
+            .then((click) => record(env, click))
+            .catch((err) => logFailure("count_failed", err)),
+        );
       } catch (err) {
         logFailure("count_failed", err);
       }

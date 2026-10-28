@@ -46,13 +46,13 @@ test("the same Wrangler version as the other Cloudflare packages, pinned exactly
   for (const [name, version] of Object.entries(pkg.devDependencies)) assert.match(version, /^\d+\.\d+\.\d+$/, name);
 });
 
-test("the deploy workflow is manual, confirmed, applies migrations, and its smoke never counts a click", () => {
+test("the deploy workflow is manual, confirmed, applies migrations, and its smoke never counts a human", () => {
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /^\s*(push|pull_request|schedule):/m);
   assert.match(workflow, /inputs\.confirm == 'deploy-video'/);
   assert.match(workflow, /wrangler d1 migrations apply ratchet-video --remote/);
   assert.match(workflow, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/);
-  // Every request the smoke makes to the counted address is a HEAD; a GET goes only to /stats, which is never counted.
+  // Every request the smoke makes to the counted address is a HEAD; a GET goes only to /stats, which is never counted, and a HEAD only ever counts as a bot.
   const calls = [...workflow.matchAll(/curl [^\n]*video\.ratchet\.dualmindlab\.tech[^\n]*/g)].map((m) => m[0]);
   assert.ok(calls.length >= 2, "the smoke calls the link");
   for (const call of calls) {

@@ -1,8 +1,8 @@
-# Deploys the demo video's short link (deploy/cloudflare-video) to video.ratchet.dualmindlab.tech. MANUAL ONLY: it never runs on a
+# Deploys the video link (deploy/cloudflare-video) to video.ratchet.dualmindlab.tech. MANUAL ONLY: it never runs on a
 # push, a merge or a schedule. Run it from the Actions tab (Run workflow, on main: any other branch deploys nothing) and type
 # "deploy-video".
 # It needs the same two repository secrets as the other deploys: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. The Worker's own
-# secret STATS_KEY is set once with `wrangler secret put` (docs/DEPLOYMENT.md, "The demo video link"), never here.
+# secret STATS_KEY is set once with `wrangler secret put` (docs/DEPLOYMENT.md, "The video link"), never here.
 name: deploy-cloudflare-video
 
 on:
@@ -49,7 +49,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   smoke:
-    # Final check from outside with HEAD requests only: a HEAD is never counted, so a deploy adds no click and sends no email.
+    # Final check from outside with HEAD requests only: a HEAD is counted as a bot (reason "head"), never as a human, so a deploy sends no email.
     # GET /stats without a key must be a 404 (it is never counted either). A new custom domain can take a few minutes to get its DNS
     # record and certificate, so the check is retried for about five minutes.
     needs: deploy
