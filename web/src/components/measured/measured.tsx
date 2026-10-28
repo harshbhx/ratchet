@@ -110,8 +110,8 @@ export function TileCard({ tile, className }: { tile: Tile; className?: string }
       {tile.bars && tile.bars.length > 0 && <Bars bars={tile.bars} />}
       {tile.facts.length > 0 && (
         <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line">
-          {tile.facts.map((f) => (
-            <div key={f.label} className="min-w-0 bg-surface px-3 py-2">
+          {tile.facts.map((f, i) => (
+            <div key={f.label} className={cn("min-w-0 bg-surface px-3 py-2", tile.facts.length % 2 === 1 && i === tile.facts.length - 1 && "col-span-2")}>
               <dt className="text-[11.5px] leading-snug text-muted">{f.label}</dt>
               <dd className="mt-0.5 text-[13.5px] font-semibold tabular-nums text-ink [overflow-wrap:anywhere]">{f.value}</dd>
             </div>

@@ -216,8 +216,10 @@ export function measuredTiles(d: MeasuredData): Tile[] {
         { label: "Restart to first answer", value: fmtSeconds(ep.restart_s) },
         { label: "Adapter load", value: fmtSeconds(ep.adapter_load_s) },
         { label: "GPU price", value: `$${ep.gpu_usd_per_hour.toFixed(2)} an hour` },
+        ...(sql.find((r) => r.concurrency === 16) ? [{ label: "SQL, 16 at a time", value: `${fmtUsd(sql.find((r) => r.concurrency === 16)!.usd_per_1000)} per 1,000 requests` }] : []),
+        ...(sql.find((r) => r.concurrency === 16) ? [{ label: "Throughput, 16 at a time", value: `${Math.round(sql.find((r) => r.concurrency === 16)!.tokens_per_s_total)} tokens a second` }] : []),
       ],
-      bars: ep.bench.map((r) => ({ group: `${r.adapter}, median latency`, label: `${r.concurrency} at a time`, value: r.lat_p50_s / slowest, text: `${r.lat_p50_s.toFixed(2)} s · ${fmtUsd(r.usd_per_1000)} per 1,000` })),
+      bars: ep.bench.map((r) => ({ group: `${r.adapter}, median latency`, label: `${r.concurrency} at a time`, value: r.lat_p50_s / slowest, text: `${r.lat_p50_s.toFixed(2)} s` })),
     });
   }
 
