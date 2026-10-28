@@ -15,8 +15,8 @@ RUN pip install --no-cache-dir "torch==2.11.0" --index-url https://download.pyto
 COPY deploy/train-versions.txt /tmp/train-versions.txt
 # transformers 4.57.6 is the last 4.x (TRL 1.16.0 needs 4.56.2 or later); the model's own code was saved with 4.53.0.
 RUN pip install --no-cache-dir -c /tmp/train-versions.txt "trl==1.16.0" "transformers==4.57.6" "peft==0.21.2" "accelerate==1.15.0" "datasets==4.8.5"
-# Build tools for the Mamba kernels, which compile against the torch above when no prebuilt wheel matches it. setuptools stays below 82, which torch 2.11.0 requires.
-RUN pip install --no-cache-dir -c /tmp/train-versions.txt "ninja==1.13.0" "packaging==26.2" "setuptools==81.0.0" "wheel==0.47.0"
+# Build tools for the Mamba kernels, which compile against the torch above when no prebuilt wheel matches it. setuptools stays below 82, which torch 2.11.0 requires; --ignore-installed because Ubuntu's wheel has no RECORD file.
+RUN pip install --no-cache-dir --ignore-installed -c /tmp/train-versions.txt "ninja==1.13.0" "packaging==26.2" "setuptools==81.0.0" "wheel==0.47.0"
 # The 27 Oct round-2 retrain on Nebius built these kernels for the L40S (sm_89) on pytorch 2.11.0 + CUDA 12.8. A builder has no
 # GPU, so torch would otherwise compile for every architecture; the list is fixed here, and FORCE_BUILD skips the prebuilt-wheel download.
 ENV TORCH_CUDA_ARCH_LIST="8.9" CAUSAL_CONV1D_FORCE_BUILD=TRUE MAMBA_FORCE_BUILD=TRUE MAX_JOBS=4
