@@ -148,7 +148,7 @@ Live mode spends real money on every Scout run and every `/v1/chat/completions` 
 
 ### Record one Scout run after each deploy
 
-The compose file mounts `evidence/scout` read-only and sets `RATCHET_SCOUT_RECORDINGS_DIR`, so a recorded run plays when the guard refuses live runs ([ADR 0140](adr/0140-recorded-scout-run.md)). After the VM is live (and after each deploy that changes a model, a prompt or a price), record one run, commit it and run `update.sh`:
+A recorded run is evidence only: the gateway does not serve it ([ADR 0140](adr/0140-recorded-scout-run.md)). After the VM is live (and after each deploy that changes a model, a prompt or a price), you can record one run and commit it:
 
 ```bash
 python -m ratchet.scout record "What is LoRA fine-tuning?" --base-url https://<domain> --judge-code <code>

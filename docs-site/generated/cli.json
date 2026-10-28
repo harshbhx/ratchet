@@ -271,8 +271,8 @@
     {
       "id": "watch",
       "cmd": "python -m ratchet.watch",
-      "when": "On the demo VM's host, from cron: restart a hung gateway, probe it through its public URL and send signed alerts. Not needed to run a gateway.",
-      "help": "usage: python3 -m ratchet.watch [-h] [--env-file ENV_FILE] {tick,probe,status,pause,resume,test-alert,notify} ...\n\nThe demo watchdog: keep the live demo answering until judging\nends.\n\npositional arguments:\n  {tick,probe,status,pause,resume,test-alert,notify}\n\noptions:\n  -h, --help            show this help message and exit\n  --env-file ENV_FILE",
+      "when": "On the VM's host, from cron: restart a hung gateway, probe it through its public URL and send signed alerts. Not needed to run a gateway.",
+      "help": "usage: python3 -m ratchet.watch [-h] [--env-file ENV_FILE] {tick,probe,status,pause,resume,test-alert,notify} ...\n\nThe watchdog: keep the live gateway answering until judging ends.\n\npositional arguments:\n  {tick,probe,status,pause,resume,test-alert,notify}\n\noptions:\n  -h, --help            show this help message and exit\n  --env-file ENV_FILE",
       "help_from": "--help",
       "subcommands": [
         {
@@ -315,8 +315,8 @@
     {
       "id": "demo-check",
       "cmd": "python scripts/demo_check.py",
-      "when": "Check a public demo from the outside, as a visitor sees it: OK, WARN or FAIL per check.",
-      "help": "usage: python scripts/demo_check.py [-h] [--mode {live,mock}] [--key-env KEY_ENV] [--chat] [--json] [--timeout TIMEOUT] url\n\nCheck the public demo from outside.\n\npositional arguments:\n  url\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {live,mock}\n  --key-env KEY_ENV\n  --chat\n  --json\n  --timeout TIMEOUT",
+      "when": "Check a live gateway from the outside, as a visitor sees it: OK, WARN or FAIL per check.",
+      "help": "usage: python scripts/demo_check.py [-h] [--mode {live,mock}] [--key-env KEY_ENV] [--chat] [--json] [--timeout TIMEOUT] url\n\nCheck the live gateway from outside.\n\npositional arguments:\n  url\n\noptions:\n  -h, --help          show this help message and exit\n  --mode {live,mock}\n  --key-env KEY_ENV\n  --chat\n  --json\n  --timeout TIMEOUT",
       "help_from": "--help",
       "subcommands": []
     },
@@ -383,7 +383,7 @@
     },
     {
       "name": "demo-check",
-      "comment": "The public demo as a judge sees it, from outside (never part of test or lint): make demo-check URL=https://<domain> ARGS=--chat",
+      "comment": "The live gateway as a judge sees it, from outside (never part of test or lint): make demo-check URL=https://<domain> ARGS=--chat",
       "recipe": "python scripts/demo_check.py $(URL) $(ARGS)"
     },
     {

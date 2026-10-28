@@ -423,7 +423,7 @@ function environmentPage(sources, ids) {
   out.push('| both | Read by the gateway in mock and live mode (some only change live behaviour; the meaning says so) |');
   out.push('| mock only | Read only in mock mode; the startup check warns when one is set in live mode |');
   out.push('| live | Read by live mode tools such as `python -m ratchet.live` |');
-  out.push('| deploy kit | Read only by `deploy/*.sh` and the demo VM, never by the package |');
+  out.push('| deploy kit | Read only by `deploy/*.sh` and the VM, never by the package |');
   out.push('| live-run tool | Read by the live-run harness (`python -m ratchet.liverun`) |');
   out.push('| reserved | Declared for a feature not built yet: any value but the default stops startup |\n');
   for (const s of sections) {

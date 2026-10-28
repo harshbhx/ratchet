@@ -93,8 +93,6 @@ Sections after the route table: [OpenAI endpoints](#openai-endpoints), [Authenti
 | POST | `/ratchet/demo/teacher-drift` | mock only | [mock](#access-levels) | Make the mock teacher change labels at random, to show the teacher watch |
 | POST | `/ratchet/demo/reset` | mock only | [mock](#access-levels) | Start over |
 | GET | `/scout/examples` | both | [public](#access-levels) | Example questions and whether free text is allowed |
-| GET | `/scout/recorded` | both | [public](#access-levels) | Recorded live Scout runs, newest first (FR-10.40) |
-| GET | `/scout/recorded/{id}` | both | [public](#access-levels) | One recording, to play back at its real pace |
 | GET | `/scout/status` | both | [public](#access-levels) | Budget guard state, the judges' reserve, search and Tavily credits, and which model answers student calls (`fallback_student`, `student_serving`) |
 | POST | `/scout/judge` | both | [public](#access-levels) | Open a judge session: the access code in the body, a signed cookie back |
 | DELETE | `/scout/judge` | both | [public](#access-levels) | End a judge session (clears the cookie) |
@@ -149,7 +147,7 @@ Every route has one access level (the Access column above; `ratchet/access.py`, 
 | `bom` | As `dashboard`, and anyone with `RATCHET_PUBLIC_BOM=1`, so auditors can read provenance from a private gateway | As `dashboard` |
 | `metrics` | As `dashboard`, and a scraper that sends `RATCHET_METRICS_TOKEN` as its bearer token | As `dashboard`; the 403 for a private dashboard needs `RATCHET_METRICS_TOKEN` unset too |
 | `admin` | An admin key. Without `RATCHET_ADMIN_KEYS`: nobody in live mode, anyone in mock mode (as `mock-admin`) | **401** `invalid or missing admin key`; **403** for an API key or a dashboard key; **403** `admin API disabled: set RATCHET_ADMIN_KEYS` in live mode without admin keys |
-| `mock` | Anyone, in mock mode only (invariant 8) | **403** `demo controls are only available in mock mode` in live mode |
+| `mock` | Anyone, in mock mode only (invariant 8) | **403** `these controls are only available in mock mode` in live mode |
 
 On a public dashboard a key is optional: an admin or dashboard key gets the full payload, and no key, a wrong key or an API key reads as anonymous (never a 401 or 403). A route that is not in the table is `dashboard` (closed in live mode until someone classifies it). The same table already covers routes added under `/ratchet/admin/` (admin), `/ratchet/requests/`, `/ratchet/versions/`, `/scout/` and `/v1/`, and `/livez`, `/readyz` (public) and `/ratchet/kpis` (dashboard).
 
@@ -591,7 +589,7 @@ Every error on `/v1/*` (and `/openai/*`) has OpenAI's envelope, which OpenAI SDK
 | Status | `type` | `code` | When | Retried by OpenAI SDKs? |
 |---|---|---|---|---|
 | 400 | `invalid_request_error` | `invalid_json`, `invalid_type`, `invalid_value`, `missing_required_parameter`, `unsupported_value`, `context_length_exceeded`, `unsupported_content_type` | The request breaks a rule in [Request validation](#request-validation); `param` names the field | No |
-| 400 | `invalid_request_error` | `null` | Mock mode with `RATCHET_MOCK_STRICT=1` only: the request is not a synthetic test ticket or a Scout request from the mock research world (`mock mode only answers demo requests: '...'`). Without it the generic mock world answers every request ([Mock mode](#mock-mode-answers)) | No |
+| 400 | `invalid_request_error` | `null` | Mock mode with `RATCHET_MOCK_STRICT=1` only: the request is not a synthetic test ticket or a Scout request from the mock research world (`mock mode only answers the mock world's own requests: '...'`). Without it the generic mock world answers every request ([Mock mode](#mock-mode-answers)) | No |
 | 400 | `invalid_request_error` | `reserved_task` | The request names the task `embeddings` (header, `metadata.ratchet_task`, `model` or Azure deployment), the name `/v1/embeddings` logs its requests under ([Embeddings](#post-v1embeddings)); `param` says where it came from. Checked before the quota | No |
 | 400 | `invalid_request_error` | `unknown_task` | `RATCHET_UNKNOWN_TASKS=reject` and the task is not registered (`unknown task "x"; registered: default, page-read, ...`, at most 20 names, only tasks this key may use); `param` is `metadata.ratchet_task` when the name came from there, and `response_format` for a json_schema request that named no task and whose schema gave no auto task ([Structured outputs](#structured-outputs)) | No |
 | 401 | `invalid_request_error` | `invalid_api_key` | API keys are on and the key is missing or wrong (`WWW-Authenticate: Bearer`) | No |
@@ -883,7 +881,7 @@ What is checked:
 - `config`: the number of startup warnings (in mock mode also their messages; in live mode read them in the log or with `python -m ratchet.config check`).
 - `flags`: operational switches that never change the status: `scout_budget_exhausted` (Scout's daily budget is spent).
 
-Mock mode checks the ledger only. The probes run on threads of their own (two for the endpoints, one for the ledger, never the request thread pool), each awaited at most 2 s (a slower one reports `"error": "timeout"` and goes on, and its result is kept), and a result is reused for 15 s, so the teacher sees at most one `/models` call per 15 s however often `/readyz` is asked. The student endpoint's result is reused for 5 minutes while it is `ok` (15 s when it is not, so a reloaded adapter shows soon): it never makes the gateway not ready, and each probe is a request to the endpoint, which on a platform that scales an idle endpoint to zero may count as traffic and keep it running. Breaker states are read fresh on every call. `ms` is how long a probe took.
+Mock mode checks the ledger only. The probes run on threads of their own (two for the endpoints, one for the ledger, never the request thread pool), each awaited at most 2 s, the teacher's at most 4.6 s because a `/models` call that times out is tried once more after 1.5 s, and the gateway is `degraded` only when that second try fails too (a slower one reports `"error": "timeout"` and goes on, and its result is kept), and a result is reused for 15 s, so the teacher sees at most one `/models` call per 15 s however often `/readyz` is asked. The student endpoint's result is reused for 5 minutes while it is `ok` (15 s when it is not, so a reloaded adapter shows soon): it never makes the gateway not ready, and each probe is a request to the endpoint, which on a platform that scales an idle endpoint to zero may count as traffic and keep it running. Breaker states are read fresh on every call. `ms` is how long a probe took.
 
 ```json
 {
@@ -2080,12 +2078,12 @@ python -m ratchet.admin audit-log [--limit 50] [--json]
 
 ## Test controls (mock mode only)
 
-All of these return **403** `demo controls are only available in mock mode` when `RATCHET_MODE=live`.
+All of these return **403** `these controls are only available in mock mode` when `RATCHET_MODE=live`.
 
 The mock-mode gateway is shared by every visitor, so the controls protect themselves:
 
-- **One mock-mode action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another demo action is running; try again in a moment`. (`break-next`, `student-outage` and `teacher-drift` do not take the lock.)
-- **Reset cooldown.** `reset` returns **429** `the demo was reset less than 30 seconds ago` within 30 seconds (`RESET_COOLDOWN_S`) of the last successful reset.
+- **One mock-mode action at a time.** `day` and `reset` take a lock without waiting. If another `day` or `reset` is still running, the call returns **409** `another mock-mode action is running; try again in a moment`. (`break-next`, `student-outage` and `teacher-drift` do not take the lock.)
+- **Reset cooldown.** `reset` returns **429** `the mock-mode gateway was reset less than 30 seconds ago` within 30 seconds (`RESET_COOLDOWN_S`) of the last successful reset.
 
 The dashboard shows these messages under its buttons.
 
@@ -2201,19 +2199,6 @@ The client IP is the TCP peer address, or the first `X-Forwarded-For` entry when
 
 `examples` is `ratchet.scout.prompts.EXAMPLE_QUESTIONS` (8 questions). `free_text` is `true` only in live mode.
 
-### GET `/scout/recorded`
-
-```json
-{"recordings": [{"id": "20261021T100500Z-what-is-lora-fine-tuning", "recorded_at": "2026-10-21T10:05:00Z",
-                 "question": "What is LoRA fine-tuning?", "duration_ms": 41800, "mode": "live", "totals": {"llm_calls": 14, "...": "..."}}]}
-```
-
-Up to 20 recordings from `RATCHET_SCOUT_RECORDINGS_DIR`, newest first; `{"recordings": []}` when the setting is empty or the folder is. Public, read-only: no model call, no guard budget, no ledger row ([ADR 0140](adr/0140-recorded-scout-run.md)).
-
-### GET `/scout/recorded/{id}`
-
-One recording: `{"id", "schema": "ratchet.scout-recording/v1", "recorded_at", "host", "mode": "live"|"mock", "question", "duration_ms", "events": [...], "totals"}`. Each event is the SSE event of [SCOUT.md](SCOUT.md#event-objects-sse-data-payloads-in-order) plus `t_ms`, its offset in milliseconds from the first. 404 when the id does not match `^[0-9]{8}T[0-9]{6}Z-[a-z0-9-]{1,40}$`, the file is missing, over 2 MB, not JSON or another schema.
-
 ### GET `/scout/status`
 
 ```json
@@ -2260,7 +2245,7 @@ Opens a judge session. Body: `{"code": "<RATCHET_SCOUT_JUDGE_CODE>"}`. The code 
 | 200 | `{"judge": true, "expires": "2026-12-08T10:00:00+00:00", "runs_left_today": 19}` and `Set-Cookie: ratchet_judge=<signed value>; Path=/scout; Max-Age=<RATCHET_SCOUT_JUDGE_SESSION_S>; HttpOnly; SameSite=Strict` (plus `Secure` in live mode). Writes the event `judge` `judge session opened`, with no IP and no code |
 | 400 | `Send {"code": "..."}.`: not a JSON object with a non-empty string `code` |
 | 401 | `That code is not valid.`, with no cookie |
-| 404 | `Judge access is not enabled on this demo.` (`RATCHET_SCOUT_JUDGE_CODE` is empty) |
+| 404 | `Judge access is not enabled on this gateway.` (`RATCHET_SCOUT_JUDGE_CODE` is empty) |
 | 429 | More than 10 attempts from this IP in a rolling hour (well-formed attempts, the right code included) |
 
 The cookie is `v1.<expires>.<nonce>.<HMAC-SHA256>`, keyed from the code: it survives a restart, and rotating the code ends every session. `SameSite=Strict` keeps another site from starting a judge's runs through `/scout/stream`, which is a GET.

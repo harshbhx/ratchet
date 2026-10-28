@@ -168,7 +168,6 @@ test("which requests count: only keyless POST /v1/*, GET /scout/stream and POST 
     ["GET", "/v1/models"],
     ["GET", "/scout/status"],
     ["GET", "/scout/examples"],
-    ["GET", "/scout/recorded"],
     ["POST", "/scout/judge"],
     ["GET", "/ratchet/stats"],
     ["POST", "/ratchet/redact"],

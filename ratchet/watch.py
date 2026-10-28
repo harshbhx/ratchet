@@ -1,4 +1,4 @@
-"""The demo watchdog (FR-11.32 to FR-11.34, ADR 0132): keep the live demo answering until judging ends.
+"""The watchdog (FR-11.32 to FR-11.34, ADR 0132): keep the live gateway answering until judging ends.
 
 Runs on the VM host from cron, outside the gateway container, because a hung gateway cannot restart or alert itself.
 That is the Nebius VM kit's host (deploy/vm); the public demo runs on Cloudflare Workers with Containers, where this
