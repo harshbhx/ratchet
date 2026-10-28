@@ -1,0 +1,11 @@
+# Cloudflare Pages response headers.
+# Files with a content hash in their name never change: cache them for a year.
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Pre-drawn diagrams (<key>.<hash>.svg, scripts/mermaid-cache.mjs): the hash is of the file's content.
+/mermaid/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# HTML needs no rule: Cloudflare Pages already answers it with max-age=0, must-revalidate (a deploy shows at once, an unchanged
+# page is a 304). A catch-all /* rule here would be merged with the two above, not override them.

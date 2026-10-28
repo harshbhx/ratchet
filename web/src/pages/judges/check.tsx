@@ -1,7 +1,9 @@
-import { ArrowUpRight, BookOpen, Code, Film, Radio, Server } from "lucide-react";
+import { ArrowUpRight, BookOpen, Radio, Server } from "lucide-react";
+import { GithubIcon, YoutubeIcon } from "@/components/ui/brand-icons";
 import { RealBadge } from "@/components/ui/real-badge";
 import { entryById, type RealStatus } from "@/lib/real-model";
-import { LIVE_URL } from "@/lib/utils";
+import { LIVE_PATH } from "@/lib/utils";
+import { Link } from "react-router";
 import { Chapter, Command, Panel } from "./ui";
 import { JUDGES_VIDEO, REAL } from "./real";
 
@@ -133,10 +135,10 @@ const LIMITS = [
 
 export function LimitsChapter() {
   const links = [
-    { href: REAL.links.repo, label: "GitHub repository", icon: Code },
+    { href: REAL.links.repo, label: "GitHub repository", icon: GithubIcon },
     { href: REAL.links.docs, label: "Documentation", icon: BookOpen },
-    { href: LIVE_URL, label: "Live gateway (real Token Factory calls)", icon: Radio },
-    ...(JUDGES_VIDEO ? [{ href: JUDGES_VIDEO, label: "The video (2:59)", icon: Film }] : []),
+    { href: LIVE_PATH, label: "Live gateway (real Token Factory calls)", icon: Radio },
+    ...(JUDGES_VIDEO ? [{ href: JUDGES_VIDEO, label: "The video (2:59)", icon: YoutubeIcon }] : []),
     // The one-command Nebius path (deploy/nebius/nebius.sh): scripted and tested offline, ready to run with make nebius-plan.
     {
       href: `${REAL.links.docs.replace(/\/?$/, "/")}reference/where-it-runs/`,
@@ -158,6 +160,16 @@ export function LimitsChapter() {
           <ul className="space-y-1">
             {links.map((l) => (
               <li key={l.href}>
+                {l.href.startsWith("/") ? (
+                  <Link
+                    to={l.href}
+                    className="flex min-w-0 items-center gap-2.5 rounded-lg px-2 py-2 text-[14px] text-ink transition-colors hover:bg-surface-2"
+                  >
+                    <l.icon className="size-4 shrink-0 text-muted" aria-hidden />
+                    <span className="min-w-0">{l.label}</span>
+                    <span className="hidden min-w-0 flex-1 truncate text-right font-mono text-[11.5px] text-muted sm:inline">{l.href}</span>
+                  </Link>
+                ) : (
                 <a
                   href={l.href}
                   target="_blank"
@@ -167,13 +179,14 @@ export function LimitsChapter() {
                   <l.icon className="size-4 shrink-0 text-muted" aria-hidden />
                   <span className="min-w-0">{l.label}</span>
                   <span className="hidden min-w-0 flex-1 truncate text-right font-mono text-[11.5px] text-muted sm:inline">{l.href.replace(/^https:\/\//, "").replace(/\?from=[\w-]+$/, "").replace(/\/$/, "")}</span>
-                  <ArrowUpRight className="size-3.5 shrink-0 text-muted" aria-hidden />
+                  <ArrowUpRight className="size-4 shrink-0 text-muted" aria-hidden />
                 </a>
+                )}
               </li>
             ))}
             {!JUDGES_VIDEO && (
               <li className="flex min-w-0 items-center gap-2.5 px-2 py-2 text-[14px]">
-                <Film className="size-4 shrink-0 text-muted" aria-hidden />
+                <YoutubeIcon className="size-4 text-muted" />
                 <span className="text-muted">The video: not published yet</span>
               </li>
             )}

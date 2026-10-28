@@ -1,9 +1,9 @@
-import { ArrowUpRight, LayoutDashboard, Play, Search, Terminal } from "lucide-react";
+import { ArrowRight, LayoutDashboard, Play, Search, Terminal } from "lucide-react";
 import { Link } from "react-router";
-import { ButtonA, ButtonLink } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button";
 import { CodeBlock, tok } from "@/components/ui/code-block";
 import { Container, Eyebrow, H2 } from "@/components/ui/section";
-import { LIVE_URL, REPO_URL } from "@/lib/utils";
+import { LIVE_PATH, LIVE_URL, REPO_URL } from "@/lib/utils";
 import type { Mode } from "@/lib/api";
 import { Reveal } from "../shared";
 import { LiveRequest } from "./live-request";
@@ -49,10 +49,9 @@ export function TryIt({ mode = null }: { mode?: Mode | null }) {
             <Step n="1" title="Click">
               <p className="text-[14px] leading-relaxed text-ink-2">Open the live gateway to see a real teacher call, or try Scout and the dashboard.</p>
               <div className="mt-auto flex flex-wrap gap-2.5 pt-2">
-                <ButtonA href={LIVE_URL} target="_blank" rel="noopener noreferrer" size="lg">
-                  <Play aria-hidden /> Open the live gateway <ArrowUpRight aria-hidden />
-                  <span className="sr-only"> (opens in a new tab)</span>
-                </ButtonA>
+                <ButtonLink to={LIVE_PATH} size="lg">
+                  <Play aria-hidden /> Open the live gateway <ArrowRight aria-hidden />
+                </ButtonLink>
                 <ButtonLink to="/scout" variant="outline" size="lg">
                   <Search aria-hidden /> Scout
                 </ButtonLink>

@@ -5,8 +5,16 @@
   astro-mermaid turns every ```mermaid block into <pre class="mermaid">SOURCE</pre> and draws it in the browser. On a long
   page that freezes the main thread for seconds (Mermaid measures text again and again, and each measure forces the whole
   page's style and layout). So the finished SVGs are kept in generated/mermaid/<key>.svg, committed, and the build puts
-  them into the HTML in place of the <pre>. A page whose diagrams are all inlined has no pre.mermaid, so astro-mermaid's
+  them to the site in place of the <pre>. A page whose diagrams are all saved has no pre.mermaid, so astro-mermaid's
   client does not even load Mermaid there.
+
+  The SVGs are big (the architecture page has 40 of them, 800 KB), and a page holds its first paint until the HTML is parsed,
+  so they are not written into the page. Each page gets a placeholder (<div class="mermaid" data-static data-src=...>, with the
+  diagram's exact size so nothing shifts) and the SVG is copied to dist/mermaid/<key>.<hash>.svg, a content-hashed file that
+  can be cached for good. ReadingAids.astro fetches it when the placeholder nears the viewport and puts it inline (inline,
+  not <img>: the diagram takes its colours from the page's CSS variables, so dark mode follows the theme, and it uses the
+  page's web fonts; Mermaid measured its labels with them). The saved files are HTML-serialised, not XML, so svgo cannot
+  read them either.
 
   key = the first 16 hex characters of the SHA-256 of the diagram's source as written in the block. That is what
   astro-mermaid's client stores in `data-diagram` (the <pre>'s textContent), and what the HTML holds once unescaped.
@@ -27,7 +35,9 @@ export const CACHE_DIR = join(SITE_DIR, 'generated', 'mermaid');
 const CONFIG_FILE = join(CACHE_DIR, 'config.json');
 
 const PRE = /<pre class="mermaid">([\s\S]*?)<\/pre>/g;
-const STATIC = /<div class="mermaid" data-processed="true" data-static="" data-key="([0-9a-f]{16})"/g;
+const STATIC = /<div class="mermaid" data-processed="true" data-static="" data-key="([0-9a-f]{16})" data-src="([^"]*)"/g;
+/** Where the built SVGs go in dist/, and the URL they are served from. */
+const OUT_DIR = 'mermaid';
 
 /** The reverse of astro-mermaid's escapeHtml, plus the one newline an HTML parser drops after <pre>. */
 export function unescapeHtml(text) {
@@ -78,17 +88,43 @@ async function stampProblem() {
   return '';
 }
 
+const escapeAttr = (text) => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+/** A short plain-text reading of a saved SVG's labels (the placeholder's accessible name, and the no-script text). */
+function describe(svg) {
+  const texts = [];
+  for (const m of svg.matchAll(/<(?:span|p|text|tspan)\b[^>]*>([^<]+)</g)) {
+    const t = m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+    if (t && !texts.includes(t)) texts.push(t);
+  }
+  const all = texts.join(', ');
+  return `Diagram${all ? `: ${all.length > 280 ? `${all.slice(0, 277)}...` : all}` : ''}`;
+}
+
 /**
- * Replace each <pre class="mermaid"> that has a saved SVG with a div that holds it. A diagram without one stays as it
- * is (the browser draws it) and is counted in a warning. Returns the counts.
+ * Replace each <pre class="mermaid"> that has a saved SVG with a sized placeholder, and copy the SVG to dist/mermaid/. A
+ * diagram without a saved SVG stays as it is (the browser draws it) and is counted in a warning. Returns the counts.
  */
 export function inlineDiagrams(distDir, logger = plainLogger) {
   let inlined = 0;
   let missing = 0;
   const missingPages = new Set();
   const cache = new Map();
-  const svgOf = (key) => {
-    if (!cache.has(key)) cache.set(key, existsSync(cacheFile(key)) ? readFileSync(cacheFile(key), 'utf8').trim() : null);
+  /** key -> { url, width, height, label } of the SVG file written to dist/mermaid, or null when none is saved. */
+  const fileOf = (key) => {
+    if (!cache.has(key)) {
+      let entry = null;
+      if (existsSync(cacheFile(key))) {
+        const svg = readFileSync(cacheFile(key), 'utf8').trim();
+        const size = /^<svg\b[^>]*?\bwidth="([\d.]+)"[^>]*?\bheight="([\d.]+)"/.exec(svg);
+        if (!size) throw new Error(`generated/mermaid/${key}.svg has no width and height on its <svg>`);
+        const name = `${key}.${createHash('sha256').update(svg).digest('hex').slice(0, 10)}.svg`;
+        mkdirSync(join(distDir, OUT_DIR), { recursive: true });
+        writeFileSync(join(distDir, OUT_DIR, name), svg);
+        entry = { url: `/${OUT_DIR}/${name}`, width: Number(size[1]), height: Number(size[2]), label: describe(svg) };
+      }
+      cache.set(key, entry);
+    }
     return cache.get(key);
   };
   for (const file of htmlFiles(distDir)) {
@@ -96,19 +132,24 @@ export function inlineDiagrams(distDir, logger = plainLogger) {
     if (!html.includes('<pre class="mermaid">')) continue;
     const next = html.replace(PRE, (whole, escaped) => {
       const key = keyOf(unescapeHtml(escaped));
-      const svg = svgOf(key);
-      if (!svg) {
+      const d = fileOf(key);
+      if (!d) {
         missing += 1;
         missingPages.add(file);
         return whole;
       }
       inlined += 1;
+      const label = escapeAttr(d.label);
       // data-pagefind-ignore: search should not index node labels from a picture.
-      return `<div class="mermaid" data-processed="true" data-static="" data-key="${key}" data-pagefind-ignore>${svg}</div>`;
+      return (
+        `<div class="mermaid" data-processed="true" data-static="" data-key="${key}" data-src="${d.url}" data-pagefind-ignore>` +
+        `<span class="rt-dia-ph" role="img" aria-label="${label}" style="width:${d.width}px;aspect-ratio:${d.width}/${d.height}"></span>` +
+        `<noscript><span class="rt-dia-alt">${label}. The drawing needs JavaScript.</span></noscript></div>`
+      );
     });
     if (next !== html) writeFileSync(file, next);
   }
-  logger.info(`Static diagrams: ${inlined} inlined from generated/mermaid.`);
+  logger.info(`Static diagrams: ${inlined} placed from generated/mermaid (dist/${OUT_DIR}, loaded as they scroll into view).`);
   if (missing)
     logger.warn(
       `${missing} diagram(s) have no saved SVG and are drawn in the browser (${missingPages.size} page(s)). ` +
@@ -122,9 +163,13 @@ function scanDist(distDir) {
   const inlined = new Set();
   const pending = new Map(); // key -> source
   const pages = new Map(); // page -> keys still pending
+  const files = new Set(); // data-src of every placeholder
   for (const file of htmlFiles(distDir)) {
     const html = readFileSync(file, 'utf8');
-    for (const m of html.matchAll(STATIC)) inlined.add(m[1]);
+    for (const m of html.matchAll(STATIC)) {
+      inlined.add(m[1]);
+      files.add(m[2]);
+    }
     for (const m of html.matchAll(PRE)) {
       const source = unescapeHtml(m[1]);
       const key = keyOf(source);
@@ -133,7 +178,7 @@ function scanDist(distDir) {
       pages.get(file).push(key);
     }
   }
-  return { inlined, pending, pages };
+  return { inlined, pending, pages, files };
 }
 
 const savedKeys = () =>
@@ -145,8 +190,13 @@ function check(distDir, logger) {
     return 1;
   }
   return configStamp().then(async (now) => {
-    const { inlined, pending, pages } = scanDist(distDir);
+    const { inlined, pending, pages, files } = scanDist(distDir);
     let bad = 0;
+    const gone = [...files].filter((url) => !existsSync(join(distDir, ...url.split('/').filter(Boolean))));
+    if (gone.length) {
+      logger.error(`${gone.length} diagram file(s) are referenced by a page but missing from dist/: ${gone.slice(0, 5).join(', ')}`);
+      bad = 1;
+    }
     if (pending.size) {
       logger.error(`${pending.size} diagram(s) have no saved SVG (still <pre class="mermaid"> in dist/):`);
       for (const [file, keys] of pages) logger.error(`  ${file.slice(distDir.length + 1)}: ${keys.length}`);
@@ -165,7 +215,7 @@ function check(distDir, logger) {
       logger.error(`${problem}. Delete generated/mermaid, then npm run build && node scripts/mermaid-cache.mjs --write.`);
       bad = 1;
     }
-    if (!bad) logger.info(`Static diagrams OK: ${inlined.size} saved SVGs, none drawn in the browser (Mermaid ${now.mermaid}).`);
+    if (!bad) logger.info(`Static diagrams OK: ${inlined.size} saved SVGs, each served as dist/mermaid/<key>.<hash>.svg, none drawn in the browser (Mermaid ${now.mermaid}).`);
     return bad;
   });
 }

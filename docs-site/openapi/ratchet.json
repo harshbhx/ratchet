@@ -95,6 +95,28 @@
         ]
       }
     },
+    "/live": {
+      "get": {
+        "summary": "Live Page",
+        "description": "The live gateway inside the site: a real request, Scout, the dashboard (React app only; placeholder without the build).",
+        "operationId": "live_page_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Pages"
+        ]
+      }
+    },
     "/lite": {
       "get": {
         "summary": "Lite Landing",

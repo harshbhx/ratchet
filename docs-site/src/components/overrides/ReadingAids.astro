@@ -93,7 +93,7 @@
   // SVG is drawn in the browser: Mermaid replaces its content, then marks it data-processed.
   const diagrams = content ? Array.from(content.querySelectorAll<HTMLElement>('pre.mermaid, div.mermaid[data-static]')) : [];
   diagrams.forEach((pre) => {
-    if (pre.hasAttribute('data-processed')) addExpand(pre);
+    if (pre.hasAttribute('data-processed') && pre.querySelector('svg')) addExpand(pre);
     else
       new MutationObserver((_, observer) => {
         if (pre.hasAttribute('data-processed') && pre.querySelector('svg')) {
@@ -102,6 +102,42 @@
         }
       }).observe(pre, { attributes: true, childList: true });
   });
+
+  // A diagram saved at build time is a sized placeholder (div.mermaid[data-src], scripts/mermaid-cache.mjs): its SVG is a
+  // separate file, fetched when the placeholder is near the viewport (or when the page is about to print) and put inline,
+  // so the page's HTML stays small and the diagram still takes its colours and fonts from the page.
+  const loadDiagram = (box: HTMLElement) => {
+    const src = box.dataset.src;
+    if (!src || box.dataset.loading) return;
+    box.dataset.loading = '';
+    fetch(src)
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+      .then((svg) => {
+        box.innerHTML = svg;
+        delete box.dataset.src;
+      })
+      .catch(() => {
+        delete box.dataset.loading;
+        box.querySelector('.rt-dia-ph')?.setAttribute('data-failed', '');
+      });
+  };
+  const waiting = Array.from(document.querySelectorAll<HTMLElement>('div.mermaid[data-src]'));
+  if (waiting.length) {
+    if ('IntersectionObserver' in window) {
+      const seen = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            seen.unobserve(entry.target);
+            loadDiagram(entry.target as HTMLElement);
+          });
+        },
+        { rootMargin: '1200px 0px' },
+      );
+      waiting.forEach((box) => seen.observe(box));
+    } else waiting.forEach(loadDiagram);
+    addEventListener('beforeprint', () => waiting.forEach(loadDiagram));
+  }
   content?.querySelectorAll<HTMLImageElement>('img').forEach((img) => {
     if (img.closest('a, .rt-ui, .not-content') || img.naturalWidth < 480) return;
     img.classList.add('rt-zoomable');

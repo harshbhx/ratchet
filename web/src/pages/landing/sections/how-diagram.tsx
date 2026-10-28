@@ -203,9 +203,17 @@ export function HowDiagram({ active, className, compact = false }: { active: num
       {/* step 2: license tag under the ledger */}
       <motion.g initial={false} animate={{ opacity: active === 1 ? 1 : 0, y: active === 1 ? 0 : -4 }} transition={t}>
         <rect x={COL[2] - 46} y={bot(ROW[1]) + 10} width={92} height={22} rx={11} fill="var(--good-soft)" stroke="var(--good)" strokeOpacity={0.4} />
-        <text x={COL[2]} y={bot(ROW[1]) + 25} textAnchor="middle" className="fill-good font-mono" style={{ fontSize: 10.5 * f }}>
-          OpenMDW-1.1 ✓
+        <text x={COL[2] - 7} y={bot(ROW[1]) + 25} textAnchor="middle" className="fill-good font-mono" style={{ fontSize: 10.5 * f }}>
+          OpenMDW-1.1
         </text>
+        <path
+          d={`M${COL[2] + 30} ${bot(ROW[1]) + 21}l3 3 6-6`}
+          fill="none"
+          stroke="var(--good)"
+          strokeWidth={1.75}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </motion.g>
 
       {/* step 3: base-model note above Night School */}

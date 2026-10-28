@@ -29,6 +29,9 @@ export function ChapterRail() {
       // Past the end of the last chapter: hide.
       const last = els[els.length - 1].getBoundingClientRect();
       if (last.bottom < mid) cur = null;
+      // The full-width closing card spans the rail's gutter: fade the rail out as soon as the card comes into view.
+      const cta = document.getElementById("closing-cta");
+      if (cta && cta.getBoundingClientRect().top < window.innerHeight) cur = null;
       setActive(cur);
       // How far through the active chapter the middle of the screen is, as a fraction of the whole rail.
       if (idx >= 0) {
@@ -52,7 +55,7 @@ export function ChapterRail() {
     <nav
       aria-label="Chapters"
       className={cn(
-        "fixed left-5 top-1/2 z-30 hidden -translate-y-1/2 transition-opacity duration-500 xl:block 2xl:left-8",
+        "fixed left-5 top-1/2 z-30 hidden -translate-y-1/2 transition-opacity duration-500 motion-reduce:transition-none xl:block 2xl:left-8",
         active ? "opacity-100" : "pointer-events-none opacity-0",
       )}
     >

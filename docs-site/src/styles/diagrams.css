@@ -102,6 +102,23 @@ pre.mermaid:not([data-processed]) {
   overflow: visible;
 }
 
+/* A saved diagram before its SVG has been fetched (ReadingAids.astro): the exact size of the drawing, so nothing shifts. */
+div[data-static].mermaid > .rt-dia-ph {
+  display: block;
+  flex: none;
+  max-width: none;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--rt-ink) 4%, transparent);
+}
+div[data-static].mermaid > .rt-dia-ph[data-failed] {
+  outline: 1px dashed var(--rt-bad);
+}
+div[data-static].mermaid > noscript .rt-dia-alt {
+  display: block;
+  color: var(--rt-muted);
+  font-size: var(--sl-text-sm);
+}
+
 /* Keyboard users can scroll a wide diagram once it has focus (astro-mermaid renders into the <pre>; a static diagram is a div). */
 :is(pre, div[data-static]).mermaid:focus-visible {
   outline: 2px solid var(--ring);
