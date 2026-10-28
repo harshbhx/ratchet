@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router";
 import { motion, useReducedMotion } from "motion/react";
+import { CompanionHost } from "@/components/companions/companion-host";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
 import { WakingBanner } from "./waking-banner";
@@ -103,6 +104,7 @@ export function Layout() {
         </motion.div>
       </main>
       <SiteFooter stats={stats} error={error} />
+      <CompanionHost />
     </div>
   );
 }
