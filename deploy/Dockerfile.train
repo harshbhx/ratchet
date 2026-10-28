@@ -17,6 +17,9 @@ COPY deploy/train-versions.txt /tmp/train-versions.txt
 RUN pip install --no-cache-dir -c /tmp/train-versions.txt "trl==1.16.0" "transformers==4.57.6" "peft==0.21.2" "accelerate==1.15.0" "datasets==4.8.5"
 # Build tools for the Mamba kernels, which compile against the torch above when no prebuilt wheel matches it.
 RUN pip install --no-cache-dir -c /tmp/train-versions.txt "ninja==1.13.0" "packaging==26.2" "setuptools==82.0.1" "wheel==0.47.0"
+# The 27 Oct round-2 retrain on Nebius built these kernels for the L40S (sm_89) on pytorch 2.11.0 + CUDA 12.8. A builder has no
+# GPU, so torch would otherwise compile for every architecture; the list is fixed here, and FORCE_BUILD skips the prebuilt-wheel download.
+ENV TORCH_CUDA_ARCH_LIST="8.9" CAUSAL_CONV1D_FORCE_BUILD=TRUE MAMBA_FORCE_BUILD=TRUE MAX_JOBS=4
 # A kernel that fails to build fails the image: without them the model falls back to slow code or fails on the GPU.
 RUN pip install --no-cache-dir --no-build-isolation -c /tmp/train-versions.txt "causal-conv1d==1.6.2.post1" "mamba-ssm==2.3.2.post1"
 RUN python -c "import torch, mamba_ssm, causal_conv1d; assert torch.version.cuda == '12.8', torch.version.cuda"
