@@ -1037,7 +1037,8 @@ def test_dockerfile_is_pinned():
     # The image does not compile the kernels (a GPU-less builder cannot build them for the L40S): the job does.
     assert "COPY deploy/install_kernels.sh /app/install_kernels.sh" in docker
     assert "CAUSAL_CONV1D_FORCE_BUILD=TRUE" in kernels and "TORCH_CUDA_ARCH_LIST" in kernels and "/data" in kernels
-    assert "bash /app/install_kernels.sh && python -m ratchet.nightschool.train" in (ROOT / "deploy" / "train_job.sh").read_text(encoding="utf-8")
+    train_job = (ROOT / "deploy" / "train_job.sh").read_text(encoding="utf-8")
+    assert "bash /app/install_kernels.sh && python -m ratchet.nightschool.train" in train_job
     # versions.json records exactly what the image pins, and the `train` extra agrees with the image.
     assert {name.lower() for name in train.LIBRARIES} == set(pins)
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
