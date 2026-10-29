@@ -51,12 +51,15 @@ import { videoRedirect } from "./video";
 import { bumpCount, dailyLimits, forwardedHeaders, peekCount, takeQuota, usesDemoKey, visitorIp, type QuotaStore } from "./visitor";
 import { humanAnswer, withoutHumanCookie } from "./human";
 import { guardPaidCall, siteKeyAnswer, turnstileSettings, withoutTokenParam, type GuardNamespace } from "./turnstile";
+import { clean, containerEnv } from "./containerenv";
 import { API_WAIT_MS, READ_RETRY_MS, WAKE_AFTER_MS, isRetryableRead, warmingFor, warmingJson, warmingPage, wantsPage } from "./waking";
 
 interface Env {
   RATCHET_LIVE: DurableObjectNamespace<RatchetLive>;
   NEBIUS_API_KEY: string;
   DEMO_API_KEY: string;
+  /** Optional: a second gateway key for judges (calls with it skip the visitor quota and the human check). Unset: no judges key. */
+  JUDGES_API_KEY?: string;
   TAVILY_API_KEY?: string;
   /** Shared with the Pages proxy: it proves x-ratchet-client-ip came from the proxy. A secret on both sides, never in the repo. */
   EDGE_TOKEN?: string;
@@ -78,43 +81,6 @@ interface Env {
   /** Comma-separated hostnames a good token may come from: default ratchet.dualmindlab.tech and live.ratchet.dualmindlab.tech. */
   TURNSTILE_HOSTNAMES?: string;
   [name: string]: unknown;
-}
-
-/** The defaults. Any RATCHET_* variable or secret on the Worker replaces the entry of the same name. */
-const DEFAULTS: Record<string, string> = {
-  RATCHET_MODE: "live",
-  // The image's /data volume does not exist on Cloudflare Containers, and live mode refuses a ledger whose folder is missing.
-  // /tmp is on the container's own disk: the ledger starts empty whenever the container does (see the note above).
-  RATCHET_DB: "/tmp/ratchet.db",
-  RATCHET_DATA_DIR: "/tmp/ratchet-data",
-  RATCHET_KEY_LIMITS: "demo:daily_requests=300,daily_usd=1.5,rpm=60,concurrency=4",
-  RATCHET_DAILY_BUDGET_USD: "2.5",
-  RATCHET_BUDGET_MODE: "block",
-  RATCHET_SCOUT_DAILY_BUDGET_USD: "1.5",
-  RATCHET_SCOUT_RUNS_PER_HOUR: "6",
-  RATCHET_PUBLIC_DASHBOARD: "1",
-  RATCHET_TRUST_PROXY: "1",
-  RATCHET_IP_RPM: "30",
-  RATCHET_MAX_INFLIGHT: "6",
-  RATCHET_STATS_TTL_S: "2",
-};
-
-/** A secret as a clean string: a value piped in from PowerShell carries a trailing line break, which would break an environment variable or a header. */
-const clean = (v: unknown): string => String(v ?? "").trim();
-
-/** The container's environment: keys, then the defaults, then every RATCHET_* setting from the dashboard on top. */
-function containerEnv(env: Env): Record<string, string> {
-  const out: Record<string, string> = {
-    NEBIUS_API_KEY: clean(env.NEBIUS_API_KEY),
-    TAVILY_API_KEY: clean(env.TAVILY_API_KEY),
-    // One named key for the demo's own pages; the Worker adds it, a visitor never sees it.
-    RATCHET_API_KEYS: `demo:${clean(env.DEMO_API_KEY)}`,
-    ...DEFAULTS,
-  };
-  for (const [name, value] of Object.entries(env)) {
-    if (name.startsWith("RATCHET_") && typeof value === "string" && value.trim() !== "") out[name] = value.trim();
-  }
-  return out;
 }
 
 export class RatchetLive extends Container<Env> {
