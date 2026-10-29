@@ -11,7 +11,7 @@ import { clearJudgeKey, setJudgeKey, useJudgeKey } from "@/lib/use-judge-key";
  * "Using your judges' key" with how many calls are left today when the gateway said, and "Forget key". The key is never shown again and never
  * goes in an address. The height animates with the grid-rows trick (instant under prefers-reduced-motion), so nothing jumps.
  */
-export function JudgeKey({ left, className }: { left: number | null; className?: string }) {
+export function JudgeKey({ left, label = "Have a judges' key?", className }: { left: number | null; label?: string; className?: string }) {
   const { key, remembered } = useJudgeKey();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -53,7 +53,7 @@ export function JudgeKey({ left, className }: { left: number | null; className?:
       ) : (
         <>
           <button type="button" aria-expanded={open} aria-controls={`${inputId}-panel`} onClick={() => setOpen((o) => !o)} className={link}>
-            Have a judges' key?
+            {label}
           </button>
           <div
             id={`${inputId}-panel`}
