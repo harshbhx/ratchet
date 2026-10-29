@@ -73,7 +73,7 @@ Charts and diagrams:
 - `img/where-it-runs.svg` and its PNGs (`where-it-runs-light.png`, `where-it-runs-dark.png`): the map of where everything runs, drawn in the same style by the same script.
 - `img/try-it-16x9.png`: the README's "try it" card (three links in order). `img/run-on-nebius.svg`: the README's text-only "Run on Nebius" badge. `img/demo-reel-poster.png`: the reel's still, shown instead of the animation when motion is reduced. `img/social-preview.png`: the repository's share image. `img/hf/`: the Hugging Face models, datasets and Spaces pages, linked from the README.
 
-Animations in `img/anim/`: `readme-banner.gif`, `readme-stats.gif` and `readme-footer.gif` are the README's banner, at-a-glance strip and footer; `ratchet-demo-reel.gif` is the reel; `ratchet-how-it-works-light.gif` is the animated walkthrough the README links under the architecture diagram; `tool-calling-results.gif` is the animated tool-calling chart; `judge-box-howto.gif` shows the Scout page's judge box (README and [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md)).
+Animations in `img/anim/`: `readme-banner.gif`, `readme-stats.gif` and `readme-footer.gif` are the README's banner, at-a-glance strip and footer; `ratchet-demo-reel.gif` is the reel; `ratchet-how-it-works-light.gif` is an animated walkthrough of one request through the system (not shown in the README at the moment); `tool-calling-results.gif` is the animated tool-calling chart; `judge-box-howto.gif` shows the Scout page's judge box (README and [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md)).
 
 ## Repo-level files
 

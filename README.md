@@ -40,13 +40,13 @@
 <p align="center">
   <picture>
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/demo-reel-poster.png">
-    <img src="docs/img/anim/ratchet-demo-reel.gif" alt="Reel, 15 seconds: 200 exam questions the model never saw, a recorded live Scout run (18 model calls, all answered by the teacher, 13.2 seconds, $0.0223), the 95% precision bar and the real exam numbers: text-to-SQL 12.8% untrained, 25.6% teacher, 39.0% adapter on exam 1." width="100%">
+    <img src="docs/img/anim/ratchet-demo-reel.gif" alt="Reel, 14 seconds: 200 exam questions the model never saw, with strict marking; a recorded Scout run on the live site, labelled live site and recorded live run (18 model calls, all answered by the teacher, 13.2 seconds, $0.0223); the 95% precision bar, where the student may answer alone 0 times out of 100; and the real exam numbers: text-to-SQL 12.8% untrained, 25.6% teacher, 39.0% adapter on exam 1, and 12.5%, 15.0% and 33.0% on exam 2." width="100%">
   </picture>
   <br><sub><b>Reel</b> (from the video). Exam numbers are measured; the Scout run is a recorded live run. <a href="https://video.ratchet.dualmindlab.tech/?from=readme">Watch the full video (2:59)</a></sub>
 </p>
 
 <p align="center">
-  <img src="docs/img/anim/readme-stats.gif" alt="At a glance: text-to-SQL 12.8% to 39.0% on an unseen exam and tool calling 62.7% to 90.7% on an unseen exam (both measured, strict scoring); 2 adapters, 6 datasets and 2 Spaces on Hugging Face; a free live gateway with no sign-up." width="100%">
+  <img src="docs/img/anim/readme-stats.gif" alt="At a glance, four tiles: unseen SQL exam, 12.8% to 39.0% on exam 1, and unseen tools, 62.7% to 90.7% on the hard exam (both measured, strict scoring); on Hugging Face, 2 adapters, 6 datasets and 2 Spaces, published and open; live gateway, free, no sign-up, real requests." width="100%">
 </p>
 
 ## In 30 seconds
