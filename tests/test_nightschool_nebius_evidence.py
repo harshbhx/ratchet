@@ -40,7 +40,6 @@ def test_manifest_matches_the_files():
         data = (EV / f["file"]).read_bytes()
         assert hashlib.sha256(data).hexdigest() == f["sha256"] and len(data) == f["bytes"], f["file"]
     assert manifest["adapter"]["sha256"] == ADAPTER and manifest["verdict"] == "rejected"
-    assert _text("data/adapter_hash_bom.txt").splitlines()[0] == ADAPTER
 
 
 @pytest.mark.req("INV-21")
@@ -151,3 +150,28 @@ def test_no_secret_address_or_id_in_the_folder():
                 assert not re.search(pat, text), (p.name, pat)
             hosts = set(re.findall(r"https?://([A-Za-z0-9.-]+)", text))
             assert hosts <= allowed_hosts, (p.name, hosts - allowed_hosts)
+
+
+@pytest.mark.req("INV-21")
+def test_the_bom_was_signed_afterwards_with_the_published_key():
+    from ratchet import bom
+
+    pub = (ROOT / "evidence" / "keys" / "bom-signing-2026-10-29.pub").read_text(encoding="utf-8").strip()
+    original = json.loads(_text("ratchet_bom.json"))
+    signed = json.loads(_text("ratchet_bom.signed.json"))
+    assert bom.key_id(pub) == "81b0a086250a81d0" == signed["signature"]["key_id"]
+    # The run's own record is unsigned, and signing changed nothing but the signature.
+    assert original["signature"] is None and bom.verify(original) == (True, "unsigned; sha256 matches")
+    assert signed["manifest"] == original["manifest"] and signed["sha256"] == original["sha256"]
+    ok, reason = bom.verify(signed, pub)
+    assert ok and "trusted key" in reason, reason
+    notice = (EV / "NOTICE.md").read_bytes()
+    assert bom.check_notice(signed, notice) == (True, "NOTICE.md matches the BOM")
+    # A different key, or an edited manifest, fails.
+    other = bom.keygen()[1]
+    assert bom.verify(signed, other)[0] is False
+    edited = json.loads(json.dumps(signed))
+    edited["manifest"]["training"]["examples"] += 1
+    assert bom.verify(edited, pub)[0] is False
+    assert original["manifest"]["created_at"].startswith("2026-10-28")
+    assert "Signed on 29 Oct 2026 with Ed25519 key `81b0a086250a81d0`, after the run" in _text("README.md")

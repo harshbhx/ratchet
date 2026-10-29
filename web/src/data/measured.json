@@ -371,8 +371,8 @@
   },
   "files": [
    "evidence/nightschool-nebius/MANIFEST.json",
+   "evidence/nightschool-nebius/NOTICE.md",
    "evidence/nightschool-nebius/README.md",
-   "evidence/nightschool-nebius/data/adapter_hash_bom.txt",
    "evidence/nightschool-nebius/data/final_inventory.txt",
    "evidence/nightschool-nebius/data/gpu_intervals_and_spend.txt",
    "evidence/nightschool-nebius/data/ledger_dump.txt",
@@ -382,6 +382,8 @@
    "evidence/nightschool-nebius/logs/seed_import.txt",
    "evidence/nightschool-nebius/logs/training_job2_FAILED_SAVE.log",
    "evidence/nightschool-nebius/logs/training_job3_SAVED.log",
+   "evidence/nightschool-nebius/ratchet_bom.json",
+   "evidence/nightschool-nebius/ratchet_bom.signed.json",
    "evidence/nightschool-nebius/scripts/reuse_night.py"
   ]
  }
