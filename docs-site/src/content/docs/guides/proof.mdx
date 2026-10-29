@@ -83,7 +83,11 @@ flowchart TB
 ## What exists today, and what has run for real
 
 <Aside type="caution" title="Read this before quoting a number">
-Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline with mock models. Night School itself ran once on Nebius on 28 Oct 2026 (dataset import, training job, hot-load, golden eval; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)), but its bill of materials was unsigned (no signing key was set), so no signed BOM, proof or receipt has come from a real run. None of it has run on real production traffic.
+Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline with mock models. Night School itself ran once on Nebius on 28 Oct 2026 (dataset import, training job, hot-load, golden eval; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)), but its bill of materials was written unsigned (no signing key was set), so no BOM, proof or receipt was signed by a real run as it happened. None of it has run on real production traffic.
+</Aside>
+
+<Aside type="tip" title="That one BOM was signed afterwards">
+Signed on 29 Oct 2026 with Ed25519 key `81b0a086250a81d0`, after the run; the BOM content is unchanged from the run's own record. Verify it with `python -m ratchet.bom verify evidence/nightschool-nebius/ratchet_bom.signed.json --public-key Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc= --notice evidence/nightschool-nebius/NOTICE.md`: it prints `OK` for the signature and for the notice. Only this BOM is covered. Receipts and BOMs from live traffic stay unsigned until the live gateway has the key.
 </Aside>
 
 | Link | In the repository | Checked by | Run on a real model |

@@ -107,14 +107,14 @@ RATCHET_BOM_SIGNING_KEY=<the signing key> make demo
 curl -s localhost:8000/ratchet/versions/2/bom | python -m ratchet.bom verify - --public-key <the public key>
 ```
 
-The public half of Ratchet's own signing key (Ed25519, key id `81b0a086250a81d0`) is in [evidence/keys](../evidence/keys/README.md). On 29 Oct 2026 nothing had been signed with it yet; check a document against it with `--public-key Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc=` (and `--notice NOTICE.md` for the adapter's notice).
+The public half of Ratchet's own signing key (Ed25519, key id `81b0a086250a81d0`) is in [evidence/keys](../evidence/keys/README.md). The 28 Oct Night School BOM was signed with it afterwards, on 29 Oct 2026 (`evidence/nightschool-nebius/ratchet_bom.signed.json`; the content is unchanged from the run's own record). Check a document against it with `--public-key Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc=` (and `--notice NOTICE.md` for the adapter's notice).
 
 A signed BOM is the operator's signed statement of the data and evaluation behind an adapter: it shows that nothing changed after signing, not that the weights were trained on that data. See [Features in depth](FEATURES.md).
 
 ## 8. The test suite and the requirements matrix
 
 ```bash
-make test                      # 1994 tests, no network, no GPU (Linux, macOS or WSL)
+make test                      # 1995 tests, no network, no GPU (Linux, macOS or WSL)
 python -m pytest -q            # the same suite without make
 python scripts/reqtrace.py --check
 ```

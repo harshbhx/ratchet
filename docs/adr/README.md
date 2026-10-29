@@ -69,7 +69,7 @@ Each ADR records one significant decision: the context, what was decided, the co
 | [0140](0140-recorded-scout-run.md) | A recorded live Scout run, recorded by the operator and played back read-only at its real pace when live runs are refused or failing | Accepted | 2026-10-21 |
 | [0145](0145-train-on-the-served-prompt.md) | Train on the prompt the student is served, in a pinned training image | Accepted | 2026-10-21 |
 | [0146](0146-hosted-student.md) | The hosted student: the untuned hosted Nano answers, while no version is live, only the tasks real Ultra labels calibrated it for (none yet), as a `hosted` version row whose answers count toward no release | Accepted | 2026-10-26 |
-| [0147](0147-demo-split.md) | The live demo's split: a random share of eligible requests goes to the hosted Nano whatever its confidence, labelled route `demo_split` everywhere, audited at its own rate, counted by no release | Accepted | 2026-10-26 |
+| [0147](0147-demo-split.md) | The random split: a random share of eligible requests goes to the hosted Nano whatever its confidence, labelled route `demo_split` everywhere, audited at its own rate, counted by no release | Accepted | 2026-10-26 |
 
 Numbers are not consecutive: parallel work lanes were given blocks of numbers (for example the 0020s and 0030s for evidence features, the 0040s for tasks and routing, the 0060s for operations, the 0080s for data governance, 0100 and up for the web app, the demo and measurement), so gaps are expected and numbers are never reused.
 

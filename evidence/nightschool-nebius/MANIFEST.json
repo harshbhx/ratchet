@@ -11,9 +11,9 @@
  "verdict": "rejected",
  "files": [
   {
-   "file": "data/adapter_hash_bom.txt",
-   "bytes": 2566,
-   "sha256": "d21c7850a4bc99f0b33e44d9077aba81fed2f2ded7532e3910b352456f82af41"
+   "file": "NOTICE.md",
+   "bytes": 1003,
+   "sha256": "ef87cbda3a3b469ee125bc0a86fa926f20a1a9fc93073cd6c57ab1fe85719fc3"
   },
   {
    "file": "data/final_inventory.txt",
@@ -59,6 +59,16 @@
    "file": "logs/training_job3_SAVED.log",
    "bytes": 15445,
    "sha256": "686b734b4bdcbeabab2cc410ecd77270328601aa1cb6a4461bd55c0ad7ce34f3"
+  },
+  {
+   "file": "ratchet_bom.json",
+   "bytes": 7426,
+   "sha256": "dc307014540535b33a977c006bfac1f76f78f140240d64a0a90dc75862b717d6"
+  },
+  {
+   "file": "ratchet_bom.signed.json",
+   "bytes": 7654,
+   "sha256": "1e53b61e6ad55e183e14d2666ce049416e351cf05a2d142202c86b907e21b54a"
   },
   {
    "file": "scripts/reuse_night.py",

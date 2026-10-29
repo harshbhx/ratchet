@@ -37,7 +37,17 @@ Everything in this folder is sanitised: IPs, URLs, ids and keys are replaced by 
 | Mean token accuracy | about 0.975 (0.9752 at the end) |
 | Adapter | `student-v1`, 40,490,208 bytes, sha256 `dc9ad4b9d2575e7a41120cb30bb023ee7aec35e997f4735ac819b545baddd00b` |
 
-The adapter's hash and the start of its unsigned bill of materials (no signing key was set) are in `data/adapter_hash_bom.txt`. **That file is a cut-off excerpt**: the capture stopped inside the first `NOTICE.md` text (2,566 bytes) and the VM that held the full file was deleted, so the whole BOM was not kept and cannot be signed or verified afterwards. A signature over a rebuilt copy would not be the run's own record, so none was made. The bill lists the teacher (Nemotron 3 Ultra, OpenMDW-1.1, distillation allowed) and the base model's licence.
+The adapter's hash is above. Its bill of materials is `ratchet_bom.json`, the run's own record: unsigned, because no signing key was set during the run. The bill lists the teacher (Nemotron 3 Ultra, OpenMDW-1.1, distillation allowed) and the base model's licence; its notice is `NOTICE.md`.
+
+### The BOM was signed afterwards
+
+Signed on 29 Oct 2026 with Ed25519 key `81b0a086250a81d0`, after the run; the BOM content is unchanged from the run's own record. `ratchet_bom.signed.json` was made from the same manifest by `ratchet.bom.document(manifest, Signer(seed))`, so its manifest and sha256 equal the original's. The public key is in [`evidence/keys`](../keys/README.md). Check it yourself:
+
+```bash
+python -m ratchet.bom verify evidence/nightschool-nebius/ratchet_bom.signed.json \n  --public-key Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc= --notice evidence/nightschool-nebius/NOTICE.md
+```
+
+Run on 29 Oct 2026, it printed `OK: signature valid (Ed25519, key 81b0a086250a81d0, trusted key)` and `OK: NOTICE.md matches the BOM`. That shows the document was not changed after it was signed and that the key's owner signed it; it was not signed when it was created. `ratchet_bom.json` still verifies as unsigned (`OK: unsigned; sha256 matches`).
 
 ## The gate: rejected
 
@@ -109,7 +119,7 @@ At the L40S list rate this repo uses for its own cost report ($1.55 an hour), ab
 - `logs/seed_import.txt`: the importer's report for the 4,322 rows.
 - `data/ledger_dump.txt`: versions, the full evaluation (with the precision frontier and the per-row outcome vector), events.
 - `data/gpu_intervals_and_spend.txt`: the ledger's compute intervals and spend table.
-- `data/adapter_hash_bom.txt`: the adapter's sha256 and bill of materials.
+- `ratchet_bom.json`: the adapter's bill of materials as the run wrote it (unsigned). `ratchet_bom.signed.json`: the same manifest, signed on 29 Oct 2026. `NOTICE.md`: the notice the BOM signs.
 - `data/final_inventory.txt`: what was left in the cloud at the end.
 - `fixes/train_job_vm_local_fixes.diff`: the change to `deploy/train_job.sh` made on the VM.
 - `scripts/reuse_night.py`: the one-off driver for the re-run (it has no addresses or keys in it; only the import layout was reformatted by the repository's formatter, the code is as it ran).
