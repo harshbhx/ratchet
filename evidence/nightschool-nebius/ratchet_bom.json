@@ -1,0 +1,224 @@
+{
+  "manifest": {
+    "schema": "ratchet.bom/v2",
+    "generator": "ratchet 0.5.0",
+    "created_at": "2026-10-28T18:14:01Z",
+    "adapter": {
+      "version": 2,
+      "name": "student-v1",
+      "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+      "day": 0
+    },
+    "training": {
+      "examples": 3864,
+      "dataset_sha256": "0b74d3abe56ced5a097f63ff30496f0e15737f831b5a3a1c88daabdb7a6bfda1",
+      "tasks": {
+        "text2sql": 3864
+      },
+      "targets": "teacher answers only",
+      "examples_with_pii_redacted": 7,
+      "origins": {
+        "import": 3864
+      },
+      "commitment": {
+        "alg": "ratchet.smt/v1",
+        "root": "b2fd50dd71dfea396b11339fe4705fcc7b49c01f8272dd28f3af3656a237b61b",
+        "size": 3864
+      }
+    },
+    "golden": {
+      "examples": 458,
+      "sha256": "f408f6c4af25f56d62e1d6f03a5ef209aea039367151904fc34ebbcbb184339d",
+      "held_out": true,
+      "human_labels": 0,
+      "commitment": {
+        "alg": "ratchet.smt/v1",
+        "root": "ea770ae4c03300d61918f46b51fafc8cfdc078dcba7b1115ca2e870f62e6e4fa",
+        "size": 458
+      }
+    },
+    "sources": [
+      {
+        "teacher": "nvidia/Nemotron-3-Ultra-550b-a55b",
+        "license": "OpenMDW-1.1",
+        "license_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+        "license_origin": "builtin",
+        "distill_ok": true,
+        "examples": 3864
+      }
+    ],
+    "label_sources": [],
+    "base_model_license": {
+      "name": "NVIDIA Nemotron Open Model License",
+      "url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/"
+    },
+    "notices": [
+      {
+        "file": "NOTICE.md",
+        "sha256": "ef87cbda3a3b469ee125bc0a86fa926f20a1a9fc93073cd6c57ab1fe85719fc3",
+        "text": "# NOTICE\n\nThis folder holds a LoRA adapter trained with Ratchet (ratchet 0.5.0). The licenses below travel with it: keep this file with the adapter wherever you copy, share or deploy it.\n\n## Base model\n\nThe adapter runs on top of `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`, which is governed by the NVIDIA Nemotron Open Model License: https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/\n\n## Training data\n\nThe adapter was trained on teacher outputs only: answers written by the teacher models below. The student's own answers were never training targets.\n\n| Teacher | License | License URL | Examples |\n|---|---|---|---|\n| nvidia/Nemotron-3-Ultra-550b-a55b | OpenMDW-1.1 | https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 | 3864 |\n\nThe bill of materials (ratchet_bom.json) lists the exact training and golden sets, their hashes and the evaluation; check it with `python -m ratchet.bom verify`.\n\nNot legal advice: check each license yourself.\n"
+      }
+    ],
+    "redactor": {
+      "sha256": "260662fa9e1abf817c6cd48defd490c23b3f966b65ff9c33dff9a5ebb23cb996",
+      "rules": 11,
+      "redact_pii": true
+    },
+    "eval": {
+      "golden_n": 458,
+      "golden_agreement": 0.17903930131004367,
+      "threshold": 0.9962354154191414,
+      "coverage": 0.048034934497816595,
+      "precision": 0.8181818181818182,
+      "precision_kind": "exact",
+      "test_n": 229,
+      "refused_n": 0,
+      "golden_invalid_refs": 0,
+      "tasks": {
+        "text2sql": {
+          "golden_n": 458,
+          "test_n": 229,
+          "agreement": 0.17903930131004367,
+          "threshold": 0.9962354154191414,
+          "precision": 0.8181818181818182,
+          "precision_kind": "exact",
+          "coverage": 0.048034934497816595,
+          "spec_hash": "b000221aef486e7c",
+          "target_precision": 0.97,
+          "calibrated": true,
+          "judge_n": 11,
+          "judge_pass_rate": 1.0
+        }
+      },
+      "judge_n": 11,
+      "judge_pass_rate": 1.0,
+      "certificate": {
+        "method": "clopper-pearson",
+        "calibration": "point",
+        "delta": 0.05,
+        "target": 0.95,
+        "threshold": 0.9962354154191414,
+        "served": 11,
+        "errors": 2,
+        "precision": 0.8181818181818182,
+        "lcb": 0.5299132007208235,
+        "certified": false
+      },
+      "frontier": [
+        {
+          "threshold": 0.95,
+          "coverage": 0.15283842794759825,
+          "served": 35,
+          "errors": 14,
+          "precision": 0.6,
+          "lcb": 0.3713342532327481,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.9,
+          "coverage": 0.15283842794759825,
+          "served": 35,
+          "errors": 14,
+          "precision": 0.6,
+          "lcb": 0.3713342532327481,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.85,
+          "coverage": 0.15283842794759825,
+          "served": 35,
+          "errors": 14,
+          "precision": 0.6,
+          "lcb": 0.3713342532327481,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.8,
+          "coverage": 0.15283842794759825,
+          "served": 35,
+          "errors": 14,
+          "precision": 0.6,
+          "lcb": 0.3713342532327481,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.75,
+          "coverage": 0.4672489082969432,
+          "served": 107,
+          "errors": 68,
+          "precision": 0.3644859813084112,
+          "lcb": 0.24839339957574874,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.7,
+          "coverage": 0.4672489082969432,
+          "served": 107,
+          "errors": 68,
+          "precision": 0.3644859813084112,
+          "lcb": 0.24839339957574874,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.65,
+          "coverage": 0.4672489082969432,
+          "served": 107,
+          "errors": 68,
+          "precision": 0.3644859813084112,
+          "lcb": 0.24839339957574874,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.6,
+          "coverage": 0.4672489082969432,
+          "served": 107,
+          "errors": 68,
+          "precision": 0.3644859813084112,
+          "lcb": 0.24839339957574874,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.55,
+          "coverage": 0.9781659388646288,
+          "served": 224,
+          "errors": 182,
+          "precision": 0.1875,
+          "lcb": 0.12538401903864962,
+          "delta": 0.005
+        },
+        {
+          "threshold": 0.5,
+          "coverage": 1.0,
+          "served": 229,
+          "errors": 187,
+          "precision": 0.18340611353711792,
+          "lcb": 0.12255374096368322,
+          "delta": 0.005
+        }
+      ],
+      "per_task": {
+        "text2sql": {
+          "n_test": 229,
+          "served": 11,
+          "errors": 2,
+          "precision": 0.8181818181818182,
+          "lcb": 0.5299132007208235,
+          "coverage": 0.048034934497816595
+        }
+      },
+      "test_vector": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEWEEEEEEEEEEEEEEEEESEEEEEEEEEEEESEEEEEEEEEEEEEEEEEEESEEEEEEEEESEEEEEEEEEESEEEEEEEEEEEEEEEESEEEEEEEEESEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEESEEEEEEEEEEEEWEEESEEEEEEEEE",
+      "spec_hashes": {
+        "text2sql": "b000221aef486e7c"
+      }
+    },
+    "teacher": {
+      "epoch": 1,
+      "checks": 0,
+      "disagreements": 0,
+      "self_agreement": null,
+      "contested_excluded": 0
+    }
+  },
+  "sha256": "279d896cd1b5fa48627f128cf884e72b1138369ec57260ba49ee9617577a4fac",
+  "signature": null
+}

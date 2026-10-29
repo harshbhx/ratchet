@@ -50,7 +50,7 @@ flowchart TB
   classDef outline stroke-width:1.25px,stroke-dasharray:4 3
 ```
 
-Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested, ready to run with `make nebius-plan`. The adapters behind the measured numbers in [evidence/](../evidence/) were trained on a borrowed GPU. The teacher and the judge do run on Nebius Token Factory. Numbers from mock models are labelled Mock-mode run.
+Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested, ready to run with `make nebius-plan`, and both ran by hand on 27 and 28 Oct 2026 ([endpoint](../evidence/student-endpoint-nebius/README.md), [Night School run](../evidence/nightschool-nebius/README.md)); the nightly schedule has not run on live traffic. The adapters behind the measured numbers in [evidence/](../evidence/) were trained on a borrowed GPU. The teacher and the judge do run on Nebius Token Factory. Numbers from mock models are labelled Mock-mode run.
 
 | Module | Responsibility |
 |---|---|

@@ -46,7 +46,7 @@ On a quiet day that never happens. Then it is cheaper to close the station and l
 
 5. **It computes break-even and the hosted crossover.** Break-even is the number of student answers per endpoint hour at which the endpoint's hours cost exactly the teacher spend they avoid. The crossover is the volume above which the endpoint is cheaper per answer than the hosted fallback (Nemotron 3 Nano 30B on Token Factory).
 
-6. **It recommends one of four things, in plain English.** `self_host`, `hosted_fallback`, `scale_to_zero` or `insufficient_data`, with an explanation that quotes the numbers and the price label ("unverified list prices" until an operator confirms them).
+6. **It recommends one of four things, in plain English.** `self_host`, `hosted_fallback`, `scale_to_zero` or `insufficient_data`, with an explanation that quotes the numbers and the price label ("unverified list prices" until an operator confirms them; the per-token prices were checked on 29 Oct 2026, the GPU-hour rate was not).
 
 </Steps>
 
@@ -246,7 +246,7 @@ Ratchet never promises savings below break-even, and the cost report says so in 
 
 ### Prices used
 
-Token prices are Token Factory list prices from `DEFAULT_PRICES` in `ratchet/config.py`, Oct 2026, **unverified** until `scripts/day1_check.py` passes with a real key. Every report says "unverified list prices" until an operator sets `RATCHET_PRICES_VERIFIED=1`.
+Token prices are Token Factory list prices from `DEFAULT_PRICES` in `ratchet/config.py`, checked on 29 Oct 2026: the four teacher and judge models' per-token prices match the price list Token Factory serves, and `scripts/day1_check.py` passed ([evidence/day1](https://github.com/harshbhx/ratchet/tree/main/evidence/day1)). The GPU-hour rate is still **unverified**, so every report says "unverified list prices" until an operator sets `RATCHET_PRICES_VERIFIED=1`.
 
 | Model (key in `DEFAULT_PRICES`) | Role | Input, USD per 1M tokens | Output, USD per 1M tokens |
 |---|---|---|---|
@@ -347,7 +347,7 @@ Then the report does not know the GPU cost. Student answers in hours with no rec
 
 ### Are these real numbers?
 
-Not yet. The prices are list prices, unverified until the day-1 checks pass, and every figure on this page is an estimate. As of Oct 29, 2026 the teacher runs on Nebius Token Factory and the live gateway has no student endpoint (one was served in speed tests and deleted), so the teacher answers every request; the live-run harness will publish measured numbers, including the Nebius bill.
+Not yet. The per-token prices were checked on 29 Oct 2026 against the price list Token Factory serves (`/v1/models?verbose=true`) and match; the GPU-hour rate is still unverified, and every figure on this page is an estimate. As of Oct 29, 2026 the teacher runs on Nebius Token Factory and the live gateway has no student endpoint (one was served in speed tests and deleted), so the teacher answers every request; the live-run harness will publish measured numbers, including the Nebius bill.
 
 ### Does the baseline overstate savings?
 
