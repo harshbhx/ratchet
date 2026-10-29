@@ -155,7 +155,7 @@ Two adapters, six datasets and two Spaces, all public: the adapters, the synthet
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://huggingface.co/harshbhx/models"><img src="docs/img/hf/hf-models.png" alt="Models: 3 adapters, text-to-SQL, its Nebius retraining and tool calling" width="100%"></a>
+      <a href="https://huggingface.co/harshbhx/models"><img src="docs/img/hf/hf-models.png" alt="Models card on Hugging Face showing the text-to-SQL and tool-calling adapters; the Nebius retrain of the text-to-SQL adapter is a third model repository" width="100%"></a>
       <br><sub><i>Models: 2 adapters</i></sub>
     </td>
     <td align="center" width="33%">
