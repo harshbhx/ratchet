@@ -80,4 +80,4 @@ rows with the reference query (`scripts/measure_adapter.py`, the same function r
 - One training run on one GPU type, with one resume; a different seed or GPU would give slightly different answers, as the 42 and 56 changed answers show.
 - Small adapter, synthetic databases and questions, one greedy answer per question, one reference query per question. The exams are small (a 7-point half-width).
 - The timings are from a preemptible machine, not a benchmark.
-- Not kept: the exam answering logs (they print the base model's per-row token counts) and the smoke job's logs. This is a hand-run job: the nightly loop is still a simulation, and nothing here is endorsed by Nebius.
+- Not kept: the exam answering logs (they print the base model's per-row token counts) and the smoke job's logs. This is a hand-run job: the nightly loop has not run nightly on live traffic (Night School ran once by hand on 28 Oct 2026, evidence/nightschool-nebius), and nothing here is endorsed by Nebius.

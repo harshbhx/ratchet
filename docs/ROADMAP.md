@@ -1,6 +1,6 @@
 # Roadmap
 
-As of Oct 26, 2026. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST)**. Target submission: **Oct 29, 2026**.
+As of 29 Oct 2026. Hackathon deadline: **Oct 30, 2026, 10:00 AM PDT (10:30 PM IST)**. Target submission: **Oct 29, 2026**.
 
 ## Milestone 0: v0.1 built (done, Oct 19)
 
@@ -47,16 +47,16 @@ Built package by package. Every item gets offline tests and an adversarial revie
 
 > Stage One of judging is pass/fail on the submission requirements, and one of them is a runtime call to Token Factory. Mock mode makes none, so the public gateway must run in live mode during judging (Dec 1–15).
 
-| Dates | Work | Exit criteria | Status (Oct 26, 2026) |
+| Dates | Work | Exit criteria | Status (29 Oct 2026) |
 |---|---|---|---|
-| Oct 19–20 | Day-1 checks (`scripts/day1_check.py`): Token Factory model IDs, logprobs, JSON mode; Nano 4B LoRA on a Serverless Job; vLLM endpoint with LoRA; Serverless pricing | `scripts/day1_check.py` passes, or config updated; one adapter trained and served, or fallback chosen | Scripts written and tested offline; DRY_RUN checks done; ready to run with `make nebius-up` |
-| Oct 21–22 | Live cascade: gateway in live mode against Token Factory teacher and the student endpoint | Real requests served by both paths; ledger shows real costs | Live gateway against Token Factory: done (smoke run of 20 requests, `evidence/live-smoke-2026-10-23`); no student endpoint |
+| Oct 19–20 | Day-1 checks (`scripts/day1_check.py`): Token Factory model IDs, logprobs, JSON mode; Nano 4B LoRA on a Serverless Job; vLLM endpoint with LoRA; Serverless pricing | `scripts/day1_check.py` passes, or config updated; one adapter trained and served, or fallback chosen | The Serverless Job (27 Oct retrain, 28 Oct Night School) and the Serverless Endpoint (27 to 28 Oct speed tests) ran by hand on Nebius; `scripts/day1_check.py` itself has no recorded pass, so list prices stay unverified; the one-command kit has not run as one |
+| Oct 21–22 | Live cascade: gateway in live mode against Token Factory teacher and the student endpoint | Real requests served by both paths; ledger shows real costs | Live gateway against Token Factory: done (smoke run of 20 requests, `evidence/live-smoke-2026-10-23`); the student was served by hand on a Nebius endpoint for speed tests (27 to 28 Oct 2026, `evidence/student-endpoint-nebius/`), but the live gateway is not connected to a student endpoint |
 | Oct 23–24 | Live Night School: dataset → Serverless Job → hot-load adapter → golden eval → release gate | At least one version trained and evaluated live | Ran once by hand on Nebius on 28 Oct 2026 and the gate rejected it (`evidence/nightschool-nebius/`); the schedule is scripted and tested offline. Earlier adapters were trained on a borrowed GPU (`evidence/text2sql-*`, `evidence/toolcall`) |
 | Oct 25 | Live traffic run: synthetic tickets through the real teacher for several "nights" (`make live-run`, [RUNBOOK](RUNBOOK.md#live-measurement-run)) | At least 3 versions; real cost and precision numbers | Not done |
 | Oct 26–27 | Public gateway on Cloudflare Containers (the Nebius VM kit, [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md), is the alternative): live at `live.ratchet.dualmindlab.tech` (**live mode** is required for Stage One) with live Scout, Tavily and the budget guard and the Token Factory fallback student | The host loads logged-out over HTTPS and the live strip shows a Token Factory call; `/`, `/scout`, `/dashboard` load; live Token Factory and Tavily calls succeed; stays up when the student endpoint is stopped; credits cover the gateway until Dec 15 | The gateway is on Cloudflare Containers (live.ratchet.dualmindlab.tech); the Nebius VM kit is the alternative |
 | Oct 28 | Video recorded | Video under 3 minutes on YouTube (public) | Done (Oct 26, 2026): [the video](https://video.ratchet.dualmindlab.tech/?from=docs), 2:59, public on YouTube |
 | Oct 28 | README with live numbers and a feedback section | The README shows the measured live run's numbers and has a section of feedback on the Nebius and NVIDIA tools used | Feedback section: done (Oct 26, 2026), [Feedback on Nebius and NVIDIA](../README.md#feedback-on-nebius-and-nvidia). Live numbers: not done, no measured live run to report (Oct 25 row); the README cites the 20-request smoke run and the recorded Scout runs only |
-| Oct 29 | Submit on Devpost | Every checklist item ticked | Not done |
+| Oct 29 | Submit on Devpost | Every checklist item ticked | Done (29 Oct 2026): submitted |
 | Dec 1–15 | Judging | Live URL up the whole window (the host must run Oct 29 – Dec 15) | Not done |
 
 ## Milestone 2: hardening (Nov–Dec 2026)

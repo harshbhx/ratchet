@@ -5,10 +5,10 @@
 
 ## Context
 
-The public live demo has no trained version and no student endpoint, so Ultra answers every request. The gateway already
+The public live gateway has no trained version and no student endpoint, so Ultra answers every request. The gateway already
 knows the untuned, hosted Nemotron 3 Nano 30B on Token Factory (`RATCHET_FALLBACK_STUDENT`): it answers student calls for a
 trained version while the endpoint is off, under the global `RATCHET_CONFIDENCE_THRESHOLD`, and its answers count toward no
-release ([ADR 0073](0073-fallback-attribution.md)). With no version at all it is never called. We wanted the demo to show the
+release ([ADR 0073](0073-fallback-attribution.md)). With no version at all it is never called. We wanted the live site to show the
 cascade on real models: the hosted Nano answering the calls it is sure of, Ultra the rest, with real costs.
 
 Two things had to hold. The threshold had to come from data, not a guess, measured the way a night measures a version.
@@ -60,11 +60,11 @@ Neither task met the bar. With the switch on, the row exists and the teacher sti
   School would re-score it as the champion, and the live alert would act on another model's answers.
 - **The global `RATCHET_CONFIDENCE_THRESHOLD` (0.80), as the fallback uses.** At 0.80 the Nano answers 58 of 99 triage rows
   at 81% agreement: a guess, and a poor one.
-- **A lower bar for the demo.** A choice for the owner, not this change: the records are recomputed with one command.
+- **A lower bar for the live site.** A choice for the owner, not this change: the records are recomputed with one command.
 
 ## Consequences
 
 - The switch is safe to set: today it adds a row, an event and the route `task_disabled` for every distillable request.
-- When better data clears the bar, the records change in one reviewed commit and the demo's hosted Nano answers those
+- When better data clears the bar, the records change in one reviewed commit and the live site's hosted Nano answers those
   calls with no other code change. More recorded Scout runs (own pairs) are the data that would decide it.
 - A new built-in spec for a task makes its record stale, so the teacher answers it until the records are measured again.

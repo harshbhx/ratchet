@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-28",
+  "updated": "2026-10-29",
   "links": {
     "repo": "https://github.com/harshbhx/ratchet",
     "docs": "https://docs.ratchet.dualmindlab.tech/",
@@ -142,6 +142,25 @@
           "label": "Tool-calling data and exams (round 3)",
           "value": "harshbhx/ratchet-toolcall-train, ratchet-toolcall-exam-hard, ratchet-toolcall-exam-bfcl"
         }
+      ],
+      "metrics": []
+    },
+    {
+      "id": "retrain-nebius",
+      "claim": "The round-2 recipe retrained on Nebius AI Cloud, and it reproduces",
+      "status": "real",
+      "evidence": "On 27 Oct 2026 the round-2 text-to-SQL recipe (the same 4,322 rows and settings) was retrained by hand as a Nebius Serverless Job on one preemptible (spot) L40S, with checkpoints in Object Storage. It scored 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the row-by-row differences are within chance, so it reproduces and does not improve. The whole Nebius effort, failed and interrupted attempts included, used 2.73 GPU-hours, about $2.16 at list prices (the Nebius bill decides).",
+      "check": {
+        "label": "Read the evidence folder",
+        "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius"
+      },
+      "paths": ["evidence/text2sql-round2-nebius/"],
+      "date": "2026-10-27",
+      "facts": [
+        { "label": "Where", "value": "A Nebius Serverless Job, one preemptible L40S, by hand" },
+        { "label": "Exam 1 / exam 2", "value": "40.7% (70 of 172) / 34.5% (69 of 200); original 39.0% / 33.0%" },
+        { "label": "Cost", "value": "About $2.16 at list prices, 2.73 GPU-hours in all" },
+        { "label": "Adapter on Hugging Face", "value": "harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius" }
       ],
       "metrics": []
     },

@@ -361,7 +361,7 @@ What breaks first:
 - **A signed BOM is the operator's signed statement** of the data and evaluation behind an adapter. It shows that nothing changed after signing, not that the weights were trained on that data.
 - **One gateway process.** The ledger is one SQLite file behind one lock; a Postgres ledger for several workers is planned ([roadmap](docs/ROADMAP.md)).
 - **The nightly loop has not run nightly on live traffic.** Night School ran end to end once on Nebius, by hand (28 Oct 2026), on 4,322 rows that already existed; the golden gate rejected that student (81.8% precision against the 95% target) and it was never made live ([evidence](evidence/nightschool-nebius/README.md)). The loop's behaviour is otherwise shown by unit tests with mock models, which show how it behaves, not real model quality. As of Oct 28, 2026, the original adapters were trained on a borrowed GPU, the round-2 recipe was retrained once on a Nebius Serverless Job, and the live gateway has no student endpoint yet, so the teacher answers every request; the student was served by hand, in two short sessions, on a Nebius Serverless Endpoint for speed tests ([evidence](evidence/student-endpoint-nebius/README.md)), and the endpoint was deleted afterwards. Token Factory calls (the teacher) are real.
-- **Token Factory's Terms of Service §5(f)** ("competing service") is broad. We asked Nebius support about it in writing on Oct 19, 2026; until the answer is final, treat the question as open. Not legal advice.
+- **Token Factory's Terms of Service §5(f)** ("competing service") is broad. We asked Nebius support about it in writing on Oct 19, 2026 (no answer received as of 29 Oct 2026); until the answer is final, treat the question as open. Not legal advice.
 
 ## NVIDIA lineage
 

@@ -1,7 +1,7 @@
 # The student served on a Nebius Serverless Endpoint: speed tests, the evidence
 
 On 27 Oct 2026 the student was served for the first time, by hand, on a Nebius AI Cloud Serverless Endpoint, to measure how fast it starts and how fast it answers. A second session on 27 to 28 Oct 2026 (IST) measured a cold start again and, for the first time, a restart (stop, then start).
-Both were short tests. The endpoint was deleted when the second session ended and nothing is left running. **The public live demo is not connected to this endpoint**: the teacher answers every live request.
+Both were short tests. The endpoint was deleted when the second session ended and nothing is left running. **The public live site is not connected to this endpoint**: the teacher answers every live request.
 No accuracy was scored here. Accuracy is in the exam folders ([round 2](../text2sql-round2/README.md), [tool calling](../toolcall/MANIFEST.json)).
 
 ## Result
@@ -77,7 +77,7 @@ Endpoint ids, the endpoint's public host name, retraining job ids and the privat
 ## Limits
 
 - One cold run (session 1), one cold start and one restart (session 2), on spot GPUs, 30 prompts, speed only. The restart was measured once. This says how fast the student can answer, not how good its answers are.
-- Nothing here is a production deployment. The endpoint existed for the tests only, and the live demo never used it.
+- Nothing here is a production deployment. The endpoint existed for the tests only, and the live site never used it.
 - A restart is not instant: image pulling dominates, so a restart saves about 33 s against a cold start, not minutes. The cold starts (7.2 and 7.6 minutes) are a fresh machine with nothing cached; the 7.1 minute restart still had to load both adapters again.
 
 `MANIFEST.json` has a SHA-256 for every file.
