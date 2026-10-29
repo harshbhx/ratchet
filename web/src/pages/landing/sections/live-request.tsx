@@ -9,6 +9,8 @@ import { WhoBadge } from "@/components/ui/who";
 import { cn } from "@/lib/utils";
 import { gatewayFetch, useWaking } from "@/lib/waking-store";
 import { RUN_WAKING, isWaking } from "@/lib/waking-model";
+import { getToken } from "@/lib/turnstile";
+import { tokenHeaders } from "@/lib/turnstile-model";
 import {
   DAILY_LIMIT_TEXT,
   DAILY_NOTE,
@@ -50,9 +52,11 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
     setState({ kind: "sending" });
     signal({ type: "live", phase: "sent" });
     try {
+      // A fresh human-check token for this one call (null while the check is off); a send is never repeated, so a token is never reused.
+      const token = await getToken();
       const r = await gatewayFetch("/v1/chat/completions", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...tokenHeaders(token) },
         body: JSON.stringify(buildBody(prompt)),
       });
       if (!r.ok) {

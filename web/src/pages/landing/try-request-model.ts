@@ -37,6 +37,7 @@ export function parseAnswer(body: unknown): Answer | null {
 /** A calm message for a failed request, by HTTP status (0: no answer at all). */
 export function errorText(status: number): string {
   if (status === 0) return "Could not reach the live gateway. Nothing was charged. Try again in a moment.";
+  if (status === 403) return "Human check failed. Refresh the page and try again.";
   if (status === 429) return "The live gateway has reached its limit for now. Please try again later.";
   if (status === 503 || status === 502 || status === 504) return "The live gateway is not ready yet. Try again in a minute.";
   if (status === 400) return "The gateway did not accept that text. Try a shorter, plainer question.";
