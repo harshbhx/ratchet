@@ -367,7 +367,14 @@
    "precision": "81.8%",
    "target": "95%",
    "training_rows": "3,864",
-   "golden_rows": "458"
+   "golden_rows": "458",
+   "rows_imported": "4,322",
+   "steps": "966",
+   "loss_start": "0.15",
+   "loss_end": "0.08",
+   "gate_right": "9",
+   "gate_answered": "11",
+   "gate_questions": "229"
   },
   "files": [
    "evidence/nightschool-nebius/MANIFEST.json",

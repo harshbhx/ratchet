@@ -1,4 +1,4 @@
-import{h as e,m as t,o as n,v as r}from"./utils-CnmWD783.js";import{p as i}from"./turnstile-model-NHmWWtpN.js";import{b as a,v as o}from"./who-CVRXlm_Q.js";import{ot as s}from"./index-CioeLDOB.js";var c={name:`copy`,size:24,node:[[`rect`,{width:`14`,height:`14`,x:`8`,y:`8`,rx:`2`,ry:`2`,key:`17jyea`}],[`path`,{d:`M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2`,key:`zix9uf`}]]};c.node;var l=i(c),u={name:`gauge`,size:24,node:[[`path`,{d:`m12 14 4-4`,key:`9kzdfg`}],[`path`,{d:`M3.34 19a10 10 0 1 1 17.32 0`,key:`19p75a`}]]};u.node;var d=i(u),f={name:`video`,size:24,node:[[`path`,{d:`m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5`,key:`ftymec`}],[`rect`,{x:`2`,y:`6`,width:`14`,height:`12`,rx:`2`,key:`158x01`}]]};f.node;var p=i(f),m=r(e(),1),h=`{
+import{h as e,m as t,o as n,v as r}from"./utils-CnmWD783.js";import{p as i}from"./turnstile-model-NHmWWtpN.js";import{b as a,v as o}from"./who-CQgvETDh.js";import{ot as s}from"./index-DMBozrkk.js";var c={name:`copy`,size:24,node:[[`rect`,{width:`14`,height:`14`,x:`8`,y:`8`,rx:`2`,ry:`2`,key:`17jyea`}],[`path`,{d:`M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2`,key:`zix9uf`}]]};c.node;var l=i(c),u={name:`gauge`,size:24,node:[[`path`,{d:`m12 14 4-4`,key:`9kzdfg`}],[`path`,{d:`M3.34 19a10 10 0 1 1 17.32 0`,key:`19p75a`}]]};u.node;var d=i(u),f={name:`video`,size:24,node:[[`path`,{d:`m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5`,key:`ftymec`}],[`rect`,{x:`2`,y:`6`,width:`14`,height:`12`,rx:`2`,key:`158x01`}]]};f.node;var p=i(f),m=r(e(),1),h=`{
  "generator": "scripts/measured_numbers.py",
  "exams": {
   "date": "2026-10-24",
@@ -367,7 +367,14 @@ import{h as e,m as t,o as n,v as r}from"./utils-CnmWD783.js";import{p as i}from"
    "precision": "81.8%",
    "target": "95%",
    "training_rows": "3,864",
-   "golden_rows": "458"
+   "golden_rows": "458",
+   "rows_imported": "4,322",
+   "steps": "966",
+   "loss_start": "0.15",
+   "loss_end": "0.08",
+   "gate_right": "9",
+   "gate_answered": "11",
+   "gate_questions": "229"
   },
   "files": [
    "evidence/nightschool-nebius/MANIFEST.json",
