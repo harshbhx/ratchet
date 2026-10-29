@@ -235,7 +235,7 @@ flowchart TB
 |---|---|
 | Ledger | SQLite file at `RATCHET_DB`, day 1 starts at the first request |
 | Teacher and student | Token Factory teacher; vLLM endpoint, or the hosted fallback when `RATCHET_STUDENT_BASE` is empty |
-| Night School | `python -m ratchet.live night` from cron, with a real training job (built and tested with mock models; not yet run on live traffic) |
+| Night School | `python -m ratchet.live night` from cron, with a real training job (tested offline; ran once by hand on Nebius on 28 Oct 2026 and the golden gate rejected that student; not yet run on live traffic) |
 | Audit rate | `RATCHET_AUDIT_RATE`, default 0.05 |
 | Canary audits needed per stage | 20 (`ReleasePolicy.min_audits`) |
 | Gate tick from requests | At most once every 5 s (`RATCHET_TICK_INTERVAL_S`) |

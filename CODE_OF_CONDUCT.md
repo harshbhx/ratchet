@@ -4,4 +4,4 @@ This project follows the [Contributor Covenant, version 2.1](https://www.contrib
 
 In short: be respectful, assume good intent, give constructive feedback, and keep discussion about the work. Harassment of any kind is not accepted.
 
-Report unacceptable behaviour to the maintainer at harshbhx@gmail.com. Reports are handled confidentially.
+Report unacceptable behaviour to the maintainer at bhanushaliharsh434@gmail.com. Reports are handled confidentially.

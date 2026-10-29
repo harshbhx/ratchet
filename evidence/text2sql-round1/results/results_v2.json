@@ -180,7 +180,7 @@
     "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
     "python": "3.13.5",
     "platform": "Windows-11-10.0.26200-SP0",
-    "gpu": "Tesla T4 (free Colab)",
+    "gpu": "a borrowed GPU",
     "run_note": "prompt v2: the exam question with 'Select only the columns the question asks for.' added to the end, for both models; same adapter",
     "args": {
       "target_precision": 0.95,

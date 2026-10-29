@@ -760,7 +760,7 @@ Every reported number is agreement with the teacher, so the teacher's own stabil
 
 ## 7. Cost accounting
 
-Ratchet reports cost two ways ([ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). Every list price (tokens and GPUs) is unverified until the day-1 checks pass, and the report says so until `RATCHET_PRICES_VERIFIED=1`.
+Ratchet reports cost two ways ([ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). The per-token list prices were checked on 29 Oct 2026 (the day-1 check passed); the GPU-hour rate is still unverified, and the report says so until `RATCHET_PRICES_VERIFIED=1`.
 
 ### Per request (`router.py`)
 

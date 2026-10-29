@@ -1,6 +1,6 @@
 # Configuration
 
-All settings come from environment variables. Defaults live in `ratchet/config.py` (`Settings`), `ratchet/live.py`, the `deploy/` scripts and `deploy/vm/`. Model IDs and prices were read from the Nebius Token Factory catalog in October 2026 and are unverified until `python scripts/day1_check.py` passes with a real key (INV-9).
+All settings come from environment variables. Defaults live in `ratchet/config.py` (`Settings`), `ratchet/live.py`, the `deploy/` scripts and `deploy/vm/`. Model IDs and prices were read from the Nebius Token Factory catalog in October 2026 and checked on 29 Oct 2026 (`python scripts/day1_check.py` passed with a real key, INV-9); the GPU-hour rates are still unverified.
 
 Terms (shadow, canary, [Wilson interval](https://docs.ratchet.dualmindlab.tech/guides/glossary/#wilson-bound), [e-value](https://docs.ratchet.dualmindlab.tech/guides/glossary/#e-value)) are in [GLOSSARY.md](GLOSSARY.md); FR-, NFR- and INV- ids are requirement and invariant ids ([REQUIREMENTS.md](REQUIREMENTS.md)). A one-page overview is in [README.md](../README.md).
 
@@ -342,7 +342,7 @@ Read only by `deploy/train_job.sh`, `deploy/student_endpoint.sh` and the one-com
 
 ## Prices (`DEFAULT_PRICES`)
 
-USD per 1M tokens (input / output). These are Token Factory list prices as read in October 2026 and unverified until `scripts/day1_check.py` passes (INV-9); verify them in the console.
+USD per 1M tokens (input / output). These are Token Factory list prices as read in October 2026 and checked on 29 Oct 2026 (`scripts/day1_check.py` passed, INV-9); verify them in the console.
 
 | Key | Input | Output | Note |
 |---|---|---|---|
@@ -371,7 +371,7 @@ Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py
 | `RATCHET_STUDENT_GPUS` | `1` | GPUs the student endpoint runs on (0 to 1,024) (`1gpu-8vcpu-32gb` in `deploy/student_endpoint.sh`). The endpoint costs this many times the per-GPU price per hour |
 | `RATCHET_TRAIN_GPU_USD_PER_HOUR` | `1.55` | USD per GPU-hour of a training job (the same L40S price: default 1.55, $1.35 on Nebius's pricing page; unverified). Prices the training interval `python -m ratchet.live night` records around each training run, and the simulator's |
 | `RATCHET_TRAIN_GPUS` | `1` | GPUs a training job runs on (`RATCHET_TRAIN_PRESET`) |
-| `RATCHET_PRICES_VERIFIED` | `0` | `1` once `scripts/day1_check.py` passed with a real key and the GPU rates above match your Nebius bill. Until then every report labels its prices "unverified list prices" (invariant 9); with `1` it says "prices confirmed by the operator". Ratchet never sets it by itself |
+| `RATCHET_PRICES_VERIFIED` | `0` | `1` once `scripts/day1_check.py` passed with a real key (it did on 29 Oct 2026, for the per-token prices) and the GPU rates above match your Nebius bill. Until then every report labels its prices "unverified list prices" (invariant 9); with `1` it says "prices confirmed by the operator". Ratchet never sets it by itself |
 
 The mock endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock mode](#mock-mode)).
 

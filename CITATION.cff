@@ -8,8 +8,8 @@ authors:
 repository-code: "https://github.com/harshbhx/ratchet"
 url: "https://ratchet.dualmindlab.tech"
 license: Apache-2.0
-version: 0.5.0
-date-released: 2026-10-25
+version: 0.5.1
+date-released: 2026-10-29
 abstract: >-
   Ratchet is an OpenAI-compatible gateway in which a small student model answers first and a teacher whose license allows
   distillation answers when the student is unsure, logging each answer with its teacher and license. Every night it is

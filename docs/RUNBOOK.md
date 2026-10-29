@@ -484,7 +484,7 @@ A ledger day is not a UTC day: day 1 starts at the first request's time, and eac
 - Spend less per request: lower the audit rate (but not to 0 while a canary is in flight, since audits drive promotion and rollback), stop the endpoint when idle, lower `RATCHET_TEACHER_MAX_TOKENS` (the most output tokens any teacher call may use, 8,192 by default) or ask clients to send a smaller `max_tokens`.
 - Watch it: alert on `budget` events in the log (`"event":"ledger_event","kind":"budget"`), or on `increase(ratchet_cost_usd_total[1h])` against your usual hour.
 
-The limits count per-token prices of the calls Ratchet made (list prices, unverified until the day-1 checks pass), so compare them with the Token Factory bill weekly. A request in flight can overshoot a cap by its own cost.
+The limits count per-token prices of the calls Ratchet made (Token Factory list prices, checked on 29 Oct 2026), so compare them with the Token Factory bill weekly. A request in flight can overshoot a cap by its own cost.
 
 ### Cost and the self-host recommendation
 

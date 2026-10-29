@@ -153,7 +153,7 @@ Ratchet also reports the bill honestly: savings per token and by GPU-hours actua
 | Student endpoint | **Served by hand in two short sessions on a Nebius Serverless Endpoint for speed tests (27 and 28 Oct 2026, [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)); the endpoint script is tested offline, ready to run with `make nebius-up`. On 28 Oct 2026 the adapter from Night School's first end-to-end run, by hand, was served from a Nebius Serverless Endpoint too, and the golden gate rejected it (81.8% precision against the 95% target), so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).** Ratchet's own adapter is not connected to the live site: every live model call runs on Nebius Token Factory, where Ultra teaches and a random 40% of eligible requests are answered by the hosted Nano 30B. If a trained version were live without a GPU endpoint, its calls would go to the hosted, untuned Nano 30B <Who as="fallback" />, and pages would say so |
 | A text-to-SQL adapter | The published adapters were trained on a borrowed GPU. The round-2 recipe was also retrained once on Nebius AI Cloud (a Serverless Job on one L40S, 27 Oct 2026); it scored 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance). The measured results of the published adapters are on [Results](/guides/results/) |
 | A tool-calling adapter | Trained on a borrowed GPU (not retrained on Nebius). Hard exam 136 of 150 (90.7%) against 94 of 150 (62.7%) untrained and 137 of 150 (91.3%) for Ultra; BFCL exam 241 of 300 (80.3%) against 232 (77.3%) untrained and 265 (88.3%) for Ultra. SQL stays the headline result. See [Results](/guides/results/) |
-| Model ids and list prices in `ratchet/config.py` | Unverified until `scripts/day1_check.py` passes with a real key |
+| Model ids and Token Factory list prices in `ratchet/config.py` | Checked on 29 Oct 2026 against the price list Token Factory serves (`scripts/day1_check.py` passed, [evidence/day1](https://github.com/harshbhx/ratchet/tree/main/evidence/day1)); the GPU-hour rate is still unverified |
 | Token Factory Terms of Service §5(f) ("competing service") | **Open question.** Asked Nebius support in writing on Oct 19, 2026; no answer received as of 29 Oct 2026. Not legal advice |
 
 ## Where to go next
@@ -162,7 +162,7 @@ Ratchet also reports the bill honestly: savings per token and by GPU-hours actua
   <PathCard title="Why it matters" href="/guides/why-it-matters/" icon="scale" tone="neutral" description="The value in depth, by audience." />
   <PathCard title="One request's journey" href="/guides/request-journey/" icon="loop" description="What happens to a single API call." />
   <PathCard title="Proof you can run" href="/guides/proof/" icon="check" tone="neutral" description="Check a claim with one command." />
-  <PathCard title="For judges" href="/guides/for-judges/" icon="start" tone="neutral" description="A ten-minute tour." />
+  <PathCard title="For judges" href="/guides/for-judges/" icon="start" tone="neutral" description="A five-minute tour." />
 </PathGrid>
 
 <Aside type="note" title="Common questions">

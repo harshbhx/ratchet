@@ -59,13 +59,13 @@
   },
   {
    "file": "results/results.json",
-   "bytes": 4087,
-   "sha256": "424cd8b381ea50db4872e64d283d6ee4b54a406b0ab511d4daac6cfc1981ccb5"
+   "bytes": 4059,
+   "sha256": "528fa6822a826b8638fd0993d69e3f0649001d7a5725a7fab83623fa763760c0"
   },
   {
    "file": "results/results_v2.json",
-   "bytes": 4056,
-   "sha256": "df2e1ab486a43b4e12b09332b92583ebc7d54af7053ad5bb10efbeae67b9a0ea"
+   "bytes": 4049,
+   "sha256": "69d276ca5b0700b3b8021f8a1ecd12be8b98fb04c1f6a46fd9cc6519d7b7cbc8"
   },
   {
    "file": "results/teacher_selfcheck.json",

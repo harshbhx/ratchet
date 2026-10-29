@@ -9,7 +9,7 @@ head:
     content: 'Ratchet docs: guides, API reference and evidence'
 hero:
   title: Ratchet documentation
-  tagline: An OpenAI-compatible gateway that distills open teacher models into a small student you own, learned only from open teachers and released through a gate.
+  tagline: An OpenAI-compatible gateway that distills open teacher models into a small student, your own adapter on an open base, learned only from open teachers and released through a gate.
   actions:
     - text: Quickstart
       link: /guides/quickstart/
@@ -111,7 +111,7 @@ Every call here is a real model call and costs cents, and the gateway needs your
 <RealStrip
 asOf="Status as of 29 Oct 2026. The For judges guide keeps the full list."
 items={[
-{ badge: 'Live', variant: 'success', title: 'Every model call runs on Nebius Token Factory', text: 'NVIDIA Nemotron 3 Ultra answers every request on the live gateway and built the training data.', href: '/guides/for-judges/' },
+{ badge: 'Live', variant: 'success', title: 'Every model call runs on Nebius Token Factory', text: 'NVIDIA Nemotron 3 Ultra teaches on the live gateway and built the training data. A random 40% of eligible requests are answered by the hosted Nemotron 3 Nano 30B, a quarter of those re-checked by Ultra.', href: '/guides/for-judges/' },
 { badge: 'Measured', variant: 'note', title: 'Exam scores on unseen databases', text: 'The text-to-SQL adapter is scored on databases it never trained on. The tool-calling result is a second, smaller one.', href: '/guides/results/' },
 { badge: 'Done', variant: 'success', title: 'Retrained on Nebius AI Cloud', text: 'The round-2 text-to-SQL recipe was retrained by hand on 27 Oct 2026 on one preemptible L40S. The original adapters were trained on a borrowed GPU.', href: '/guides/host-on-nebius/' },
 { badge: 'Done', variant: 'success', title: 'Student endpoint speed tests', text: 'On 27 to 28 Oct 2026 the student was served by hand on a Nebius Serverless Endpoint for speed tests (cold start about 7.2 minutes; 16 users p50 1.6 s SQL, 1.2 s tool calling), then deleted. The live gateway is not connected to it.', href: 'https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius' },

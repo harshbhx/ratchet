@@ -145,7 +145,7 @@ The [request journey](/guides/request-journey/) walks through the same cascade f
 - **Ratchet's own adapter on the live site.** The live site is not connected to a student endpoint. The fine-tuned Nano 4B adapter goes live only after it passes the golden gate.
 - **The nightly schedule on live traffic.** Night School runs by hand today; the timer is scripted.
 - **The one-command host** (`make nebius-plan`, `make nebius-up`) is ready and dry-run by default; it has not yet run as one command. The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline.
-- **Verified prices.** The model ids and list prices in `ratchet/config.py` are confirmed once `scripts/day1_check.py` passes with a real key. The live example below follows the gateway's own wiring and is tested offline with fake HTTP transports; the mock example further down is the one verified to run.
+- **Verified prices.** The model ids and list prices in `ratchet/config.py` were confirmed on 29 Oct 2026 (`scripts/day1_check.py` passed with a real key); the GPU-hour rate is still unverified. The live example below follows the gateway's own wiring and is tested offline with fake HTTP transports; the mock example further down is the one verified to run.
 
 Run every script with `DRY_RUN=1` first.
 </Aside>
@@ -469,7 +469,7 @@ In live mode, run `python -m ratchet.live night` (see [command line](/api/cli/))
 
 ### Does the embedded path cost anything extra?
 
-No. The model calls are the same as over HTTP, and `cost_usd` prices them with the prices in `ratchet/config.py`, which are unverified until `scripts/day1_check.py` passes with a real key. With <Term t="off-path-checks">off-path checks</Term>, the audit and shadow cost lands in the ledger row after `handle` returns, not in that `Result`. Whether self-hosting the student pays at all depends on volume; see [cost and savings](/guides/cost-and-savings/).
+No. The model calls are the same as over HTTP, and `cost_usd` prices them with the prices in `ratchet/config.py`, the per-token prices of which were checked on 29 Oct 2026 (`scripts/day1_check.py`); the GPU-hour rate is still unverified. With <Term t="off-path-checks">off-path checks</Term>, the audit and shadow cost lands in the ledger row after `handle` returns, not in that `Result`. Whether self-hosting the student pays at all depends on volume; see [cost and savings](/guides/cost-and-savings/).
 
 ### What if the student is confidently wrong?
 

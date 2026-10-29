@@ -180,8 +180,8 @@
     "base_model": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
     "python": "3.13.5",
     "platform": "Windows-11-10.0.26200-SP0",
-    "gpu": "Tesla T4 (free Colab)",
-    "run_note": "text-to-SQL, 172 held-out rows from unseen databases; trained on a free Colab T4, not on Nebius GPUs; answers produced by fast_generate.py (cached greedy decoder)",
+    "gpu": "a borrowed GPU",
+    "run_note": "text-to-SQL, 172 held-out rows from unseen databases; trained on a borrowed GPU; answers produced by fast_generate.py (cached greedy decoder)",
     "args": {
       "target_precision": 0.95,
       "teacher_in_per_m": 1.0,
