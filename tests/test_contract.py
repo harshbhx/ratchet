@@ -856,14 +856,14 @@ def test_dashboard_admin_key_stays_in_memory():
     storage = re.compile(r"localStorage|sessionStorage|indexedDB|document\.cookie|caches\.open")
     users = sorted(p.relative_to(src).as_posix() for p in src.rglob("*.ts*") if storage.search(p.read_text(encoding="utf-8")))
     # The theme toggle, Nano and Ultra's hide flag and this visit's lessons (components/companions/companion-storage.ts),
-    # and the tour's hint flags and place (components/tour/site-tour-storage.ts): no keys, no personal data.
+    # and the tour's place (components/tour/site-tour-storage.ts): no keys, no personal data.
     assert users == ["components/companions/companion-storage.ts", "components/tour/site-tour-storage.ts", "lib/hooks.ts"], users
     hooks = (src / "lib" / "hooks.ts").read_text(encoding="utf-8")
     assert re.findall(r"localStorage\.setItem\(([^,]+),", hooks) == ['"ratchet-theme"']
     companions = (src / "components" / "companions" / "companion-storage.ts").read_text(encoding="utf-8")
     assert sorted(re.findall(r'_KEY = "([^"]+)"', companions)) == ["ratchet-companions-hidden", "ratchet-companions-session"]
     tour = (src / "components" / "tour" / "site-tour-storage.ts").read_text(encoding="utf-8")
-    assert sorted(re.findall(r'_KEY = "([^"]+)"', tour)) == ["ratchet-tour-button", "ratchet-tour-hint", "ratchet-tour-state"]
+    assert sorted(re.findall(r'_KEY = "([^"]+)"', tour)) == ["ratchet-tour-state"]
 
     holders = [p for p in src.rglob("*.ts*") if "adminKey" in p.read_text(encoding="utf-8")]
     assert holders, "no file holds the admin key: the scan below would prove nothing"

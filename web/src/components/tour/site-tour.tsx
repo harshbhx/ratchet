@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useLocation, useNavigate } from "react-router";
 import { AnimatePresence, motion } from "motion/react";
-import { X } from "lucide-react";
 import type { Config, Driver, DriveStep, PopoverDOM } from "driver.js";
 import { Avatar } from "@/components/avatar/avatar";
 import { themeLook, type Expression } from "@/components/avatar/avatar-model";
@@ -12,7 +11,7 @@ import { videoHref } from "@/lib/real-model";
 import { DAILY_LIMIT_TEXT } from "@/pages/landing/try-request-model";
 import { REAL } from "@/pages/judges/real";
 import { DOCS_URL } from "@/lib/utils";
-import { buttonHidden, clearTourState, dismissHint, hintDismissed, readTourState, setButtonHidden, writeTourState } from "./site-tour-storage";
+import { clearTourState, readTourState, writeTourState } from "./site-tour-storage";
 import {
   ANSWER_INDEX,
   SEND_INDEX,
@@ -129,7 +128,7 @@ function waitFor(sel: string, ms: number): Promise<Element | null> {
 
 /**
  * The tour's host: lives in App, starts the tour from a button, from `?tour=1` or from where it left off across the page change
- * to /live, shows the one-time hint and the small corner button, and drives Driver.js (loaded only when a tour starts).
+ * to /live, and drives Driver.js (loaded only when a tour starts).
  */
 export function SiteTourHost() {
   const loc = useLocation();
@@ -141,9 +140,6 @@ export function SiteTourHost() {
   const runRef = useRef<Run | null>(null);
   const busy = useRef(false);
   const gen = useRef(0);
-  const [touring, setTouring] = useState(false);
-  const [hint, setHint] = useState(() => !hintDismissed());
-  const [hidden, setHidden] = useState(() => buttonHidden());
 
   const available = useCallback((i: number): boolean => {
     const s = SITE_STEPS[i];
@@ -190,7 +186,6 @@ export function SiteTourHost() {
     clearTourState();
     runRef.current = null;
     busy.current = false;
-    setTouring(false);
     if (run) {
       run.navigating = true;
       teardown(run);
@@ -421,7 +416,6 @@ export function SiteTourHost() {
       busy.current = true;
       const mine = ++gen.current;
       clearTourState();
-      setTouring(true);
       try {
         const [{ driver: createDriver }] = await Promise.all([import("driver.js"), import("driver.js/dist/driver.css")]);
         if (mine !== gen.current || runRef.current) return;
@@ -476,8 +470,6 @@ export function SiteTourHost() {
   // A button elsewhere asks for the tour: from the story page it starts here, from another page it goes there first.
   useEffect(() => {
     const on = () => {
-      setHint(false);
-      dismissHint();
       if (runRef.current) finish();
       if (pathRef.current === "/") void begin(0);
       else {
@@ -497,7 +489,6 @@ export function SiteTourHost() {
       params.delete("tour=true");
       const rest = params.toString();
       navRef.current({ pathname: loc.pathname, search: rest ? `?${rest}` : "", hash: loc.hash }, { replace: true });
-      setHint(false);
       void begin(loc.pathname === "/live" ? SEND_INDEX : 0);
       return;
     }
@@ -505,79 +496,5 @@ export function SiteTourHost() {
     if (saved && !runRef.current) void begin(saved.step);
   }, [loc.pathname, loc.search, loc.hash, begin]);
 
-  const closeHint = () => {
-    dismissHint();
-    setHint(false);
-  };
-  const showHint = hint && !touring && loc.pathname === "/";
-  const showButton = !hint && !hidden && !touring;
-
-  return (
-    <>
-      <AnimatePresence>
-        {showHint && (
-          <motion.aside
-            key="hint"
-            aria-label="Guided tour"
-            initial={{ opacity: 0, y: 16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, transition: { duration: 0.2, delay: 0 } }}
-            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 1.2 }}
-            className="fixed bottom-4 right-4 z-40 flex max-w-[calc(100vw-2rem)] items-end gap-3 rounded-3xl border border-line-strong bg-surface/90 p-3 pr-4 shadow-[0_20px_50px_-20px_rgb(0_0_0/0.45)] backdrop-blur-xl sm:bottom-6 sm:right-6"
-          >
-            <Avatar who="nano" expression="wave" size={64} />
-            <div className="min-w-0 pb-1">
-              <p role="status" className="pr-6 text-[14px] font-medium leading-snug text-ink">
-                First time? Want a 60-second tour?
-              </p>
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={startSiteTour}
-                  className="rounded-full bg-ink px-3.5 py-1.5 text-[13px] font-medium text-bg transition-opacity hover:opacity-90"
-                >
-                  Start the tour
-                </button>
-                <button type="button" onClick={closeHint} className="rounded-full px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:text-ink">
-                  Not now
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={closeHint}
-              aria-label="Dismiss the tour hint"
-              className="absolute right-2 top-2 inline-flex size-7 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-ink"
-            >
-              <X className="size-4" aria-hidden />
-            </button>
-          </motion.aside>
-        )}
-      </AnimatePresence>
-      {showButton && (
-        <div className="group fixed bottom-4 right-4 z-30 sm:bottom-6 sm:right-6">
-          <button
-            type="button"
-            onClick={startSiteTour}
-            aria-label="Take the 60-second tour"
-            title="Take the 60-second tour"
-            className="inline-flex size-12 items-center justify-center rounded-full border border-line-strong bg-surface/90 shadow-card backdrop-blur-md transition-transform hover:-translate-y-0.5 motion-reduce:transition-none"
-          >
-            <Avatar who="nano" expression="idle" size={34} />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setButtonHidden(true);
-              setHidden(true);
-            }}
-            aria-label="Hide the tour button"
-            className="absolute -right-1 -top-1 inline-flex size-5 items-center justify-center rounded-full border border-line bg-surface text-muted opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-          >
-            <X className="size-3" aria-hidden />
-          </button>
-        </div>
-      )}
-    </>
-  );
+  return null;
 }
