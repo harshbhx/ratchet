@@ -1,4 +1,8 @@
 <p align="center">
+  <b><a href="JUDGES.md">For judges: start here</a></b> &nbsp;·&nbsp; <a href="https://ratchet.dualmindlab.tech/live">Try it live</a> &nbsp;·&nbsp; <a href="https://video.ratchet.dualmindlab.tech/?from=readme">Watch the video</a>
+</p>
+
+<p align="center">
   <img src="docs/img/anim/readme-banner.gif" alt="Ratchet: rent intelligence today, own it tomorrow" width="100%">
 </p>
 
@@ -193,7 +197,7 @@ The gateway does no inference, so it runs anywhere a container does. Only traini
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/where-it-runs-dark.png">
-    <img src="docs/img/where-it-runs-light.png" alt="Where everything runs. Real on Nebius: Token Factory for every model call on the live site (the teacher, the hosted Nano for the random split, the judge), a Serverless Job for the round-2 retraining (by hand, 27 Oct), a Serverless Endpoint for the student (measured speed tests, 27 to 28 Oct, deleted afterwards) and an Object Storage bucket. Real elsewhere: the original adapters trained on a borrowed GPU; Cloudflare runs the website, docs and live gateway. Built and tested, not run nightly on live traffic: the nightly training loop (it ran once by hand on Nebius, 28 Oct, and the golden gate rejected it) and the CPU VM kit." width="100%">
+    <img src="docs/img/where-it-runs-light.png" alt="Where everything runs. Real on Nebius: Token Factory for every model call on the live site (the teacher, the hosted Nano for the random split, the judge), a Serverless Job for the round-2 retraining (by hand, 27 Oct) and the Night School training job (28 Oct), a Serverless Endpoint for the student (measured speed tests, 27 to 28 Oct, and the Night School adapter, deleted afterwards) and an Object Storage bucket. Real elsewhere: the original adapters trained on a borrowed GPU; Cloudflare runs the website, docs and live gateway. Ran once by hand on Nebius, 28 Oct 2026: Night School end to end (gateway on a CPU VM, a spot L40S training job, the adapter on the Serverless Endpoint; the golden gate rejected it). Built and tested, not run live: the nightly loop on live traffic and the one-command CPU VM kit as a hosting option." width="100%">
   </picture>
   <br><sub>What runs where, today and as designed. <a href="docs/WHERE_IT_RUNS.md">Where everything runs</a> has the table.</sub>
 </p>

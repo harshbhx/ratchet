@@ -1,8 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="wir-t wir-d" font-family="'Inter', system-ui, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="wir-t wir-d" font-family="'Inter', system-ui, sans-serif">
   <title id="wir-t">Where everything runs</title>
-  <desc id="wir-d">Where each part of Ratchet runs. Real on Nebius: Token Factory, which answers every model call on the live site (the teacher Nemotron 3 Ultra, the hosted Nano used for the random split, and the judge); an AI Cloud Serverless Job (the round-2 retraining, run by hand on 27 Oct 2026); an AI Cloud Serverless Endpoint (the student, served for measured speed tests on 27 and 28 Oct 2026, deleted afterwards); and an Object Storage bucket. Real elsewhere: the original adapters were trained on a borrowed GPU; Cloudflare runs the website, the docs and the live gateway, which has no student endpoint connected, so the teacher answers every call; development and tests run on the owner's laptop in mock mode. Built and tested, not run live: the nightly training loop (Night School) and the CPU VM kit. The nightly loop has not run on live traffic.</desc>
+  <desc id="wir-d">Where each part of Ratchet runs. Real on Nebius: Token Factory, which answers every model call on the live site (the teacher Nemotron 3 Ultra, the hosted Nano used for the random split, and the judge); an AI Cloud Serverless Job (the round-2 retraining on 27 Oct 2026 and the Night School training job on 28 Oct 2026, both by hand); an AI Cloud Serverless Endpoint (the student, served for measured speed tests on 27 and 28 Oct 2026 and the Night School adapter on 28 Oct 2026, deleted afterwards); and an Object Storage bucket. Real elsewhere: the original adapters were trained on a borrowed GPU; Cloudflare runs the website, the docs and the live gateway, which has no student endpoint connected, so the teacher answers every call; development and tests run on the owner's laptop in mock mode. Run once by hand on Nebius on 28 Oct 2026: Night School, end to end, with the gateway on a Nebius CPU VM, a spot L40S training job and the adapter served from the Serverless Endpoint; the golden gate rejected the new student (81.8% precision against the 95% target), so it was never made live. Built and tested, not run live: the nightly loop on live traffic and the one-command CPU VM kit as a hosting option.</desc>
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mk" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mkg" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <marker id="ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mkb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
   </defs>
   <style>
@@ -38,6 +39,12 @@
     .pill{fill:#121212}
     .pillT{fill:#fbfaf7}
     .pillG{fill:#eb6834}
+    .cardG{fill:#e4f3e8;stroke:#2f8f4e;stroke-width:1.5}
+    .chipG{fill:#ffffff;stroke:#2f8f4e;stroke-width:1.2}
+    .arG{fill:none;stroke:#2f8f4e;stroke-width:2.5;stroke-linecap:round}
+    .mkg{stroke:#2f8f4e}
+    .pillR{fill:#1f7a3d}
+    .gi{fill:#1f7a3d}
     .h{font-weight:600}
     .mo{font-family:'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;font-weight:500}
     @media (prefers-color-scheme: dark){
@@ -74,10 +81,16 @@
     .pill{fill:#f2f1ec}
     .pillT{fill:#0b0b0c}
     .pillG{fill:#d95926}
+    .cardG{fill:#14271b;stroke:#3fae66}
+    .chipG{fill:#1a1a1d;stroke:#3fae66}
+    .arG{stroke:#3fae66}
+    .mkg{stroke:#3fae66}
+    .pillR{fill:#3fae66}
+    .gi{fill:#7fd6a0}
     /*dark:end*/
     }
   </style>
-  <rect class="bg" width="1600" height="900"/>
+  <rect class="bg" width="1600" height="1040"/>
   <text x="64" y="76" class="mo bi" font-size="16" letter-spacing="2.5">WHERE EVERYTHING RUNS</text>
   <text x="64" y="128" class="t h" font-size="40" letter-spacing="-0.8">What runs today, and what is built but not run live.</text>
   <rect class="grp" x="64" y="176" width="320" height="378" rx="24"/>
@@ -125,11 +138,11 @@
   <rect class="zoneD" x="424" y="576" width="372" height="214" rx="24"/>
   <text x="448" y="608" class="mo m" font-size="14" letter-spacing="1.5">BUILT AND TESTED · NOT RUN LIVE</text>
   <rect class="planC" x="444" y="624" width="332" height="70" rx="16"/>
-  <text x="464" y="654" class="t h" font-size="19">Night School</text>
-  <text x="464" y="678" class="t2" font-size="15">Nightly loop. Not run on live traffic.</text>
+  <text x="464" y="654" class="t h" font-size="19">Nightly on live traffic</text>
+  <text x="464" y="678" class="t2" font-size="15">Built and tested. Not run.</text>
   <rect class="planC" x="444" y="706" width="332" height="70" rx="16"/>
   <text x="464" y="736" class="t h" font-size="19">CPU VM kit</text>
-  <text x="464" y="760" class="t2" font-size="15">Gateway, ledger, Caddy. Not run live.</text>
+  <text x="464" y="760" class="t2" font-size="15">A hosting option. Not run live.</text>
   <rect class="grp" x="836" y="176" width="700" height="244" rx="24"/>
   <text x="860" y="208" class="mo m" font-size="14" letter-spacing="1.5">NEBIUS TOKEN FACTORY · REAL</text>
   <rect class="cardT" x="856" y="224" width="660" height="176" rx="16"/>
@@ -150,26 +163,49 @@
   <text x="876" y="516" class="t h" font-size="21">Serverless Job</text>
   <rect class="pillG" x="1436" y="498" width="64" height="28" rx="14"/>
   <text x="1468.0" y="517" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">GPU</text>
-  <text x="876" y="540" class="t2" font-size="16">The round-2 retrain, by hand, on 27 Oct 2026.</text>
-  <text x="876" y="560" class="t2" font-size="16">One spot L40S. Checkpoints in the bucket.</text>
+  <text x="876" y="540" class="t2" font-size="16">The round-2 retrain (27 Oct 2026) and the Night School</text>
+  <text x="876" y="560" class="t2" font-size="16">training job (28 Oct 2026), by hand. One spot L40S each.</text>
   <rect class="cardS" x="856" y="584" width="660" height="86" rx="16"/>
   <text x="876" y="614" class="t h" font-size="21">Serverless Endpoint</text>
   <rect class="pillG" x="1436" y="596" width="64" height="28" rx="14"/>
   <text x="1468.0" y="615" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">GPU</text>
-  <text x="876" y="638" class="t2" font-size="16">The student, served for measured speed tests on</text>
-  <text x="876" y="658" class="t2" font-size="16">27 and 28 Oct 2026. Deleted afterwards.</text>
+  <text x="876" y="638" class="t2" font-size="16">The student, served for speed tests (27 and 28 Oct 2026)</text>
+  <text x="876" y="658" class="t2" font-size="16">and the Night School adapter (28 Oct). Deleted afterwards.</text>
   <rect class="cardS" x="856" y="682" width="660" height="86" rx="16"/>
   <text x="876" y="712" class="t h" font-size="21">Object Storage</text>
   <text x="876" y="736" class="t2" font-size="16">The bucket: datasets, adapters and checkpoints,</text>
   <text x="876" y="756" class="t2" font-size="16">mounted at /data.</text>
   <path class="ar" d="M778 304 H832" marker-end="url(#ah)"/>
   <text x="805" y="294" class="m" font-size="14" text-anchor="middle">calls</text>
-  <rect class="card" x="64" y="818" width="26" height="20" rx="6"/>
-  <text x="100" y="834" class="t h" font-size="16">Real</text>
-  <rect class="planC" x="170" y="818" width="26" height="20" rx="6"/>
-  <text x="206" y="834" class="t h" font-size="16">Built and tested, not run live</text>
-  <rect class="pillG" x="500" y="816" width="50" height="24" rx="12"/>
-  <text x="525" y="833" class="pillT mo" font-size="13" text-anchor="middle" letter-spacing="1" fill="#fff">GPU</text>
-  <text x="562" y="834" class="t2" font-size="16">= training and the student endpoint. All else is CPU.</text>
-  <text x="64" y="874" class="m" font-size="16">The live site calls Token Factory for every model and has no student endpoint. The nightly loop has not run on live traffic.</text>
+  <rect class="cardG" x="64" y="806" width="1472" height="116" rx="20"/>
+  <text x="88" y="842" class="t h" font-size="22">Night School</text>
+  <rect class="pillR" x="238" y="824" width="136" height="26" rx="13"/>
+  <text x="306" y="842" class="pillT mo" font-size="13" text-anchor="middle" letter-spacing="1" fill="#fff">RUN BY HAND</text>
+  <text x="88" y="878" class="t2" font-size="15">Ran end to end once, 28 Oct 2026, on Nebius.</text>
+  <text x="88" y="900" class="t2" font-size="15">Not nightly, not on live traffic.</text>
+  <rect class="chipG" x="470" y="826" width="236" height="76" rx="12"/>
+  <text x="486" y="858" class="t h" font-size="18">Gateway</text>
+  <text x="486" y="884" class="t2" font-size="15">on a Nebius CPU VM</text>
+  <rect class="chipG" x="740" y="826" width="236" height="76" rx="12"/>
+  <text x="756" y="858" class="t h" font-size="18">Training job</text>
+  <text x="756" y="884" class="t2" font-size="15">a spot L40S, 28 Oct</text>
+  <rect class="chipG" x="1010" y="826" width="236" height="76" rx="12"/>
+  <text x="1026" y="858" class="t h" font-size="18">Serverless Endpoint</text>
+  <text x="1026" y="884" class="t2" font-size="15">serves the adapter</text>
+  <rect class="chipG" x="1280" y="826" width="236" height="76" rx="12"/>
+  <text x="1296" y="858" class="t h" font-size="18">Golden gate: rejected</text>
+  <text x="1296" y="884" class="t2" font-size="15">81.8% against 95%</text>
+  <path class="arG" d="M708 864 H736" marker-end="url(#ag)"/>
+  <path class="arG" d="M978 864 H1006" marker-end="url(#ag)"/>
+  <path class="arG" d="M1248 864 H1276" marker-end="url(#ag)"/>
+  <rect class="card" x="64" y="958" width="26" height="20" rx="6"/>
+  <text x="100" y="974" class="t h" font-size="16">Real</text>
+  <rect class="cardG" x="170" y="958" width="26" height="20" rx="6"/>
+  <text x="206" y="974" class="t h" font-size="16">Ran once by hand</text>
+  <rect class="planC" x="390" y="958" width="26" height="20" rx="6"/>
+  <text x="426" y="974" class="t h" font-size="16">Built and tested, not run live</text>
+  <rect class="pillG" x="700" y="956" width="50" height="24" rx="12"/>
+  <text x="725" y="973" class="pillT mo" font-size="13" text-anchor="middle" letter-spacing="1" fill="#fff">GPU</text>
+  <text x="762" y="974" class="t2" font-size="16">= training and the student endpoint. All else is CPU.</text>
+  <text x="64" y="1014" class="m" font-size="16">The live site calls Token Factory for every model and has no student endpoint. Night School ran once by hand on 28 Oct; it has not run nightly on live traffic.</text>
 </svg>
