@@ -266,8 +266,20 @@ Estimates for running it, from the [deployment guide](/reference/deployment/#4-c
 | Student endpoint | L40S at about $1.35 per GPU-hour | about $32 per full day if left on |
 | Teacher calls | Ultra $1 / $3 per 1M tokens, about 150 input and 380 output tokens per call | about $1.30 per 1,000 calls |
 
-<Aside type="caution" title="Estimates so far">
-As of Oct 29, 2026, the teacher runs on Nebius Token Factory and the live gateway calls it for real. The text-to-SQL recipe was retrained once on Nebius AI Cloud, by hand (27 Oct 2026, a spot L40S Serverless Job; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)). The student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), and the endpoint was deleted. Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it (81.8% precision against the 95% target), so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)). The live site is not connected to a student endpoint, the teacher answers every live request, and the nightly loop has not run on live traffic. Every cost figure on this page is an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured savings will come only from a published live run, and none is published yet.
+<Aside type="tip" title="Ran on Nebius">
+- **Live site, as of 29 Oct 2026:** every model call on the live site runs on Nebius <Term t="token-factory">Token Factory</Term>. Nemotron 3 Ultra teaches, and a <Term t="random-split">random</Term> 40% of eligible requests are answered by the hosted Nemotron 3 Nano 30B, with a quarter of those re-checked by Ultra ([live stats](https://live.ratchet.dualmindlab.tech/ratchet/stats)).
+- **27 Oct 2026:** the text-to-SQL adapter was retrained on Nebius AI Cloud, by hand, as one spot <Term t="l40s">L40S</Term> Serverless Job: 40.7% on exam 1 and 34.5% on exam 2 (originally 39.0% and 33.0%) ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint with 16 users at once: median 1.6 s for SQL and 1.2 s for tool calling. The endpoint was deleted afterwards, so no GPU sits idle ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+- **28 Oct 2026:** Night School ran end to end once, by hand. The golden gate rejected the candidate at 81.8% precision against the 95% target, so it was never made live: the safety check doing its job ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
+</Aside>
+
+<Aside type="note" title="Ready, not switched on yet">
+- **Ratchet's own adapter on the live site.** The live site is not connected to a student endpoint. The fine-tuned Nano 4B adapter goes live only after it passes the golden gate.
+- **The nightly schedule on live traffic.** Night School runs by hand today; the timer is scripted.
+- **The one-command host** (`make nebius-plan`, `make nebius-up`) is ready and dry-run by default; it has not yet run as one command. The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline.
+- **Measured savings.** Every cost figure on this page is an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Savings are reported from a published live run, and none is published yet.
+
+Run every script with `DRY_RUN=1` first.
 </Aside>
 
 ### Spend and rate limits
