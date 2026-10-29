@@ -6,6 +6,7 @@
  */
 import type { DemoSplitStats, Stats } from "./api";
 import type { ExamId, ExamsData, ModelId } from "./exams-model";
+import { fmtDay, type Persistent } from "./measured-model";
 
 export interface RealCosts {
   labelling: {
@@ -48,6 +49,54 @@ export function demoSavings(stats: Stats | null | undefined): DemoSavings | null
   const s: DemoSplitStats | undefined = stats?.demo_split;
   if (!s || !s.enabled || !(s.requests > 0)) return null;
   return { requests: s.requests, costUsd: s.cost_usd, baselineUsd: s.baseline_usd, savedUsd: s.saved_usd, savingsPct: s.savings_pct };
+}
+
+export interface SplitTile {
+  /** `process`: this process's own counter; `since`: the Worker's totals kept across restarts; `listed`: list prices, as a last resort. */
+  kind: "process" | "since" | "listed";
+  value: string;
+  label: string;
+  note: string;
+  /** The badge wording: "Live" for the first two, "Measured" for list prices. */
+  badge: "Live" | "Measured";
+}
+
+/**
+ * The "random split" tile, never a bare dash. First the process's own savings (`/ratchet/stats`); a restart empties that, so
+ * next the Worker's totals (`/ratchet/stats/persistent`: the count of requests the hosted Nano answered since the first record,
+ * and the cost of all calls; they hold no all-Ultra baseline, so no saving is shown from them); last the per-call list prices.
+ */
+export function splitTile(stats: Stats | null | undefined, persistent: Persistent | null | undefined, costs: RealCosts): SplitTile {
+  const fmt = (v: number, digits: number) => `$${v.toFixed(digits)}`;
+  const live = demoSavings(stats);
+  if (live) {
+    return {
+      kind: "process",
+      value: fmt(live.savedUsd, live.savedUsd < 1 ? 4 : 2),
+      label: `saved by the random split${live.savingsPct != null ? `, ${Math.round(live.savingsPct * 100)}% below all-Ultra` : ""}`,
+      note: `${live.requests} requests answered by the hosted Nano, picked at random: ${fmt(live.costUsd, 4)} paid against ${fmt(live.baselineUsd, 4)} all-Ultra.`,
+      badge: "Live",
+    };
+  }
+  if (persistent && persistent.totals.requests_split > 0) {
+    const t = persistent.totals;
+    const n = t.requests_split;
+    return {
+      kind: "since",
+      value: String(n),
+      label: `${n === 1 ? "request" : "requests"} answered by the hosted Nano 30B since ${fmtDay(persistent.since ?? "")}`,
+      note: `Picked at random, not by confidence. All calls on the live site cost ${fmt(t.cost_usd, 4)} on Token Factory in that time. Kept across restarts; no saving is computed from these totals.`,
+      badge: "Live",
+    };
+  }
+  const ratio = callRatio(costs, "triage");
+  return {
+    kind: "listed",
+    value: `${ratio}x`,
+    label: "cheaper per triage call: the hosted Nano against Ultra",
+    note: "List prices per call. The gateway's own counter of what the random split saved appears here once it has served a request.",
+    badge: "Measured",
+  };
 }
 
 export const LEARN_STAGES: { id: ModelId; label: string; short: string }[] = [
