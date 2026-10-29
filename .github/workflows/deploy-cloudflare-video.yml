@@ -65,7 +65,7 @@ jobs:
             location=$(printf '%s\n' "$headers" | awk 'tolower($1) == "location:" {print $2}')
             cache=$(printf '%s\n' "$headers" | awk 'tolower($1) == "cache-control:" {print $2}')
             echo "HEAD /?from=smoke: status=$status location=$location cache-control=$cache"
-            [ "$status" = 302 ] && [ "$location" = "https://youtu.be/GIeSmDtopfs" ] && [ "$cache" = "no-store" ]
+            [ "$status" = 302 ] && [ "$location" = "https://youtu.be/x9MpEdKyODc" ] && [ "$cache" = "no-store" ]
           }
           closed() {
             code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 20 --user-agent "ratchet-video-smoke/1" "https://video.ratchet.dualmindlab.tech/stats")
