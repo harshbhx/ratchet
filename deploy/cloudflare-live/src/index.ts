@@ -73,6 +73,8 @@ interface Env {
   EDGE_TURNSTILE_MAX_FAILS?: string;
   /** Keyless calls without a token (curl) per UTC day, all visitors together: default 100, "0" is off. */
   EDGE_DAILY_CURL_TOTAL?: string;
+  /** Comma-separated hostnames a good token may come from: default ratchet.dualmindlab.tech and live.ratchet.dualmindlab.tech. */
+  TURNSTILE_HOSTNAMES?: string;
   [name: string]: unknown;
 }
 

@@ -84,6 +84,7 @@ without waking the container, with `retry-after` set to the seconds until 00:00 
 | `TURNSTILE_SECRET_KEY` | secret | the `ratchet-live` Worker | Turns the check on. Without it nothing below happens. |
 | `TURNSTILE_SITE_KEY` | variable (public) | the `ratchet-live` Worker | The widget's site key. The web app reads it from `GET /ratchet/turnstile` (answered by the Worker), so setting or changing it needs no rebuild of the site. Without it no widget is drawn. |
 | `EDGE_TURNSTILE_MAX_FAILS` | variable | the `ratchet-live` Worker | Invalid tokens per visitor per UTC day before a block until 00:00 UTC. Default 5, `0` is off. |
+| `TURNSTILE_HOSTNAMES` | variable | the `ratchet-live` Worker | Comma-separated hostnames a good token may have been solved on (siteverify's `hostname`). Default `ratchet.dualmindlab.tech,live.ratchet.dualmindlab.tech`; localhost is never in the default. A token for any other hostname is treated as invalid (403, counted, logged as `turnstile_wrong_hostname` with the hostname only). Cloudflare's test keys answer `example.com`, so testing with them needs `TURNSTILE_HOSTNAMES=example.com`. |
 | `EDGE_DAILY_CURL_TOTAL` | variable | the `ratchet-live` Worker | Keyless calls **without** a token (curl), all visitors together, per UTC day. Default 100, `0` is off. |
 
 Set up: in the Cloudflare dashboard, Turnstile, add a widget (mode **Managed**) for the hostnames `ratchet.dualmindlab.tech` (the site, whose requests the Pages proxy

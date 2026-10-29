@@ -51,6 +51,7 @@ export interface TurnstileEnv {
   TURNSTILE_SITE_KEY?: unknown;
   EDGE_TURNSTILE_MAX_FAILS?: unknown;
   EDGE_DAILY_CURL_TOTAL?: unknown;
+  TURNSTILE_HOSTNAMES?: unknown;
 }
 
 export interface TurnstileSettings {
@@ -60,6 +61,8 @@ export interface TurnstileSettings {
   siteKey: string | null;
   maxFails: number;
   curlTotal: number;
+  /** The hostnames a good token may have been solved on (siteverify returns it). Lower case. */
+  hostnames: string[];
 }
 
 /** A whole number from a setting: absent, empty or unreadable is the default, "0" is off. */
@@ -73,12 +76,26 @@ const textOf = (raw: unknown): string | null => {
   return t === "" ? null : t;
 };
 
+/**
+ * The hostnames a token may come from when TURNSTILE_HOSTNAMES is absent: the site and the live host, and never localhost or 127.0.0.1 (a token
+ * solved on a page an attacker runs on their own machine must not pass). Cloudflare's own test keys answer with the hostname example.com, so
+ * testing with them needs TURNSTILE_HOSTNAMES=example.com.
+ */
+export const DEFAULT_HOSTNAMES = ["ratchet.dualmindlab.tech", "live.ratchet.dualmindlab.tech"];
+
+/** A comma-separated list of hostnames, lower case. Absent or empty is the default list. */
+export function hostnamesOf(raw: unknown): string[] {
+  const list = (typeof raw === "string" ? raw : "").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h !== "");
+  return list.length > 0 ? list : [...DEFAULT_HOSTNAMES];
+}
+
 export function turnstileSettings(env: TurnstileEnv): TurnstileSettings {
   return {
     secret: textOf(env.TURNSTILE_SECRET_KEY),
     siteKey: textOf(env.TURNSTILE_SITE_KEY),
     maxFails: countOf(env.EDGE_TURNSTILE_MAX_FAILS, DEFAULT_MAX_FAILS),
     curlTotal: countOf(env.EDGE_DAILY_CURL_TOTAL, DEFAULT_CURL_TOTAL),
+    hostnames: hostnamesOf(env.TURNSTILE_HOSTNAMES),
   };
 }
 
@@ -120,14 +137,26 @@ export async function verifyToken(
   token: string,
   ip: string | null,
   send: (url: string, init: RequestInit) => Promise<Response> = (url, init) => fetch(url, init),
+  hostnames: string[] | null = null,
 ): Promise<Verdict> {
   try {
     const form = new URLSearchParams({ secret, response: token });
     if (ip) form.set("remoteip", ip);
     const r = await send(SITEVERIFY_URL, { method: "POST", body: form, signal: AbortSignal.timeout(SITEVERIFY_MS) });
     if (r.status >= 400) return "error";
-    const body = (await r.json()) as { success?: unknown; "error-codes"?: unknown } | null;
-    if (body && body.success === true) return "valid";
+    const body = (await r.json()) as { success?: unknown; hostname?: unknown; "error-codes"?: unknown } | null;
+    if (body && body.success === true) {
+      // A token is only good if it was solved on one of our hostnames (Cloudflare's guide: check `hostname`). A token for another site, or one with
+      // no hostname at all, is treated as forged: invalid, and counted. Only the hostname is logged.
+      if (hostnames) {
+        const host = typeof body.hostname === "string" ? body.hostname.trim().toLowerCase() : "";
+        if (!hostnames.includes(host)) {
+          console.log(JSON.stringify({ event: "turnstile_wrong_hostname", hostname: host.slice(0, 100) }));
+          return "invalid";
+        }
+      }
+      return "valid";
+    }
     if (!body || body.success !== false) return "error";
     const codes = Array.isArray(body["error-codes"]) ? (body["error-codes"] as unknown[]).map(String) : [];
     if (codes.some((c) => OUR_FAULT.has(c))) return "error";
@@ -207,7 +236,7 @@ export async function guardPaidCall(a: GuardInput): Promise<Response | null> {
   const token = tokenOf(a.headers, a.url);
   let verified = false;
   if (token) {
-    const verdict = await verifyToken(secret, token, a.ip, a.send);
+    const verdict = await verifyToken(secret, token, a.ip, a.send, a.settings.hostnames);
     if (verdict === "invalid" || verdict === "spent") {
       try {
         if (verdict === "invalid" && failures) await failures.bump();
