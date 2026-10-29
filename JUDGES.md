@@ -109,7 +109,7 @@ The track is the one chosen on the Devpost page.
 
 **Ran, with evidence above:** real Token Factory calls on the live site; the text-to-SQL and tool-calling adapters and their exams; the retrain on Nebius AI Cloud; the endpoint speed tests; one Night School run on Nebius, by hand, that the gate rejected; the signed BOM; the 29 Oct price check.
 
-**Not yet:** the nightly loop has not run on live traffic. The live site is not connected to a student endpoint, so the teacher answers every request. No saving has been measured. The GPU-hour rate used in cost estimates (about $1.55 per L40S hour) does not appear on the price list Token Factory serves and is unverified, so the Nebius bill decides.
+**Not yet:** the nightly loop has not run on live traffic. Ratchet's own adapter is not connected to the live site: every live model call runs on Nebius Token Factory, where Ultra teaches and a random 40% of eligible requests are answered by the hosted Nano 30B, a quarter of those re-checked by Ultra. No saving has been measured. The GPU-hour rate used in cost estimates (about $1.55 per L40S hour) does not appear on the price list Token Factory serves and is unverified, so the Nebius bill decides.
 
 ## What it cost
 

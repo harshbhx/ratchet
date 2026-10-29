@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { RealBadge } from "@/components/ui/real-badge";
 import { cn, fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { getJson, useGateway, useJudges } from "./data";
-import { alarmProgress, focusVersion, latestGlobalPeriod, nusdToUsd, shortHash, type Fetched } from "./judges-model";
+import { receiptsPath, alarmProgress, focusVersion, latestGlobalPeriod, nusdToUsd, shortHash, type Fetched } from "./judges-model";
 import { Chapter, Command, Facts, Loading, Meter, Panel, Unavailable } from "./ui";
 
 type Obj = Record<string, unknown>;
@@ -77,7 +77,7 @@ export function CertificateChapter() {
         <p className="text-[13.5px] text-muted">
           {stats?.mode === "mock"
             ? "No version yet."
-            : (MEASURED ? nightSchoolWording(MEASURED).versions : "No version on this live gateway: the teacher answers every request.")}
+            : (MEASURED ? nightSchoolWording(MEASURED).versions : "No version of Ratchet's own adapter on this live gateway.")}
         </p>
       ) : (
         <div className="space-y-4">
@@ -283,7 +283,7 @@ export function ProofChapter() {
 
 export function ReceiptsChapter() {
   const { status } = useJudges();
-  const list = useGateway<{ receipts?: { period: number; global?: boolean }[]; sealed_through?: number; label?: string }>("/ratchet/receipts");
+  const list = useGateway<{ receipts?: { period: number; global?: boolean }[]; sealed_through?: number; label?: string }>(receiptsPath("/ratchet/receipts"));
   const period = list.state === "ok" ? latestGlobalPeriod(list.data) : null;
   const doc = useGateway<Obj>(period != null ? `/ratchet/receipts/${period}` : null);
   const m = obj(doc.state === "ok" ? doc.data.manifest : {});
@@ -316,6 +316,8 @@ export function ReceiptsChapter() {
     >
       {list.state === "error" ? (
         <Unavailable path="/ratchet/receipts" read={list} />
+      ) : list.state === "idle" ? (
+        <p className="text-[13.5px] text-muted">Savings receipts are private to key holders, so this public page does not read them. How a receipt is built and checked is described here.</p>
       ) : list.state !== "ok" ? (
         <Loading what="the receipts" />
       ) : period == null ? (

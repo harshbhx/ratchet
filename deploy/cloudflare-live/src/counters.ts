@@ -12,7 +12,9 @@
 // PRIVACY: only the nine numbers below are ever read from a snapshot or stored: counts and dollars, never text, an address, a client or a
 // key. The instance id is a random hex string of the process, kept only to tell snapshots apart.
 
-/** The counters, in the order the page shows them. `requests` is the sum of the three route groups. */
+/** The counters, in the order the page shows them. `requests` is the sum of the three route groups. `errors` counts every failures row,
+ * a refused key included, and is kept only for compatibility; `server_errors` is the new key the pages show: failed model calls and
+ * the gateway's own 5xx, never an auth, rate, quota or budget refusal. */
 export const FIELDS = [
   "requests",
   "requests_teacher",
@@ -22,6 +24,7 @@ export const FIELDS = [
   "student_tokens_out",
   "cost_usd",
   "errors",
+  "server_errors",
   "scout_runs",
 ] as const;
 
@@ -59,7 +62,7 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
   if (typeof r.instance !== "string" || !INSTANCE.test(r.instance)) return null;
   const values = emptyTotals();
   for (const f of FIELDS) {
-    const v = r[f];
+    const v = f === "server_errors" && r[f] === undefined ? 0 : r[f]; // a container from before the field counts none
     if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
     values[f] = v;
   }

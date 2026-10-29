@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 KEYS = {
     "instance", "started", "mode", "requests", "requests_split", "requests_student", "requests_teacher",
-    "student_tokens_in", "student_tokens_out", "cost_usd", "errors", "scout_runs",
+    "student_tokens_in", "student_tokens_out", "cost_usd", "errors", "server_errors", "scout_runs",
 }  # fmt: skip
 
 
@@ -59,3 +59,18 @@ def test_a_new_process_has_a_new_instance(gw_env):
     a = TestClient(gw_env().app).get("/ratchet/counters").json()
     b = TestClient(gw_env().app).get("/ratchet/counters").json()
     assert a["instance"] != b["instance"]
+
+
+def test_server_errors_count_failed_model_calls_not_refusals(gw):
+    """`errors` counts every failures row; `server_errors` leaves out a refused key, a rate limit, a quota, a budget block
+    and a gateway 4xx, and counts a failed model call and a gateway 5xx."""
+    c = TestClient(gw.app)
+    led = gw.rt.ledger
+    for stage, status in (("auth", 401), ("rate", 429), ("quota", 429), ("budget", 429), ("gateway", 413)):
+        led.log_failure(stage=stage, error="HTTPException", status=status)
+    body = c.get("/ratchet/counters").json()
+    assert body["errors"] == 5 and body["server_errors"] == 0
+    for stage, status in (("teacher", 502), ("student", 502), ("upstream", 504), ("gateway", 500)):
+        led.log_failure(stage=stage, error="UpstreamError", status=status)
+    body = c.get("/ratchet/counters").json()
+    assert body["errors"] == 9 and body["server_errors"] == 4

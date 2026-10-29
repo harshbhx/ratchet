@@ -75,7 +75,7 @@ function ExitBin({ icon: Icon, label, rule, items, tone, className }: { icon: Lu
           ))}
         </AnimatePresence>
         {more > 0 && <span className="text-[12px] text-muted">+{more} older</span>}
-        {items.length === 0 && <span className="text-[12px] text-muted">none</span>}
+        {items.length === 0 && <span className="text-[12px] text-muted">none so far</span>}
       </div>
     </div>
   );

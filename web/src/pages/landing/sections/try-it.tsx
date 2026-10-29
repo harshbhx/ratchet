@@ -11,7 +11,7 @@ import { LiveRequest } from "./live-request";
 /**
  * "Try it in a minute": the shortest path from this page to a working request, for someone judging many projects. Three ways in
  * (click, paste one command, run it locally), each with what they will see. The live gateway makes real Token Factory calls under
- * spend limits (the teacher answers every request for now).
+ * spend limits (Ultra teaches, and a random 40% of eligible requests go to the hosted Nano 30B).
  */
 const CURL = `curl ${LIVE_URL}/v1/chat/completions \\
   -H "Content-Type: application/json" \\

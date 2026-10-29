@@ -35,7 +35,7 @@ export const STAGE_ONE: StageOneItem[] = [
     id: "live-demo",
     requirement: "A live gateway that calls Token Factory",
     status: "real",
-    evidence: "Deployed on Cloudflare Containers, in live mode, with spending caps. A request to it is answered by Nemotron 3 Ultra on Token Factory. No trained student is served yet, so the teacher answers every request.",
+    evidence: "Deployed on Cloudflare Containers, in live mode, with spending caps. A request to it is answered by Nemotron 3 Ultra on Token Factory. Ratchet's own adapter is not connected to it: Ultra teaches, and a random 40% of eligible requests are answered by the hosted Nano 30B.",
     link: { label: "Open the live gateway", href: LIVE_PATH },
   },
   {

@@ -177,6 +177,7 @@ export function LiveSince({ className }: { className?: string }) {
             <div key={i.label} className="min-w-0 rounded-xl border border-line bg-surface px-3 py-2">
               <dt className="text-[11.5px] leading-snug text-muted">{i.label}</dt>
               <dd className="mt-0.5 text-[15px] font-semibold tabular-nums text-ink">{i.value}</dd>
+              {i.hint && <p className="text-[11.5px] leading-snug text-muted">{i.hint}</p>}
             </div>
           ))}
         </dl>

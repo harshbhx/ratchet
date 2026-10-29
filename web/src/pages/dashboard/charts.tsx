@@ -455,7 +455,7 @@ export function PrecisionChart({ days, rollbacks = [], emptyAction }: { days: Da
         <NoTraffic action={emptyAction} />
       ) : audited.length === 0 ? (
         <Empty icon={ShieldCheck} title="No audits yet" className="h-[200px]">
-          Audits start once a student version serves traffic. Until then the teacher answers everything.
+          Audits of the version gate start once a student version serves traffic.
         </Empty>
       ) : table ? (
         <DataTable caption="Audited agreement by day" minWidth={320}>

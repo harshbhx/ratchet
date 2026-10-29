@@ -649,6 +649,11 @@ WINDOW_COLUMNS = (
 # guard, a rate limit of the gateway's own, and the gateway itself (a 413, an unhandled error).
 FAILURE_STAGES = ("teacher", "student", "audit", "shadow", "quota", "auth", "budget", "rate", "upstream", "gateway")
 FAILURE_COLUMNS = frozenset({"ts", "day", "request_id", "client", "task", "stage", "error", "status", "latency_ms", "cost_usd"})
+# The stages whose failures are real server-side failures (`aggregate_counters`' `server_errors`): a model call that failed
+# (the teacher, the student, an audit, a shadow sample, an upstream a gateway route called) and, from the gateway itself,
+# a 5xx. Left out because the client or the operator's own limits caused them: `auth` (a key refused), `quota` (daily cap),
+# `rate` (a rate limit), `budget` (a spend guard), and the gateway's 4xx (a 413 too large).
+SERVER_ERROR_STAGES = ("teacher", "student", "audit", "shadow", "upstream")
 # `stats_by_task`'s `compare_source` by a task's source: where its compared fields come from (FR-14.2). An unregistered
 # name (`adhoc`) compares whole answers: None.
 COMPARE_SOURCES = {"builtin": "registry", "file": "registry", "api": "registry", "auto": "schema"}
@@ -4377,7 +4382,8 @@ class Ledger:
     def aggregate_counters(self) -> dict[str, float]:
         """Cumulative counts and dollars of this ledger, for `GET /ratchet/counters`: requests in all and by how they were
         served (`split`: the live demo's random split, route `demo_split`; `student`: answered by a student on any other
-        route; `teacher`: the rest), the student calls' tokens, what every request and every failure spent, and the failures.
+        route; `teacher`: the rest), the student calls' tokens, what every request and every failure spent, and the failures (`errors`: every `failures` row, a refused key included;
+        `server_errors`: only the model calls that failed and the gateway's own 5xx, see `SERVER_ERROR_STAGES`).
         Folded request rows (FR-13.4) count and embeddings pass-through rows do not, as in `totals`. Counts only: no text,
         no client, no end user. Each number only grows while the ledger lives, which is what lets a reader of two snapshots
         take their difference."""
@@ -4400,6 +4406,11 @@ class Ledger:
             )
             r = {k: r[k] + f[k] for k in r}
         failed = self._rdb.execute("SELECT COUNT(*), COALESCE(SUM(cost_usd), 0.0) FROM failures").fetchone()
+        server_failed = self._rdb.execute(
+            f"SELECT COUNT(*) FROM failures WHERE stage IN ({','.join('?' * len(SERVER_ERROR_STAGES))})"
+            " OR (stage = 'gateway' AND status >= 500)",
+            SERVER_ERROR_STAGES,
+        ).fetchone()[0]
         n, split, student = int(r["n"]), int(r["split"]), int(r["student"])
         return {
             "requests": n,
@@ -4410,6 +4421,7 @@ class Ledger:
             "student_tokens_out": int(r["tout"]),
             "cost_usd": float(r["cost"]) + float(failed[1]),
             "errors": int(failed[0]),
+            "server_errors": int(server_failed),
         }
 
     # ---------- success metrics (FR-7.9, ratchet/kpis.py) ----------

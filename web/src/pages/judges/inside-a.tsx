@@ -10,7 +10,7 @@ import { MEASURED, TileCard, Traffic } from "@/components/measured/measured";
 import { nightSchoolTile, nightSchoolWording, rejectedVersion } from "@/lib/measured-model";
 import { TONE_DOT } from "@/pages/dashboard/ui";
 import { useGatewayText, useGateway, useJudges } from "./data";
-import { latestGlobalPeriod, parseLeaves, routeTotals, routeWords, shortHash, stageOf, studentRoute } from "./judges-model";
+import { latestGlobalPeriod, receiptsPath, parseLeaves, routeTotals, routeWords, shortHash, stageOf, studentRoute } from "./judges-model";
 import { Chapter, Facts, Loading, Panel, Unavailable } from "./ui";
 
 // ---------- the loop in one picture ----------
@@ -107,7 +107,7 @@ interface Leaf {
 
 export function CascadeChapter() {
   const { stats, status, sent, statsRead } = useJudges();
-  const list = useGateway<{ receipts?: { period: number; global?: boolean }[] }>("/ratchet/receipts");
+  const list = useGateway<{ receipts?: { period: number; global?: boolean }[] }>(receiptsPath("/ratchet/receipts"));
   const period = list.state === "ok" ? latestGlobalPeriod(list.data) : null;
   const leaves = useGatewayText(period != null ? `/ratchet/receipts/${period}/leaves` : null);
   const parsed = leaves.state === "ok" ? (parseLeaves(leaves.data) as unknown as Leaf[]).slice(-8).reverse() : [];
@@ -180,7 +180,7 @@ export function CascadeChapter() {
                 ) : leaves.state === "error" ? (
                   <Unavailable path={`/ratchet/receipts/${period}/leaves`} read={leaves} />
                 ) : period == null ? (
-                  <p className="text-[13.5px] text-muted">{list.state === "ok" ? "No day has ended yet, so no sealed day to read from." : "Reading…"}</p>
+                  <p className="text-[13.5px] text-muted">{list.state === "ok" ? "No day has ended yet, so no sealed day to read from." : list.state === "idle" ? "Sealed days are private to key holders, so the public page does not read them." : "Reading…"}</p>
                 ) : (
                   <>
                     <RequestRows

@@ -55,7 +55,7 @@ export function VersionsTable({ versions, live = false }: { versions: Version[];
       {rows.length === 0 ? (
         <Empty icon={Boxes} title="No versions yet">
           {live
-            ? "No student has been trained from live traffic yet, so the teacher answers every request."
+            ? "Ratchet's own adapter is not connected to the live gateway; a random 40% of eligible requests are answered by the hosted Nano 30B."
             : "Day 1 is all teacher (cold start). Night School trains v1 on the teacher's answers that night."}
         </Empty>
       ) : (
