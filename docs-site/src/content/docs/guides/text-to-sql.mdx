@@ -13,6 +13,7 @@ import FlowStep from '../../../components/FlowStep.astro';
 import Compare from '../../../components/Compare.astro';
 import extra from '../../../data/sql-extra.json';
 import exams from '../../../data/exams.json';
+import Term from '../../../components/Term.astro';
 
 export const S = exams.scores;
 export const pct = (c) => (100 * c.agree / c.n).toFixed(1) + '%';
@@ -51,11 +52,11 @@ The honest question is "good enough at what, measured how?" This page and the [R
 
 ## What was built
 
-- A **teacher**, Nemotron 3 Ultra on Nebius Token Factory, that invents SQLite databases, business questions and SQL answers. See [Licenses](/guides/licenses/) for why this teacher is allowed.
+- A **<Term t="teacher">teacher</Term>**, Nemotron 3 Ultra on Nebius Token Factory, that invents <Term t="sqlite">SQLite</Term> databases, business questions and SQL answers. See [Licenses](/guides/licenses/) for why this teacher is allowed.
 - A **checker** that runs every SQL answer and keeps only the ones that pass.
-- A **student**: Nemotron 3 Nano 4B with a small LoRA adapter, trained on the kept rows.
-- An **exam** made of databases that are never in training, and a **scorer** that anyone can rerun on a CPU.
-- A **confidence gate**: the adapter answers only when it is confident, and the rest go to the teacher.
+- A **<Term t="student">student</Term>**: Nemotron 3 Nano 4B with a small <Term t="lora">LoRA</Term> adapter, trained on the kept rows.
+- An **<Term t="exam">exam</Term>** made of databases that are never in training, and a **scorer** that anyone can rerun on a CPU.
+- A **<Term t="confidence">confidence</Term> gate**: the adapter answers only when it is confident, and the rest go to the teacher.
 
 ## How it really works
 
@@ -69,11 +70,11 @@ The honest question is "good enough at what, measured how?" This page and the [R
 
 4. **The exam is kept apart by database.** Training uses 25 industries. The exam uses whole databases that never appear in training: about two thirds come from industries that are in training (but a different, new database) and 57 of the 172 questions (33%) from two industries that are never in training (airline operations and pharmacy inventory). The script stops if one database ends up on both sides.
 
-5. **The student is trained.** QLoRA on a borrowed GPU: the Nano 4B base loaded in 4-bit, LoRA rank 16, fp16, two epochs, with the loss counted on the SQL only.
+5. **The student is trained.** <Term t="qlora">QLoRA</Term> on a borrowed GPU: the Nano 4B base loaded in 4-bit, LoRA rank 16, fp16, two epochs, with the loss counted on the SQL only.
 
-6. **The exam is answered, then scored on a CPU.** The base model alone and the base model with the adapter each answer every exam question, and the raw answers are saved. A separate step runs each student query and the teacher's query on the same database and compares the rows.
+6. **The exam is answered, then scored on a CPU.** The <Term t="base-model">base model</Term> alone and the base model with the adapter each answer every exam question, and the raw answers are saved. A separate step runs each student query and the teacher's query on the same database and compares the rows.
 
-7. **The confidence gate is set and measured on different rows.** Half of the exam rows (the even ones) set the confidence threshold. The other half (the odd ones) measure it. Nothing is graded on rows that tuned it.
+7. **The confidence gate is set and measured on different rows.** Half of the exam rows (the even ones) set the confidence <Term t="threshold">threshold</Term>. The other half (the odd ones) measure it. Nothing is graded on rows that tuned it.
 
 8. **The score is recomputed by `verify`.** It reads the raw answers again and fails if any number in `results.json` differs, or if an input file is not the one the results were computed from.
 
@@ -81,7 +82,7 @@ The honest question is "good enough at what, measured how?" This page and the [R
 
 <div class="rt-callout rt-callout--note">
 
-**Where it was trained.** On a borrowed GPU (both published rounds). On 27 Oct 2026 the round-2 recipe was retrained once on Nebius AI Cloud ([adapter on Hugging Face](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius)), as a Serverless Job on one preemptible L40S (new adapter SHA-256 `68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5`; scores 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance)). The teacher ran on Nebius: real calls to Nemotron 3 Ultra on Token Factory built this data on Oct 22, 2026.
+**Where it was trained.** On a borrowed GPU (both published rounds). On 27 Oct 2026 the round-2 recipe was retrained once on Nebius AI Cloud ([adapter on Hugging Face](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius)), as a Serverless Job on one <Term t="preemptible-gpu">preemptible</Term> L40S (new adapter SHA-256 `68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5`; scores 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance)). The teacher ran on Nebius: real calls to Nemotron 3 Ultra on Token Factory built this data on Oct 22, 2026.
 
 </div>
 
@@ -169,7 +170,7 @@ flowchart TB
 
 ### The confidence gate
 
-The adapter's confidence in an answer is the average probability of its tokens. The threshold is the lowest confidence at which the answers on the calibration half reach the target precision (95% unless set otherwise). On the measured half, an answer above the threshold is served by the student, and the rest would go to the teacher. Three numbers come out: **coverage** (how much the student answers), **precision when it answers** (how often those answers match the teacher) and an **estimated cost** against sending everything to the teacher.
+The adapter's confidence in an answer is the average probability of its tokens. The threshold is the lowest confidence at which the answers on the <Term t="calibration">calibration</Term> half reach the target precision (95% unless set otherwise). On the measured half, an answer above the threshold is served by the student, and the rest would go to the teacher. Three numbers come out: **coverage** (how much the student answers), **precision when it answers** (how often those answers match the teacher) and an **estimated cost** against sending everything to the teacher.
 
 If no threshold reaches the target on the calibration half, the report says so. In that case the adapter would answer nothing on its own at that target.
 

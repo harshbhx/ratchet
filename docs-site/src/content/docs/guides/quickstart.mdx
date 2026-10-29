@@ -7,12 +7,13 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Install the gateway, give it a Token Factory key, point any OpenAI SDK at it and read the `ratchet` block in each answer. Every call here is a real model call and costs cents. Prefer not to install anything? Use the live gateway at [live.ratchet.dualmindlab.tech](https://live.ratchet.dualmindlab.tech).</Summary>
 
 ## The one-minute path
 
-You need Python 3.10 or newer, `git` and a Nebius Token Factory key.
+You need Python 3.10 or newer, `git` and a Nebius <Term t="token-factory">Token Factory</Term> key.
 
 ```bash
 git clone https://github.com/harshbhx/ratchet.git && cd ratchet
@@ -23,7 +24,7 @@ mkdir -p data
 RATCHET_MODE=live RATCHET_DB=./data/ratchet.db uvicorn ratchet.gateway:app --port 8000
 ```
 
-The gateway serves on `http://localhost:8000`. With no student endpoint, the teacher (Nemotron 3 Ultra on Token Factory) answers every request. In a second terminal, send it a request with the OpenAI SDK:
+The gateway serves on `http://localhost:8000`. With no <Term t="student">student</Term> endpoint, the teacher (Nemotron 3 Ultra on Token Factory) answers every request. In a second terminal, send it a request with the OpenAI SDK:
 
 ```python
 from openai import OpenAI
@@ -66,7 +67,7 @@ Windows has no `make`, so run the command `make install` stands for (the last li
 </TabItem>
 </Tabs>
 
-`make install` runs `pip install -e ".[dev]" ruff`. The `dev` extra brings pytest, the OpenAI Python SDK (used by the example above), `cryptography` for signed BOMs, PyYAML and Jinja2. The gateway itself needs only FastAPI, uvicorn, httpx, pydantic and anyio.
+`make install` runs `pip install -e ".[dev]" ruff`. The `dev` extra brings pytest, the OpenAI Python SDK (used by the example above), `cryptography` for signed <Term t="bom">BOMs</Term>, PyYAML and Jinja2. The gateway itself needs only FastAPI, uvicorn, httpx, pydantic and anyio.
 
 ## Send your own request
 
@@ -121,7 +122,7 @@ export TAVILY_API_KEY=...
 python -m ratchet.scout "What is LoRA fine-tuning?" --base-url http://localhost:8000/v1 --api-key your-local-api-key-here
 ```
 
-Scout runs as an outside client against the gateway: a planner and a writer pinned to the teacher, a searcher, and many small triage and reader calls. It also takes `--api-key` and `--max-results` (default 4). See [Scout](/guides/scout/).
+<Term t="scout">Scout</Term> runs as an outside client against the gateway: a planner and a writer pinned to the teacher, a searcher, and many small triage and reader calls. It also takes `--api-key` and `--max-results` (default 4). See [Scout](/guides/scout/).
 
 ## Common questions
 
@@ -131,7 +132,7 @@ A Token Factory key, yes: every answer is a real model call. No GPU: the gateway
 
 ### Where is my data?
 
-In the SQLite ledger at `RATCHET_DB`. Stopping the gateway keeps it.
+In the <Term t="sqlite">SQLite</Term> ledger at `RATCHET_DB`. Stopping the gateway keeps it.
 
 ### Port 8000 is taken. What now?
 

@@ -1,6 +1,6 @@
 ---
 title: Evidence you can check
-description: Signed bills of materials, certified precision, committed training sets, ledger replay and savings receipts, and what each one does and does not prove.
+description: Signed bills of materials, certified precision, committed training sets, ledger <Term t="replay">replay</Term> and savings receipts, and what each one does and does not prove.
 ---
 
 import { Steps, Aside } from '@astrojs/starlight/components';
@@ -9,6 +9,7 @@ import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Ratchet writes its claims about each adapter and each day's savings into signed documents whose numbers can be recomputed offline, so a customer or auditor can check them instead of trusting the gateway that served them.</Summary>
 
@@ -41,13 +42,13 @@ The evidence is written at fixed moments, by code that draws no random numbers a
 
 <Steps>
 
-1. **The night, before training.** Night School builds a set commitment (a sparse Merkle root) over the exact training rows and another over the golden rows, before the paid training job starts, so a problem fails the night before any GPU time.
+1. **The night, before training.** Night School builds a <Term t="set-commitment">set commitment</Term> (a sparse Merkle root) over the exact training rows and another over the <Term t="golden-set">golden rows</Term>, before the paid training job starts, so a problem fails the night before any GPU time.
 
-2. **The night, after training.** Right after the new version is created, the leaves behind both roots are written once to the ledger's `version_leaves` table, which refuses any later change. The adapter is scored on the golden set (with its certificate), the live version is re-scored on the same rows, the paired comparison is added, and only then is the bill of materials written and signed. In live mode a copy goes into the adapter's folder in the bucket, with its `NOTICE.md`.
+2. **The night, after training.** Right after the new version is created, the leaves behind both roots are written once to the ledger's `version_leaves` table, which refuses any later change. The adapter is scored on the golden set (with its <Term t="certificate">certificate</Term>), the live version is re-scored on the same rows, the paired comparison is added, and only then is the <Term t="bom">bill of materials</Term> written and signed. In live mode a copy goes into the adapter's folder in the bucket, with its `NOTICE.md`.
 
 3. **Every request.** Each request the student answers logs the threshold it was held to, the probability that the teacher labels it (`label_p`), whether the student agreed with that label, and the token formula's baseline. This is what the replay and the receipts read.
 
-4. **After each ledger day ends.** The day's savings receipts are sealed, once: one for the whole gateway and one per API client, each signed and chained to that client's previous receipt.
+4. **After each ledger day ends.** The day's savings receipts are sealed, once: one for the whole gateway and one per API client, each signed and chained to that client's previous <Term t="receipt">receipt</Term>.
 
 5. **Any time later, anywhere.** A customer downloads the documents and checks them with the command-line tools in this repository, using only the files and a public key the operator published.
 
@@ -96,15 +97,15 @@ All the arithmetic comes from two standard-library modules, [`ratchet/stats.py`]
 **Precisely.** For every adapter it trains, Night School writes one document, schema `ratchet.bom/v2`, from the exact rows it used:
 
 - `adapter`: the version, the adapter's name, its base model (`nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`) and the ledger day.
-- `training`: the number of examples, the dataset hash, examples per task, `targets` (`teacher answers only`, or with customer-attested human labels), how many examples had PII redacted, where the examples came from, and the training set's commitment (`{alg: ratchet.smt/v1, root, size}`).
+- `training`: the number of examples, the dataset hash, examples per task, `targets` (`teacher answers only`, or with customer-attested human labels), how many examples had <Term t="pii-redaction">PII</Term> redacted, where the examples came from, and the training set's commitment (`{alg: ratchet.smt/v1, root, size}`).
 - `golden`: the number of golden rows, their hash, `held_out: true`, golden rows with a human reference, and the golden set's commitment.
 - `sources`: each teacher with its license, license URL, whether it allows distillation and whether the license entry is Ratchet's own (`builtin`) or added by the operator (`config`); `label_sources` lists human labels apart, because a person is not a teacher.
-- `base_model_license`: the NVIDIA Nemotron Open Model License and its URL for the Nano base (or a warning for a base model Ratchet does not know).
-- `notices`: the exact text of the `NOTICE.md` that sits next to the adapter's weights, with its SHA-256.
+- `base_model_license`: the <Term t="nemotron-license">NVIDIA Nemotron Open Model License</Term> and its URL for the Nano base (or a warning for a base model Ratchet does not know).
+- `notices`: the exact text of the `NOTICE.md` that sits next to the adapter's weights, with its <Term t="sha-256">SHA-256</Term>.
 - `redactor`: a SHA-256 over the redaction rules, how many there are, and whether redaction was on.
-- `eval`: the golden eval at training time: precision, coverage, threshold, and since v0.5 the certificate, the frontier, the per-task bounds, the per-row outcomes and the paired comparison with the live version.
+- `eval`: the golden eval at training time: precision, coverage, threshold, and since v0.5 the certificate, the <Term t="frontier">frontier</Term>, the per-task bounds, the per-row outcomes and the paired comparison with the live version.
 
-The manifest is serialised as canonical JSON (sorted keys, no whitespace, UTF-8). The document carries the SHA-256 of those bytes and, when `RATCHET_BOM_SIGNING_KEY` is set, an **Ed25519** signature with the public key and a key id. It is written once and never rewritten: a later re-check changes `/ratchet/stats`, not the signed document. Versions trained before v0.4 have no BOM; v1 documents still verify.
+The manifest is serialised as canonical JSON (sorted keys, no whitespace, UTF-8). The document carries the SHA-256 of those bytes and, when `RATCHET_BOM_SIGNING_KEY` is set, an **<Term t="ed25519">Ed25519</Term>** signature with the public key and a key id. It is written once and never rewritten: a later re-check changes `/ratchet/stats`, not the signed document. Versions trained before v0.4 have no BOM; v1 documents still verify.
 
 <figure class="rt-diagram">
 
@@ -154,7 +155,7 @@ Pass the public key you published somewhere you control (a README, a website). W
 
 **In one sentence for a 10-year-old:** a certificate is the exam score with a safety margin: "even if we were unlucky with the exam questions, the real score is at least this".
 
-**Precisely**. The golden eval picks the threshold on the even half of the golden rows and measures on the odd half (see [Confidence](/guides/confidence/)). The odd half played no part in choosing the threshold, so its count of agreeing answers among the `m` it would serve is one exact binomial experiment. The one-sided Clopper–Pearson lower bound is the precision `p` at which getting `s` or more agreeing answers out of `m` would happen only `delta` of the time:
+**Precisely**. The golden eval picks the threshold on the even half of the golden rows and measures on the odd half (see [Confidence](/guides/confidence/)). The odd half played no part in choosing the threshold, so its count of agreeing answers among the `m` it would serve is one exact binomial experiment. The one-sided <Term t="clopper-pearson">Clopper–Pearson</Term> lower bound is the precision `p` at which getting `s` or more agreeing answers out of `m` would happen only `delta` of the time:
 
 ```text
 lcb       = cp_lower(s, m, delta)   # the p with P(X >= s) = delta, X ~ Binomial(m, p)

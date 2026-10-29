@@ -10,6 +10,7 @@ import StatRow from '../../../components/StatRow.astro';
 import Compare from '../../../components/Compare.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Ratchet is for teams that pay frontier-model prices for narrow, repeated work. It moves that work to a small open model with an adapter they own, learns only from teachers whose license allows it, and ships each new model only if it passes a gate. Savings have not been measured on live traffic yet.</Summary>
 
@@ -17,7 +18,7 @@ import PathGrid from '../../../components/PathGrid.astro';
 
 - **LLM bills grow with traffic.** Enterprise spend on model APIs was $12.5B in 2025 ([Menlo Ventures](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/), report of Dec 9, 2025, read Oct 26, 2026). Much of what teams send is narrow and repetitive: classification, extraction, ticket triage, steps inside agents.
 - **The obvious fix is often not allowed.** Training a cheaper model on a closed model's answers breaks the terms of the largest vendors: [OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/) and [Anthropic Commercial Terms §D.4(a)](https://www.anthropic.com/legal/commercial-terms) (both read Oct 21, 2026) forbid using outputs to train competing models. Not legal advice.
-- **Doing it by hand is slow.** Logging, cleaning, fine-tuning, evaluating, deploying and watching for regressions are separate chores, and most tools cover one.
+- **Doing it by hand is slow.** Logging, cleaning, <Term t="fine-tuning">fine-tuning</Term>, evaluating, deploying and watching for regressions are separate chores, and most tools cover one.
 
 ## Who it is for
 
@@ -47,15 +48,15 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** One input, steady narrow traffic, produces four separate benefits, and the first is measured rather than assumed. Each request records what it cost and what the teacher alone would have cost, in two views: per token and by the GPU-hours actually paid. The other three benefits are about risk: who owns the model, whether its training data was allowed, and whether a bad version can reach everyone.
+**Reading this diagram.** One input, steady narrow traffic, produces four separate benefits, and the first is measured rather than assumed. Each request records what it cost and what the <Term t="teacher">teacher</Term> alone would have cost, in two views: per token and by the GPU-hours actually paid. The other three benefits are about risk: who owns the model, whether its training data was allowed, and whether a bad version can reach everyone.
 
 </figcaption>
 </figure>
 
 - **Cost falls as the student takes over.** Real savings depend on the traffic mix and on GPU utilization. Once the student serves, the teacher is paid for only the requests it escalates; the [Cost and savings](/guides/cost-and-savings/) guide shows the arithmetic.
 
-- **You own the result.** A LoRA adapter on an open base model, plus a signed bill of materials listing the teacher and license of every training example.
-- **Releases are gated.** A new student needs at least 95% precision on held-out data and may fall no more than 2 points behind the live version, then passes shadow and canary stages. See [The release gate](/guides/release-gate/).
+- **You own the result.** A <Term t="lora">LoRA</Term> adapter on an open base model, plus a signed <Term t="bom">bill of materials</Term> listing the teacher and license of every training example.
+- **Releases are gated.** A new student needs at least 95% precision on <Term t="held-out">held-out</Term> data and may fall no more than 2 points behind the live version, then passes shadow and canary stages. See [The release gate](/guides/release-gate/).
 
 ## How it could make money
 

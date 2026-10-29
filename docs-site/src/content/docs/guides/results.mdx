@@ -13,6 +13,7 @@ import sqlResults from '../../../data/sql-results.json';
 import extra from '../../../data/sql-extra.json';
 import ExamCharts from '../../../components/ExamCharts.astro';
 import exams from '../../../data/exams.json';
+import Term from '../../../components/Term.astro';
 
 export const run = sqlResults;
 export const measured = run?.status !== 'pending' && run?.mode === 'sql';
@@ -44,7 +45,7 @@ Every score comes with a range, like "somewhere between 64% and 82%". A small ex
 
 ## The headline: text-to-SQL, round 2
 
-Two exams, scored strictly (the scores come from `src/data/exams.json`, which `scripts/text2sql/exam_numbers.py --check` recomputes from the saved answers): a query is right only when running it returns the same rows as the exam's stored query on the same database. Exam 1 was written by the teacher; exam 2 by a different model, on industries that appear in neither the training data nor exam 1.
+Two exams, scored strictly (the scores come from `src/data/exams.json`, which `scripts/text2sql/exam_numbers.py --check` recomputes from the saved answers): a query is right only when running it returns the same rows as the exam's stored query on the same database. Exam 1 was written by the <Term t="teacher">teacher</Term>; exam 2 by a different model, on industries that appear in neither the training data nor exam 1.
 
 <table>
   <thead><tr><th>Who answered</th><th>Exam 1 ({S.exam1.base.n} questions)</th><th>Exam 2 ({S.exam2.base.n} questions)</th></tr></thead>
@@ -55,8 +56,8 @@ Two exams, scored strictly (the scores come from `src/data/exams.json`, which `s
   </tbody>
 </table>
 
-- **The training shows on both exams.** The round 2 adapter scores {(S.exam1.r2.agree / S.exam1.base.agree).toFixed(1)} times the base model on exam 1 and {(S.exam2.r2.agree / S.exam2.base.agree).toFixed(1)} times on exam 2.
-- **It does not replace the teacher yet.** At the 95% precision target it answers {extra.round2.gate.answered} of {extra.round2.gate.of} questions on exam 1's measurement half and {extra.exam2.gate.answered} of {extra.exam2.gate.of} on exam 2's.
+- **The training shows on both exams.** The round 2 <Term t="adapter">adapter</Term> scores {(S.exam1.r2.agree / S.exam1.base.agree).toFixed(1)} times the <Term t="base-model">base model</Term> on exam 1 and {(S.exam2.r2.agree / S.exam2.base.agree).toFixed(1)} times on exam 2.
+- **It does not replace the teacher yet.** At the 95% <Term t="precision">precision</Term> target it answers {extra.round2.gate.answered} of {extra.round2.gate.of} questions on exam 1's measurement half and {extra.exam2.gate.answered} of {extra.exam2.gate.of} on exam 2's.
 - **The exams do not show it is better than the teacher.** Each exam has one stored query per question, so a correct query with other columns counts as a miss, and the teacher's own score shows it. The sections below give the ranges, round 1 and the details.
 
 The tool-calling adapter's results (the second result) are in [Tool calling, round 3](#tool-calling-round-3) below.
@@ -69,7 +70,7 @@ The tool-calling adapter's results (the second result) are in [Tool calling, rou
     ? <span class="rt-badge rt-badge--live">Measured, read from the run's results file</span>
     : <span class="rt-badge rt-badge--sim">Pending: the run's results file is not in yet</span>}</p>
 
-Round 1, the half of the exam that measures the confidence gate (86 of 172 questions). Round 2 and the second exam are below.
+Round 1, the half of the exam that measures the <Term t="confidence">confidence</Term> gate (86 of 172 questions). Round 2 and the second exam are below.
 
 <SqlResults />
 

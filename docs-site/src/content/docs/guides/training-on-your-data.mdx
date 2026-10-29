@@ -15,11 +15,12 @@ import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
 import GradientText from '../../../components/ui/GradientText.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains <GradientText text="a new LoRA adapter you own" tone="owned" />, which the endpoint then loads from your bucket.</Summary>
 
 <Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
-- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot <Term t="l40s">L40S</Term>: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
 - **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
 - **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
 </Aside>
@@ -47,8 +48,8 @@ When the station is **closed to save money**, a different, untrained cook from t
 <Flow label="From a request to a loaded adapter">
   <FlowStep title="A teacher answer is stored" tone="rented" meta="the ledger">Checked, redacted, with its teacher and license.</FlowStep>
   <FlowStep title="The training file goes up" meta="RATCHET_SYNC_CMD">night/train.jsonl, uploaded to the bucket.</FlowStep>
-  <FlowStep title="A Serverless Job trains" meta="one L40S, at most 2 h">A fresh LoRA from the base, written back to the bucket.</FlowStep>
-  <FlowStep title="The adapter is loaded" tone="owned" meta="vLLM, no restart">Graded on the golden set, then handed to the gate.</FlowStep>
+  <FlowStep title="A Serverless Job trains" meta="one L40S, at most 2 h">A fresh <Term t="lora">LoRA</Term> from the base, written back to the bucket.</FlowStep>
+  <FlowStep title="The adapter is loaded" tone="owned" meta="vLLM, no restart">Graded on the <Term t="golden-set">golden set</Term>, then handed to the gate.</FlowStep>
 </Flow>
 
 The thirteen steps in full:
@@ -57,7 +58,7 @@ The thirteen steps in full:
 
 1. **Your app sends a request** to the gateway's `/v1/chat/completions`, ideally with a task name (`X-Ratchet-Task` or `metadata.ratchet_task`). See [the request journey](/guides/request-journey/).
 
-2. **The gateway stores teacher answers, never student answers.** When <Who as="teacher" /> answers (an escalation, a cold start, a random audit or a shadow arbitration), the answer is checked, the prompt and answer are redacted, and both are stored in the ledger with their provenance: teacher, license, hash, redaction count. When <Who as="student" /> serves an answer, only metadata is logged. Details: [the ledger](/guides/ledger/).
+2. **The gateway stores teacher answers, never student answers.** When <Who as="teacher" /> answers (an escalation, a cold start, a random audit or a shadow <Term t="arbitration">arbitration</Term>), the answer is checked, the prompt and answer are redacted, and both are stored in the ledger with their <Term t="provenance">provenance</Term>: teacher, license, hash, redaction count. When <Who as="student" /> serves an answer, only metadata is logged. Details: [the ledger](/guides/ledger/).
 
 3. **Every night, cron runs `python -m ratchet.live night`** on the gateway's host. It runs Night School's checks (paused, storage off, a release in flight, fewer than 50 new examples, no golden rows) and skips the night if one applies. Otherwise it re-scores the live adapter on tonight's golden rows and goes on. See [Night School](/guides/night-school/).
 
@@ -71,11 +72,11 @@ The thirteen steps in full:
 
 8. **The script waits for the adapter.** With `RATCHET_BUCKET_S3` set, `train_job.sh` polls the bucket for `adapters/student-vN/adapter_model.safetensors` every 30 seconds, for up to 2 hours, and exits when it appears. Without `RATCHET_BUCKET_S3` it returns right after submitting, so the adapter load that follows would run before the job has written anything: set it when the script is your `RATCHET_TRAIN_CMD`.
 
-9. **The adapter is hot-loaded.** `ratchet.live` calls the endpoint's `POST /v1/load_lora_adapter` with `{"lora_name": "student-vN", "lora_path": "/data/adapters/student-vN"}` (the path is `RATCHET_ADAPTER_ROOT/<name>`). vLLM reads the files from the same bucket, mounted at `/data` in the endpoint. No restart. An "already loaded" answer is fine.
+9. **The adapter is <Term t="hot-load">hot-loaded</Term>.** `ratchet.live` calls the endpoint's `POST /v1/load_lora_adapter` with `{"lora_name": "student-vN", "lora_path": "/data/adapters/student-vN"}` (the path is `RATCHET_ADAPTER_ROOT/<name>`). <Term t="vllm">vLLM</Term> reads the files from the same bucket, mounted at `/data` in the endpoint. No restart. An "already loaded" answer is fine.
 
 10. **The golden eval runs on the endpoint.** `LiveEvaluator` sends each golden prompt to the new adapter (3 samples, as production does), calibrates the threshold on half the rows and measures precision on the other half. Free-text tasks also get a score from <Who as="judge" />, which is recorded but does not gate.
 
-11. **The adapter's BOM is signed and the gate decides.** The bill of materials (teachers, licenses, the base model's license, the NOTICE text, the dataset hashes, the eval, the set roots) is written once, and signed when `RATCHET_BOM_SIGNING_KEY` is set. Then the release gate admits the candidate to **shadow**, **canary 10%** on a cold start, or **rejects** it. See [the release gate](/guides/release-gate/).
+11. **The adapter's <Term t="bom">BOM</Term> is signed and the gate decides.** The bill of materials (teachers, licenses, the base model's license, the NOTICE text, the dataset hashes, the eval, the set roots) is written once, and signed when `RATCHET_BOM_SIGNING_KEY` is set. Then the release gate admits the candidate to **shadow**, **canary 10%** on a cold start, or **rejects** it. See [the release gate](/guides/release-gate/).
 
 12. **The licenses join the weights.** `ratchet.live` writes `ratchet_bom.json` and the BOM's `NOTICE.md` into `RATCHET_DATA_DIR/adapters/student-vN/` and runs `RATCHET_SYNC_CMD` again, so the bucket folder holds the weights and their licenses together. If this second sync fails, the version still stands, a `sync_failed` event is written, and the command exits non-zero so cron notices.
 
@@ -253,7 +254,7 @@ The other actions reuse the same endpoint (same URL, same token): `start` (the d
 
 ### What becomes training data
 
-Only teacher answers (and labels a person attested, from [feedback corrections or an import](/guides/ledger/)) become training targets. A teacher answer is stored only when it is complete (`finish_reason` `stop` or `tool_calls`), valid under the task's spec, not under a storage opt-out, not for a pinned task or a tool request, and after PII redaction. Each one records the teacher model, its license and license URL, its hash and the number of placeholders. You can keep any request, key, task or end user out of training with an [opt-out](/guides/ledger/), and switch storage off entirely with `RATCHET_STORE_EXAMPLES=0`.
+Only teacher answers (and labels a person attested, from [feedback corrections or an import](/guides/ledger/)) become training targets. A teacher answer is stored only when it is complete (`finish_reason` `stop` or `tool_calls`), valid under the task's spec, not under a storage <Term t="opt-out">opt-out</Term>, not for a pinned task or a tool request, and after <Term t="pii-redaction">PII redaction</Term>. Each one records the teacher model, its license and license URL, its hash and the number of placeholders. You can keep any request, key, task or end user out of training with an [opt-out](/guides/ledger/), and switch storage off entirely with `RATCHET_STORE_EXAMPLES=0`.
 
 ### The training file
 
@@ -315,7 +316,7 @@ nebius ai job create --name ratchet-<version> --image $RATCHET_TRAIN_IMAGE \
 - The version name and base model are checked against a strict pattern first, because they go into the job's `bash -c` line.
 - `DRY_RUN=1` adds `--dry-run`: Nebius validates the request and submits nothing. Any value other than `0` or `1` is refused, so `DRY_RUN=true` can never submit a paid job.
 
-Training defaults in `train.py`: 2 epochs, learning rate 2e-4, LoRA rank 16 with alpha 32, max sequence 2048, batch 8, bf16, loss on the answer only, targets including the Mamba projections (with an attention-and-MLP fallback if vLLM refuses them on day 1). See [What LoRA is](/guides/night-school/#what-lora-is).
+Training defaults in `train.py`: 2 epochs, learning rate 2e-4, LoRA rank 16 with alpha 32, max sequence 2048, batch 8, bf16, loss on the answer only, targets including the <Term t="mamba">Mamba</Term> projections (with an attention-and-MLP fallback if vLLM refuses them on day 1). See [What LoRA is](/guides/night-school/#what-lora-is).
 
 **When the job fails.** A refused job request fails the script at once. A job that runs but writes no adapter makes the script time out after 2 hours and exit 1. Either way `ratchet.live` stops the night: no version is created, the training compute interval is closed with a "training failed" note (any GPU time the job used is still billed), and the command exits non-zero. Inside the job, `check_rows` and `check_prefix` stop a bad file or a chat-template mismatch within seconds, before the GPU trains anything (`row N: ...` or `TemplateMismatch` in the job's log).
 
@@ -357,7 +358,7 @@ vLLM **forgets runtime-loaded adapters when the endpoint restarts**, and answers
 
 With `RATCHET_STUDENT_BASE` unset, student calls for a trained version go to <Who as="fallback" />: the untuned `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` on Token Factory (`RATCHET_FALLBACK_STUDENT`), paid per token instead of per GPU-hour.
 
-- It is **not** the adapter you own and **not** covered by the adapter's precision certificate. It was never calibrated, so it is held to the global `RATCHET_CONFIDENCE_THRESHOLD` (default 0.80), not the version's calibrated threshold. Precision may be lower; the teacher's random audits will show it.
+- It is **not** the adapter you own and **not** covered by the adapter's precision <Term t="certificate">certificate</Term>. It was never calibrated, so it is held to the global `RATCHET_CONFIDENCE_THRESHOLD` (default 0.80), not the version's calibrated threshold. Precision may be lower; the teacher's random audits will show it.
 - The ledger still records these answers as `served_by: student`; the response's `model` field names the hosted model, and the pages label them "Nano 30B · hosted", never as the adapter.
 - Night School cannot train or grade a new adapter in this state (see above).
 
@@ -373,7 +374,7 @@ bash deploy/student_endpoint.sh status   # prints "<id> <state>"
 
 Night School needs the endpoint **running** while it re-scores the live adapter, loads the new one and grades it. With the endpoint stopped most of the time, start it before the night run (with `RATCHET_STUDENT_BASE` set in the night job's environment) and stop it after. Each start and stop is recorded, and answers in hours without uptime count as the hosted fallback's in the cost report.
 
-Whether running the endpoint pays at all depends on volume. With estimated prices (an L40S at about $1.35 per GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and about $0.001 of teacher spend avoided per ticket-triage answer, an assumption), break-even is about 1,350 student answers an hour; at a small gateway's volume a 24/7 endpoint loses money, and `python -m ratchet.cost report` says so ([cost and savings](/guides/cost-and-savings/)). At the same price, estimates from the repo's [deployment guide](/reference/deployment/#4-cost-estimates): about $0.70 to $1.35 per training night, about $32 per full day if the endpoint is left on.
+Whether running the endpoint pays at all depends on volume. With estimated prices (an L40S at about $1.35 per GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and about $0.001 of teacher spend avoided per ticket-triage answer, an assumption), <Term t="break-even">break-even</Term> is about 1,350 student answers an hour; at a small gateway's volume a 24/7 endpoint loses money, and `python -m ratchet.cost report` says so ([cost and savings](/guides/cost-and-savings/)). At the same price, estimates from the repo's [deployment guide](/reference/deployment/#4-cost-estimates): about $0.70 to $1.35 per training night, about $32 per full day if the endpoint is left on.
 
 ### Exporting the adapter you own
 

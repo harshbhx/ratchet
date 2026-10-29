@@ -1,6 +1,6 @@
 # Scout: the multi-agent research tool
 
-Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two of its agents make many narrow, repetitive calls. Ratchet learns those calls and moves them from Nemotron 3 Ultra to the student. The other two agents make open-ended calls, which stay on Ultra. In the mock-mode gateway the student takes over most of the narrow calls. On the live gateway no trained student is served yet, so every call is answered by Ultra; the three recorded live runs in `evidence/scout` show Scout working end to end, not savings.
+Scout is a small team of research agents that answers a question from the web. Every agent is a plain OpenAI client pointed at Ratchet. Two of its agents make many narrow, repetitive calls. Ratchet learns those calls and moves them from [Nemotron](https://docs.ratchet.dualmindlab.tech/guides/glossary/#nemotron) 3 Ultra to the student. The other two agents make open-ended calls, which stay on Ultra. In the mock-mode gateway the student takes over most of the narrow calls. On the live gateway no trained student is served yet, so every call is answered by Ultra; the three recorded live runs in `evidence/scout` show Scout working end to end, not savings.
 
 It exists to show Ratchet on real agent traffic: the kind of narrow call that, NVIDIA Research estimates, could go to small models, in the three open agent systems it studied (about 40%, 60% and 70% of their LLM queries; [arXiv 2506.02153](https://arxiv.org/abs/2506.02153), v3, Sep 22, 2026).
 
@@ -14,14 +14,14 @@ It exists to show Ratchet on real agent traffic: the kind of narrow call that, N
 | Reader | `page-read` | 1 per relevant result (up to 6) | **distillable** | `{"answers_question": bool, "fact_type": "definition\|number\|date\|name\|none", "key_fact": str}` |
 | Writer | `research-write` | 1 | **pinned** to the teacher | `{"answer": str (markdown, cites [n]), "used": [int]}` |
 
-- **Distillable** tasks compare only their label fields: `relevant` + `source_type`, and `answers_question` + `fact_type`. Free text (`reason`, `key_fact`) is ignored when deciding agreement, as with `ticket-triage`. So page-read's precision covers its `answers_question` and `fact_type` fields only; the free-text `key_fact` the writer cites is not checked.
+- **Distillable** tasks compare only their label fields: `relevant` + `source_type`, and `answers_question` + `fact_type`. Free text (`reason`, `key_fact`) is ignored when deciding agreement, as with `ticket-triage`. So page-read's [precision](https://docs.ratchet.dualmindlab.tech/guides/glossary/#precision) covers its `answers_question` and `fact_type` fields only; the free-text `key_fact` the writer cites is not checked.
 - **Pinned** tasks (`Task.pinned = True`) always go to the teacher and are never stored as training examples. Open-ended planning and writing are where the big model earns its price.
 - Triage and Reader calls run in parallel (thread pool). The ledger is guarded by a lock.
 
 ## Modes
 
 - **mock** (no keys): the searcher returns mock results from `sim/research.py`, and the mock teacher and students answer. Only the example questions work (`GET /scout/examples`). The UI must show a "Mock search results" label in this mode.
-- **live**: Tavily (`TAVILY_API_KEY`) plus the real Ratchet cascade (Token Factory teacher, vLLM student or hosted fallback). A budget guard protects the public live gateway.
+- **live**: [Tavily](https://docs.ratchet.dualmindlab.tech/guides/glossary/#tavily) (`TAVILY_API_KEY`) plus the real Ratchet cascade (Token Factory teacher, [vLLM](https://docs.ratchet.dualmindlab.tech/guides/glossary/#vllm) student or hosted fallback). A budget guard protects the public live gateway.
 
 ## HTTP endpoints
 
@@ -77,11 +77,11 @@ Request and response details for each endpoint are in [API.md](API.md#scout-endp
 - Steps for parallel agents may arrive in any order. Use `detail.id` to match a triage step and its reader step to a search result.
 - An `error` event ends the stream. `/scout/stream` always answers HTTP 200 and reports problems as an `error` event, because browsers' `EventSource` cannot read status codes. `/scout/run` uses HTTP codes instead: 400 (empty question, a question over 300 characters, or a non-example question in mock mode), 429 (rate limit, daily run cap or budget), 503 (live mode without `TAVILY_API_KEY`), 502 (a model call failed during the run).
 - Every step keeps exactly the top-level keys above; new fields go inside `detail`.
-- A call the live gateway's split sent to the hosted Nano at random (`RATCHET_DEMO_SPLIT`, [ADR 0147](adr/0147-demo-split.md)) has `detail.route = "demo_split"`, and `totals.demo_split_calls` counts them; the page labels such a call "Random split" (picked at random, not by the confidence gate). Absent otherwise.
+- A call the live gateway's split sent to the hosted Nano at random (`RATCHET_DEMO_SPLIT`, [ADR 0147](adr/0147-demo-split.md)) has `detail.route = "demo_split"`, and `totals.demo_split_calls` counts them; the page labels such a call "[Random split](https://docs.ratchet.dualmindlab.tech/guides/glossary/#random-split)" (picked at random, not by the confidence gate). Absent otherwise.
 
 ### When search is unavailable (v0.5)
 
-A search that fails (any HTTP or transport error, for example a revoked key's 401 or Tavily's 432 when credits run out) or that the credit meter refuses does not end the run ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)):
+A search that fails (any HTTP or transport error, for example a revoked key's 401 or [Tavily](https://docs.ratchet.dualmindlab.tech/guides/glossary/#tavily)'s 432 when credits run out) or that the credit meter refuses does not end the run ([ADR 0120](adr/0120-judge-access-and-a-persistent-scout-guard.md)):
 
 - The searcher step for that query has `detail = {"query": ..., "results": [], "unavailable": "<reason>"}` and no further queries are made. The reason is `public search credits for today are used up`, `search credits are used up`, or the error's class and status (`HTTPStatusError 401`, `ConnectError`), never its message or URL.
 - Triage and reader run on what earlier queries found. With nothing found they make no calls, and the writer gets an empty fact list (its prompt already says to say when the facts do not answer the question). The answer text is the model's own, never rewritten.
@@ -133,7 +133,7 @@ Mock mode has no budget and no daily run cap, writes no spend rows, but the per-
 - A judge run is admitted only while P + U < T. Judges get at least their reserve and can use public room that is left.
 - Runs stay at or under T. Spend stays at or under the budget plus the runs in flight when it is reached, as before. Judge runs and public runs from one address have separate hourly windows.
 
-On the Scout page, a small "I am a judge" link under the ask bar opens a password field and an Unlock button; it shows only when `GET /scout/status` reports `judge.enabled`, so it is absent in mock mode and on a gateway without a code. After a good code the page says "Judge access on" with the runs left today and offers Sign out (`DELETE /scout/judge`). A wrong code, too many tries (10 per IP per hour) and a gateway with judge access off each get a plain message. The page keeps the code in the input's memory only, sends it once in the POST body with `credentials: 'same-origin'`, clears it right after, and never stores or logs it ([invariant 18](../AGENTS.md)'s rule, scanned by `test_dashboard_admin_key_stays_in_memory`). A judge sends the code once (`POST /scout/judge`, in the body: uvicorn and Caddy log URLs and custom headers) and gets a signed cookie (`ratchet_judge`, `HttpOnly`, `SameSite=Strict`, `Path=/scout`, `Secure` in live mode). Only the cookie makes a run a judge run. The gateway keeps the code's SHA-256 digest and a key derived from it, never the code; the cookie survives a restart, and rotating the code ends every session. A judge without the code is a public visitor: with search unavailable they still get a run that calls Token Factory, where a 429 would give them nothing.
+On the Scout page, a small "I am a judge" link under the ask bar opens a password field and an Unlock button; it shows only when `GET /scout/status` reports `judge.enabled`, so it is absent in mock mode and on a gateway without a code. After a good code the page says "Judge access on" with the runs left today and offers Sign out (`DELETE /scout/judge`). A wrong code, too many tries (10 per IP per hour) and a gateway with judge access off each get a plain message. The page keeps the code in the input's memory only, sends it once in the POST body with `credentials: 'same-origin'`, clears it right after, and never stores or logs it ([invariant 18](../AGENTS.md)'s rule, scanned by `test_dashboard_admin_key_stays_in_memory`). A judge sends the code once (`POST /scout/judge`, in the body: uvicorn and Caddy log URLs and custom headers) and gets a signed cookie (`ratchet_judge`, `HttpOnly`, `SameSite=Strict`, `Path=/scout`, `Secure` in live mode). Only the cookie makes a run a judge run. The gateway keeps the code's [SHA-256](https://docs.ratchet.dualmindlab.tech/guides/glossary/#sha-256) digest and a key derived from it, never the code; the cookie survives a restart, and rotating the code ends every session. A judge without the code is a public visitor: with search unavailable they still get a run that calls Token Factory, where a 429 would give them nothing.
 
 ### Tavily credits
 
@@ -155,10 +155,10 @@ Mock mode settings:
 
 ## Mock research world (`sim/research.py`)
 
-- 8 example questions about well-established ML concepts (LoRA, knowledge distillation, model cascades, the Wilson score interval, vLLM PagedAttention, Mamba state-space models, self-consistency, model collapse). The facts are from the original papers.
+- 8 example questions about well-established ML concepts ([LoRA](https://docs.ratchet.dualmindlab.tech/guides/glossary/#lora), knowledge distillation, model cascades, the [Wilson score](https://docs.ratchet.dualmindlab.tech/guides/glossary/#wilson-bound) interval, [vLLM](https://docs.ratchet.dualmindlab.tech/guides/glossary/#vllm) PagedAttention, Mamba state-space models, [self-consistency](https://docs.ratchet.dualmindlab.tech/guides/glossary/#self-consistency), model collapse). The facts are from the original papers.
 - Each question has 3 planned queries and a pool of 72 mock results: 12 result templates (`r-*`) × 6 variants. The templates cover relevant papers, docs and blogs, off-topic news, near-miss forum posts, and SEO listicles. Each template has fixed labels for `source-triage` and `page-read`.
 - Result URLs use `example.org`, so nothing pretends to be a real page.
-- `ResearchStream` produces triage and read requests for the simulator and `POST /ratchet/demo/day?workload=research|mixed`. Users phrase each question 4 ways. Questions 7 and 8 (self-consistency, model collapse) appear only from the drift day, as 20% of traffic.
+- `ResearchStream` produces triage and read requests for the simulator and `POST /ratchet/demo/day?workload=research|mixed`. Users phrase each question 4 ways. Questions 7 and 8 (self-consistency, model collapse) appear only from the [drift](https://docs.ratchet.dualmindlab.tech/guides/glossary/#drift) day, as 20% of traffic.
 - The simulator and the agents build messages with the same functions in `ratchet/scout/prompts.py`, so the mock teacher and students can look up each request by its exact user text.
 
 ## Recorded runs

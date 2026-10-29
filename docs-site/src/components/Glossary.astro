@@ -1,0 +1,53 @@
+---
+/** The glossary list, rendered from src/data/glossary.ts: one entry per term with a stable anchor (#lora), grouped by letter. */
+import { GLOSSARY } from '../data/glossary';
+import { inline, letterOf } from '../lib/glossary';
+
+const groups = new Map<string, typeof GLOSSARY>();
+for (const t of GLOSSARY) {
+  const l = letterOf(t);
+  groups.set(l, [...(groups.get(l) ?? []), t]);
+}
+const letters = [...groups.keys()].sort();
+---
+
+<p class="rt-letters">
+  Jump to:
+  {
+    letters.map((l, i) => (
+      <>
+        {i > 0 && ' · '}
+        <a href={`#${l.toLowerCase()}`}>{l}</a>
+      </>
+    ))
+  }
+</p>
+
+{
+  letters.map((l) => (
+    <>
+      <h3 id={l.toLowerCase()}>{l}</h3>
+      <ul class="rt-glossary">
+        {groups.get(l)!.map((t) => (
+          <li id={t.slug}>
+            <strong>{t.name}</strong>: <Fragment set:html={inline(t.long ?? t.short)} />
+            {t.page && (
+              <>
+                {' '}
+                (<a href={t.page[1]}>{t.page[0]}</a>)
+              </>
+            )}
+            {t.learn && (
+              <>
+                {' '}
+                <a href={t.learn[1]} rel="noopener">
+                  Learn more: {t.learn[0]}
+                </a>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </>
+  ))
+}

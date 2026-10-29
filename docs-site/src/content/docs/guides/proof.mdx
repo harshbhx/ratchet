@@ -9,6 +9,7 @@ import Eli10 from '../../../components/Eli10.astro';
 import Stat from '../../../components/Stat.astro';
 import StatRow from '../../../components/StatRow.astro';
 import Stepper from '../../../components/ui/Stepper.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Each claim about an adapter or a bill has a document and a command that checks it on your own machine, so you do not have to trust the gateway that made it.</Summary>
 
@@ -34,15 +35,15 @@ Each link has one command. When a link is broken, the command says `FAIL` and wh
 
 1. **The exam.** The adapter answers questions about databases it never trained on, and a CPU-only script recomputes the score from the raw answers (`scripts/measure_adapter.py verify`, and `scripts/toolcall_results.py --check` for tool calling). These are the checks that have been run on real models, for the text-to-SQL and tool-calling adapters.
 
-2. **The signed bill of materials.** When Night School trains a version it writes a document that lists the teachers and their licenses, the base model's license, the data counts and the eval, and signs it with an Ed25519 key. `python -m ratchet.bom verify` checks the signature and every hash in it.
+2. **The signed <Term t="bom">bill of materials</Term>.** When Night School trains a version it writes a document that lists the teachers and their licenses, the base model's license, the data counts and the eval, and signs it with an <Term t="ed25519">Ed25519</Term> key. `python -m ratchet.bom verify` checks the signature and every hash in it.
 
-3. **The committed training set.** The same document signs a Merkle root over the exact training rows and another over the golden rows. `python -m ratchet.proof verify` shows that one example is in a set, or is not, without the whole set. `python -m ratchet.proof heldout` shows that no golden example is in the training root.
+3. **The committed training set.** The same document signs a <Term t="merkle-root">Merkle root</Term> over the exact training rows and another over the <Term t="golden-set">golden rows</Term>. `python -m ratchet.proof verify` shows that one example is in a set, or is not, without the whole set. `python -m ratchet.proof heldout` shows that no golden example is in the training root.
 
-4. **Certified precision.** The eval carries an exact Clopper-Pearson lower bound on how often the served answers match the teacher. `python -m ratchet.stats check` recomputes it from the counts in the signed BOM.
+4. **Certified precision.** The eval carries an exact <Term t="clopper-pearson">Clopper-Pearson</Term> lower bound on how often the served answers match the teacher. `python -m ratchet.stats check` recomputes it from the counts in the signed BOM.
 
 5. **The time machine.** `python -m ratchet.replay` replays one version's logged traffic at another threshold or audit rate and estimates precision, coverage and cost. It reads the ledger, so it is an estimate, not a signed document.
 
-6. **The savings receipts.** After each ledger day, the gateway seals one receipt per client: a Merkle tree over request metadata (no text), signed and chained to the previous day. `python -m ratchet.receipt verify` checks the signature, the chain and, with a proof, that one request is in a receipt.
+6. **The savings receipts.** After each ledger day, the gateway seals one <Term t="receipt">receipt</Term> per client: a Merkle tree over request metadata (no text), signed and chained to the previous day. `python -m ratchet.receipt verify` checks the signature, the chain and, with a proof, that one request is in a receipt.
 
 </Steps>
 
@@ -69,7 +70,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Follow the arrows from the data. The training and golden rows are committed first, then the signed document is built on top of those commitments, and the certificate is read from the signed document. Once the version is serving, the ledger fills with request metadata, and both the replay and the receipts read from the ledger. A command sits on every box (each `ratchet.*` one runs as `python -m ratchet.*`), so each step down the chain can be checked on its own, and a change anywhere above breaks the checks below it. The blue box is the one link that has run on a real model.
+**Reading this diagram.** Follow the arrows from the data. The training and golden rows are committed first, then the signed document is built on top of those commitments, and the <Term t="certificate">certificate</Term> is read from the signed document. Once the version is serving, the ledger fills with request metadata, and both the <Term t="replay">replay</Term> and the receipts read from the ledger. A command sits on every box (each `ratchet.*` one runs as `python -m ratchet.*`), so each step down the chain can be checked on its own, and a change anywhere above breaks the checks below it. The blue box is the one link that has run on a real model.
 
 <ul class="rt-key">
   <li class="store">Stored data</li>
@@ -83,7 +84,7 @@ flowchart TB
 ## What exists today, and what has run for real
 
 <Aside type="caution" title="Read this before quoting a number">
-Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline with mock models. Night School itself ran once on Nebius on 28 Oct 2026 (dataset import, training job, hot-load, golden eval; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)), but its bill of materials was written unsigned (no signing key was set), so no BOM, proof or receipt was signed by a real run as it happened. None of it has run on real production traffic.
+Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline with mock models. Night School itself ran once on Nebius on 28 Oct 2026 (dataset import, training job, <Term t="hot-load">hot-load</Term>, golden eval; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)), but its bill of materials was written unsigned (no signing key was set), so no BOM, proof or receipt was signed by a real run as it happened. None of it has run on real production traffic.
 </Aside>
 
 <Aside type="tip" title="That one BOM was signed afterwards">

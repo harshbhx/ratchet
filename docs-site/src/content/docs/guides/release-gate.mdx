@@ -13,6 +13,7 @@ import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
 import Stepper from '../../../components/ui/Stepper.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>The release gate decides, from held-out golden rows and teacher audits, whether a newly trained adapter may take traffic, how much, and when to send it back, so a bad night never quietly replaces a good student.</Summary>
 
@@ -64,7 +65,7 @@ sequenceDiagram
 
 <figcaption>
 
-**Reading this diagram.** Night School hands over a trained candidate and the gate does the rest. The first judge is the golden exam, run the same night for the candidate and the current live version. Then real traffic does the judging: first silently in shadow, then in the canary, where the teacher audits a random sample of what the canary served. Every state change is a write to the ledger, which is why the whole history can be replayed from the events table.
+**Reading this diagram.** Night School hands over a trained candidate and the gate does the rest. The first judge is the golden exam, run the same night for the candidate and the current live version. Then real traffic does the judging: first silently in shadow, then in the <Term t="canary">canary</Term>, where the teacher audits a random sample of what the canary served. Every state change is a write to the ledger, which is why the whole history can be replayed from the events table.
 
 </figcaption>
 </figure>
@@ -137,30 +138,30 @@ Step through the rollout one stage at a time; the numbered list under it keeps e
 
 <Steps>
 
-1. **Golden gate** (`ReleaseGate.admit`, right after training). Read the candidate's held-out numbers from its eval, in this order:
+1. **Golden gate** (`ReleaseGate.admit`, right after training). Read the candidate's <Term t="held-out">held-out</Term> numbers from its eval, in this order:
    - precision at least `min_precision` (0.95), else `rejected`;
    - coverage at least `min_coverage` (0.25), else `rejected`;
    - with `RATCHET_MIN_CERTIFIED_PRECISION` set (opt-in), the certified lower bound at least that floor, else `rejected`;
-   - if a version is live: no regression against it. By default, the candidate is rejected if its precision or coverage is more than `tolerance` (0.02) below the live version's. With the opt-in paired gate, a row-by-row test instead (below);
+   - if a version is live: no regression against it. By default, the candidate is rejected if its precision or coverage is more than `tolerance` (0.02) below the live version's. With the opt-in <Term t="paired-gate">paired gate</Term>, a row-by-row test instead (below);
    - per task: a task that fails its own check is disabled on the candidate (or, with `RATCHET_TASK_MODE=reject`, rejects it).
 
-   The live version's numbers come from a re-score on the **same golden rows the same night** (champion against challenger), so both are graded on one exam.
+   The live version's numbers come from a re-score on the **same <Term t="golden-set">golden rows</Term> the same night** (champion against challenger), so both are graded on one exam.
 
 2. **First stage.** With no live version (cold start), the candidate goes straight to canary at 10%: there is nothing to shadow against, so the teacher's audits judge it. Otherwise it enters **shadow**. Any older shadow or canary still in flight is retired first (rare, because Night School does not train while a release is in flight).
 
-3. **Shadow** (`_tick_shadow`). On each request the shadow version is sampled and scored like a real student, against its own threshold. Nothing it says is served. Its answer is compared with the teacher's when the teacher answered that request (an escalation or an audit). Otherwise, when it would serve and disagrees with the served answer, the teacher arbitrates, and the arbitration is stored as training data; an arbitration that fails counts as a disagreement. When it agrees with the live student's served answer, that agreement is accepted as it is. Once the shadow would have served `min_shadow` (100) answers:
+3. **Shadow** (`_tick_shadow`). On each request the shadow version is sampled and scored like a real student, against its own threshold. Nothing it says is served. Its answer is compared with the teacher's when the teacher answered that request (an escalation or an audit). Otherwise, when it would serve and disagrees with the served answer, the teacher arbitrates, and the <Term t="arbitration">arbitration</Term> is stored as training data; an arbitration that fails counts as a disagreement. When it agrees with the live student's served answer, that agreement is accepted as it is. Once the shadow would have served `min_shadow` (100) answers:
    - shadow precision below 0.95: `rejected`;
    - shadow coverage more than 0.02 below the live student's coverage on the same requests: `rejected`;
    - otherwise canary at 10%.
 
 4. **Canary** (`_tick_canary`, default Wilson rule). The teacher audits a random share of the canary's served answers. With at least `min_audits` (20) audits **in the current stage**:
-   - if the upper end of the 95% Wilson interval of audited precision is below `live_floor` (0.92): `rolled_back`, and traffic returns to the live version (or the teacher on cold start);
+   - if the upper end of the 95% <Term t="wilson-bound">Wilson interval</Term> of audited precision is below `live_floor` (0.92): `rolled_back`, and traffic returns to the live version (or the teacher on cold start);
    - else if the point estimate is below 0.92: hold and keep auditing;
    - else advance 10 to 50, or 50 to live. The move starts a new stage, so the audit count starts again.
 
 5. **Promotion.** Under the default rule, one transaction (`Ledger.promote_live`) makes the canary live at 100% and retires the old live version, with a `live_retired` event then a `live` event, so two versions are never live.
 
-6. **Live watch** (`_tick_live`). The live version is never rolled back automatically. By default an e-process over its audits since it went live raises one `alert` event per version when the evidence that precision is below 0.92 reaches 100 (`alpha_alert` 0.01). The runbook says what to do.
+6. **Live watch** (`_tick_live`). The live version is never rolled back automatically. By default an <Term t="e-value">e-process</Term> over its audits since it went live raises one `alert` event per version when the evidence that precision is below 0.92 reaches 100 (`alpha_alert` 0.01). The runbook says what to do.
 
 </Steps>
 
@@ -257,7 +258,7 @@ A plain point-estimate rule was not used because at 20 audits, a healthy canary 
 
 The Wilson interval keeps its error rate for **one look** at a fixed sample. The gate looks after every request. When true precision sits exactly on the floor, checking Wilson after every audit falsely rolls back about 22% of such versions within 400 audits, against a nominal 2.5%. And `min_audits` lets a broken deploy keep serving until it has 15 to 20 audits.
 
-**Explained simply.** Think of a running bet against "quality is fine". You start with one coin. Before each audit you bet a little that the answer will be wrong. If quality really is fine, this bet cannot grow on average: it is a fair game or worse for you. So if your pile ever reaches 20 coins, that is strong evidence quality is not fine. Because a fair game cannot grow on average, it does not matter how often you look at your pile: checking after every single audit is allowed. That is what "anytime-valid" means.
+**Explained simply.** Think of a running bet against "quality is fine". You start with one coin. Before each audit you bet a little that the answer will be wrong. If quality really is fine, this bet cannot grow on average: it is a fair game or worse for you. So if your pile ever reaches 20 coins, that is strong evidence quality is not fine. Because a fair game cannot grow on average, it does not matter how often you look at your pile: checking after every single audit is allowed. That is what "<Term t="anytime-valid">anytime-valid</Term>" means.
 
 **Precisely.** With `RATCHET_SEQUENTIAL=1`, `_tick_canary` hands over to `_sequential_canary`, which reads two integers per version, audits `n` and agreements `s` (`Ledger.audit_counts`):
 
@@ -271,7 +272,7 @@ The Wilson interval keeps its error rate for **one look** at a fixed sample. The
 
 </Steps>
 
-Every event carries the counts, the e-value and its threshold, and an anytime-valid 95% confidence sequence, for example `v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 (anytime-valid, alpha 5%); 95% CS [0.041, 0.908]; traffic back to live v1`. Anyone can recompute those numbers from the two counts.
+Every event carries the counts, the e-value and its threshold, and an anytime-valid 95% <Term t="confidence-sequence">confidence sequence</Term>, for example `v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 (anytime-valid, alpha 5%); 95% CS [0.041, 0.908]; traffic back to live v1`. Anyone can recompute those numbers from the two counts.
 
 The sequential canary is opt-in. The **live alert** already uses the e-process by default (`RATCHET_ALERT_EPROCESS=1`, threshold 100). The live-run harness's planned gate profile turns the sequential rule on (`RATCHET_SEQUENTIAL=1`, `RATCHET_CANARY_AUDIT_RATE=0.5`).
 
@@ -279,7 +280,7 @@ The sequential canary is opt-in. The **live alert** already uses the e-process b
 
 The default regression check compares two point estimates within 0.02, but the candidate and the live version were scored on the same rows, so the comparison can be done row by row. With `RATCHET_PAIRED_GATE=1`, the gate reads the candidate's `paired` record against the re-scored live version:
 
-- **Coverage:** `b` rows only live serves, `c` rows only the candidate serves, and McNemar's exact one-sided p-value `p_cov = P(X at least b)` with `X ~ Binomial(b + c, 1/2)`.
+- **Coverage:** `b` rows only live serves, `c` rows only the candidate serves, and <Term t="mcnemar">McNemar</Term>'s exact one-sided p-value `p_cov = P(X at least b)` with `X ~ Binomial(b + c, 1/2)`.
 - **Wrong answers as a client sees them:** negative flips (the candidate serves a wrong answer where live was right, served or escalated) against positive flips, with `p_err`.
 - **Negative flip rate:** answers live served right that the candidate serves wrong, with a 95% Wilson interval.
 
@@ -301,9 +302,9 @@ On the live and canary versions, one `alert` per (version, task) fires when that
 
 The gate's tick has two more steps that never promote or roll back a version. They watch for changes the golden exam cannot see.
 
-**The drift alarm** (`_tick_drift`) watches each (version, task) stream of the student's confidence scores for a shift, with no labels needed. When it alarms (`RATCHET_DRIFT_ALARM`, default 100, so at most a 1% false alarm per stream over its life), it writes a `drift` event and suspends that version's certificate, because the certificate no longer describes the traffic. Two opt-in actions can follow: a higher audit rate for the alarmed version (`RATCHET_DRIFT_AUDIT_BOOST`) and an earlier night (`RATCHET_DRIFT_EARLY_NIGHT`). How the score is built is in [Confidence](/guides/confidence/#watching-the-confidence-scores-over-time-the-drift-alarm).
+**The <Term t="drift">drift</Term> alarm** (`_tick_drift`) watches each (version, task) stream of the student's confidence scores for a shift, with no labels needed. When it alarms (`RATCHET_DRIFT_ALARM`, default 100, so at most a 1% false alarm per stream over its life), it writes a `drift` event and suspends that version's <Term t="certificate">certificate</Term>, because the certificate no longer describes the traffic. Two opt-in actions can follow: a higher audit rate for the alarmed version (`RATCHET_DRIFT_AUDIT_BOOST`) and an earlier night (`RATCHET_DRIFT_EARLY_NIGHT`). How the score is built is in [Confidence](/guides/confidence/#watching-the-confidence-scores-over-time-the-drift-alarm).
 
-**The teacher watch** (`_tick_watchers`) asks whether the teacher itself is steady. The golden set and the audits both measure agreement with the teacher, so a teacher whose answers wander would make every number meaningless. Each stored label gets at most one re-test per check epoch (a repeated request that the teacher labels again, or one of the `RATCHET_TEACHER_PROBES` probes Night School sends each night, 20 by default). A disagreement puts the label in quarantine (`contested`): it is left out of both the training and the golden split until Night School adjudicates it, by asking the teacher twice more and keeping the strict majority of three. When the evidence that the teacher disagrees with itself more than `RATCHET_TEACHER_NOISE_MAX` (0.05) reaches 1/`RATCHET_ALPHA_TEACHER` (100), the gate writes a `teacher_drift` event and Night School stops training until an operator acknowledges it with `POST /ratchet/teacher/ack`. A new model id in the teacher's responses starts a new epoch. `GET /ratchet/teacher` shows the state, and `RATCHET_TEACHER_WATCH=0` turns the actions off while the free checks are still recorded.
+**The <Term t="teacher-watch">teacher watch</Term>** (`_tick_watchers`) asks whether the teacher itself is steady. The golden set and the audits both measure agreement with the teacher, so a teacher whose answers wander would make every number meaningless. Each stored label gets at most one re-test per check epoch (a repeated request that the teacher labels again, or one of the `RATCHET_TEACHER_PROBES` probes Night School sends each night, 20 by default). A disagreement puts the label in quarantine (`contested`): it is left out of both the training and the golden split until Night School adjudicates it, by asking the teacher twice more and keeping the strict majority of three. When the evidence that the teacher disagrees with itself more than `RATCHET_TEACHER_NOISE_MAX` (0.05) reaches 1/`RATCHET_ALPHA_TEACHER` (100), the gate writes a `teacher_drift` event and Night School stops training until an operator acknowledges it with `POST /ratchet/teacher/ack`. A new model id in the teacher's responses starts a new epoch. `GET /ratchet/teacher` shows the state, and `RATCHET_TEACHER_WATCH=0` turns the actions off while the free checks are still recorded.
 
 <figure class="rt-diagram">
 
@@ -387,7 +388,7 @@ As of Oct 29, 2026, the release gate is tested with mock models and offline test
 
 <div class="rt-callout rt-callout--note">
 
-**Measured on Nebius, 28 Oct 2026, by hand, once.** Night School ran end to end once on Nebius, by hand (28 Oct 2026): the gateway on a Nebius CPU VM, the training job on a spot L40S, the adapter served from a Nebius Serverless Endpoint. The golden gate rejected it (81.8% precision against the 95% target), so it was never made live. The live site's own gateway is still on Cloudflare and is not connected to that endpoint, and the loop has not run nightly on live traffic. No saving is claimed.
+**Measured on Nebius, 28 Oct 2026, by hand, once.** Night School ran end to end once on Nebius, by hand (28 Oct 2026): the gateway on a Nebius CPU VM, the training job on a spot <Term t="l40s">L40S</Term>, the adapter served from a Nebius Serverless Endpoint. The golden gate rejected it (81.8% precision against the 95% target), so it was never made live. The live site's own gateway is still on Cloudflare and is not connected to that endpoint, and the loop has not run nightly on live traffic. No saving is claimed.
 
 </div>
 
