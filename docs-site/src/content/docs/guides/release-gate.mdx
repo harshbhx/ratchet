@@ -380,7 +380,7 @@ Every decision writes an event (the `events` table, shown in the dashboard's rel
 | `admin` | An operator's change, with the actor and the reason |
 
 <Aside type="caution" title="Not run on live traffic yet">
-As of Oct 26, 2026, the release gate is built and tested with mock models and offline tests. The live gateway has no student endpoint yet, so no live canary has run. Live mode, the cron tick and the admin CLI are tested offline.
+As of Oct 29, 2026, the release gate is tested with mock models and offline tests, and its golden step decided once on Nebius (28 Oct 2026: rejected). The live gateway has no student endpoint, so no shadow, canary or live release has run. Live mode, the cron tick and the admin CLI are tested offline.
 </Aside>
 
 ## It ran on Nebius, and the gate said no

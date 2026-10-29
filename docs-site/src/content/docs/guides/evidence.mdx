@@ -342,7 +342,7 @@ python -m ratchet.live seal                                                    #
 **What it does not prove.** Receipts make edits after sealing detectable and tie the baseline to audited teacher bills. They cannot prove the costs written at request time: reconcile the summed teacher spend (`totals.teacher_cost_nusd` over the days) with the Token Factory bill for the same API key. The interval is a normal approximation, and heavier-tailed real bills may need more than 30 audits. The chain shows that a receipt was changed; it does not stop an operator from withholding one, so clients should keep the receipts they receive. Request ids are the ledger's global row ids, so a client can infer the gateway's total volume between two of its own requests.
 
 <Aside type="caution" title="Not run on live traffic yet">
-As of Oct 28, 2026, no adapter has been signed and no day has been sealed on a live gateway; the GPU side is scripted and tested offline, ready to run with `make nebius-up`. Real teacher calls on Token Factory built the text-to-SQL data, but no BOM, certificate, proof, replay or receipt has been produced on live traffic. The formats, the signatures and the verifiers are tested offline.
+As of Oct 29, 2026, no adapter has been signed and no day has been sealed on a live gateway. The one Night School run on Nebius (28 Oct 2026) wrote an unsigned bill of materials for a student the gate rejected ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)); the GPU steps have otherwise run only by hand. Real teacher calls on Token Factory built the text-to-SQL data, but no BOM, certificate, proof, replay or receipt has been produced on live traffic. The formats, the signatures and the verifiers are tested offline.
 </Aside>
 
 ## For engineers
@@ -400,7 +400,7 @@ Not on the request path beyond logging a few values per request: no model call, 
 
 ### Has any of it run on real traffic?
 
-Not the signed documents on this page. As of Oct 28, 2026, the signed BOMs, proofs, certificates and receipts described here have been produced only by the tests, with mock models. The real-model measurements are the text-to-SQL and tool-calling adapters' exams, scored by standalone scripts (see [Results](/guides/results/)). The live-run harness (`python -m ratchet.liverun`) has not run its measured mode.
+Not the signed documents on this page. As of Oct 29, 2026, the signed BOMs, proofs, certificates and receipts described here have been produced only by the tests, with mock models (the Nebius Night School run wrote an unsigned BOM, and its gate certificate did not certify). The real-model measurements are the text-to-SQL and tool-calling adapters' exams, scored by standalone scripts (see [Results](/guides/results/)). The live-run harness (`python -m ratchet.liverun`) has not run its measured mode.
 
 ## Related
 

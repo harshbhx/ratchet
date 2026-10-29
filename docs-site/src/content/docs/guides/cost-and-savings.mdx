@@ -266,7 +266,7 @@ Estimates for running it, from the [deployment guide](/reference/deployment/#4-c
 | Teacher calls | Ultra $1 / $3 per 1M tokens, about 150 input and 380 output tokens per call | about $1.30 per 1,000 calls |
 
 <Aside type="caution" title="Estimates so far">
-As of Oct 28, 2026, the student endpoint is scripted and tested offline, ready to run with `make nebius-up`, and the live gateway has no student endpoint yet. Every cost figure on this page is an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured savings will come only from a published live run, and none is published yet.
+As of Oct 29, 2026, the teacher runs on Nebius Token Factory and the live gateway calls it for real. The text-to-SQL recipe was retrained once on Nebius AI Cloud, by hand (27 Oct 2026, a spot L40S Serverless Job; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)). The student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), and the endpoint was deleted. Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it (81.8% precision against the 95% target), so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)). The live site is not connected to a student endpoint, the teacher answers every live request, and the nightly loop has not run on live traffic. Every cost figure on this page is an estimate from list prices (the L40S at $1.35 per GPU-hour is from [docs.nebius.com/compute/resources/pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026). The text-to-SQL adapter's [results](/guides/results/) include an estimated token cost on its exam rows, and that estimate has no GPU-hour bill in it. Measured savings will come only from a published live run, and none is published yet.
 </Aside>
 
 ### Spend and rate limits
@@ -347,7 +347,7 @@ Then the report does not know the GPU cost. Student answers in hours with no rec
 
 ### Are these real numbers?
 
-Not yet. The prices are list prices, unverified until the day-1 checks pass, and every figure on this page is an estimate. As of Oct 28, 2026 the teacher runs on Nebius Token Factory and the live gateway has no student endpoint yet, so the teacher answers every request; the live-run harness will publish measured numbers, including the Nebius bill.
+Not yet. The prices are list prices, unverified until the day-1 checks pass, and every figure on this page is an estimate. As of Oct 29, 2026 the teacher runs on Nebius Token Factory and the live gateway has no student endpoint (one was served in speed tests and deleted), so the teacher answers every request; the live-run harness will publish measured numbers, including the Nebius bill.
 
 ### Does the baseline overstate savings?
 

@@ -19,7 +19,7 @@ import GradientText from '../../../components/ui/GradientText.astro';
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains <GradientText text="a new LoRA adapter you own" tone="owned" />, which the endpoint then loads from your bucket.</Summary>
 
 <Aside type="caution" title="The GPU path is scripted and ready to run">
-As of Oct 26, 2026, everything on this page is written and tested offline, and **the GPU path (the training job and the endpoint) is ready to run with `make nebius-plan` and `make nebius-up`**; the training image's pins are still candidates. The teacher runs on Nebius Token Factory; the three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a borrowed GPU. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. On 28 Oct 2026 this path ran end to end once, by hand, and the golden gate rejected the student ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)); so it has no live results yet.
+As of Oct 29, 2026, the teacher runs on Nebius Token Factory and the live gateway calls it for real. The text-to-SQL recipe was retrained once on Nebius AI Cloud, by hand (27 Oct 2026, a spot L40S Serverless Job; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)). The student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), and the endpoint was deleted. Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it (81.8% precision against the 95% target), so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)). The live site is not connected to a student endpoint, the teacher answers every live request, and the nightly loop has not run on live traffic. The three published adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU. Everything on this page is also tested offline, and the one-command host (`make nebius-plan`, `make nebius-up`) is ready to run but has not run. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. So this path has no live results yet.
 </Aside>
 
 <Eli10>
@@ -394,7 +394,7 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 
 <div class="rt-callout rt-callout--note">
 
-**Checked, as of Oct 26, 2026, offline only.** These parts run in the test suite, against fakes:
+**Checked offline, against fakes.** These parts run in the test suite, against fakes:
 
 - `ratchet.live` commands, `NebiusTrainer`, `LiveEvaluator`, the reloader and the export: tested in `tests/test_live.py` and `tests/test_licensing.py`, against fake endpoints.
 - `train_job.sh` and `student_endpoint.sh`: run in tests with a fake `nebius` CLI; the exact commands are asserted against the CLI reference as read.

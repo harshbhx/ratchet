@@ -69,6 +69,9 @@ Judges get the access code for Scout runs on the Devpost page (it is not in this
 | [Docs](https://docs.ratchet.dualmindlab.tech) | Guides, API, configuration, runbook, threat model | Documentation |
 | [Hugging Face collection](https://huggingface.co/collections/harshbhx/ratchet) | The adapters, the synthetic training data, the exams with every saved answer | Real |
 | [Exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) | Browse the tool-calling exam answers question by question | Real |
+| [Nano and Ultra](https://ratchet.dualmindlab.tech) | Two small companions on the main site that tell the story and run a short tour; they say only what the pages say (Nano is the student, Ultra the teacher) | Real |
+| [/live](https://ratchet.dualmindlab.tech/live) | Send a real request from the main site; it goes to the live gateway, which calls Token Factory and answers from the teacher | Real |
+| [llms.txt](https://ratchet.dualmindlab.tech/llms.txt) | A plain-text summary of the project for language models, pointing to the docs' own [llms.txt](https://docs.ratchet.dualmindlab.tech/llms.txt) and [llms-full.txt](https://docs.ratchet.dualmindlab.tech/llms-full.txt) | Documentation |
 
 <p align="center">
   <img src="docs/img/try-it-16x9.png" alt="Try it in 90 seconds, three links in this order: the judges' page, a real request on the live gateway, and Scout with real searches. The live gateway is free, with no sign-up." width="100%">
@@ -111,9 +114,9 @@ All of this is **measured** on real models, 22 to 24 Oct 2026, not estimated. Sc
 
 **Text-to-SQL (the headline).** A Nemotron 3 Nano 4B adapter, taught by Nemotron 3 Ultra, scores 2.6 to 3.0 times the untrained model on two exams. The teacher wrote one exam; a different model wrote the other (Claude Sonnet 5.5, for evaluation only; no Claude output was used for training). Teaching it cost about $17 on record: $12.16 of teacher answers plus $4.80 of GPU time for the training job, run on a borrowed GPU (estimates, not invoices; see [what it cost](docs/VERIFY.md#what-it-cost)). The round 2 adapter scores 39.0% on exam 1 (172 questions) and 33.0% on exam 2 (200 questions), against 12.8% and 12.5% untrained and 25.6% and 15.0% for the teacher, which loses points mostly on extra columns the strict scorer rejects. At a 95% precision bar the gate lets the adapter answer 1 of 86 measurement questions on exam 1 and none of the 100 on exam 2, so in practice all traffic still goes to the teacher.
 
-**Retrained on Nebius AI Cloud.** The round-2 recipe was retrained on Nebius AI Cloud (one preemptible L40S, Serverless Job) on 27 Oct 2026, from the same 4,322 examples: exam 1 40.7% (70 of 172), exam 2 34.5% (69 of 200) (original run on a borrowed GPU: 39.0% and 33.0%). The two adapters are statistically indistinguishable (row by row, 6 up and 3 down on exam 1, 7 up and 4 down on exam 2), and the Nebius run was interrupted twice by the platform and resumed from a checkpoint. It cost about $2.16 in Nebius credits for the whole effort, failed attempts included. The original adapters were not trained on Nebius. Evidence: [`evidence/text2sql-round2-nebius`](evidence/text2sql-round2-nebius/README.md).
+**Retrained on Nebius AI Cloud.** The round-2 recipe was retrained on Nebius AI Cloud (one preemptible L40S, Serverless Job) on 27 Oct 2026, from the same 4,322 examples: exam 1 40.7% (70 of 172), exam 2 34.5% (69 of 200) (original run on a borrowed GPU: 39.0% and 33.0%). The two adapters are statistically indistinguishable (row by row, 6 up and 3 down on exam 1, 7 up and 4 down on exam 2), and the Nebius run was interrupted twice by the platform and resumed from a checkpoint. It cost about $2.16 in Nebius credits for the whole effort, failed attempts included. The original adapters were not trained on Nebius. Evidence: [`evidence/text2sql-round2-nebius`](evidence/text2sql-round2-nebius/README.md). The retrained adapter is on Hugging Face: [ratchet-nemotron-nano-4b-text2sql-nebius](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius).
 
-[Adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) · [Exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams)
+[Adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) · [Adapter retrained on Nebius](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius) · [Training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) · [Exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams)
 
 **Tool calling (round 3).** A second adapter (2,940 training rows, about $2.33 of GPU time), scored strictly on two exams it never saw. The gain is large on the hard exam and small on BFCL, and on BFCL the adapter is lower than the teacher.
 
@@ -148,11 +151,11 @@ Two adapters, six datasets and two Spaces, all public: the adapters, the synthet
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://huggingface.co/harshbhx/models"><img src="docs/img/hf/hf-models.png" alt="Models: 2 adapters, text-to-SQL and tool calling" width="100%"></a>
+      <a href="https://huggingface.co/harshbhx/models"><img src="docs/img/hf/hf-models.png" alt="Models: 3 adapters, text-to-SQL, its Nebius retraining and tool calling" width="100%"></a>
       <br><sub><i>Models: 2 adapters</i></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://huggingface.co/harshbhx/datasets"><img src="docs/img/hf/hf-datasets.png" alt="Datasets: 6 repos of training data, exams and recorded runs" width="100%"></a>
+      <a href="https://huggingface.co/harshbhx/datasets"><img src="docs/img/hf/hf-datasets.png" alt="Datasets: 6 repos of training data, exams and recorded runs (text-to-SQL, tool calling and Scout)" width="100%"></a>
       <br><sub><i>Datasets: 6 repos, training data, exams and recorded runs</i></sub>
     </td>
     <td align="center" width="33%">
@@ -165,7 +168,7 @@ Two adapters, six datasets and two Spaces, all public: the adapters, the synthet
 <details>
 <summary>Open each repo</summary>
 
-- Models: [text-to-SQL adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) (39.0% and 33.0% on two unseen exams), [tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall) (90.7% on the hard exam, 80.3% on BFCL)
+- Models: [text-to-SQL adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql) (39.0% and 33.0% on two unseen exams), [the same recipe retrained on Nebius AI Cloud](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius) (40.7% and 34.5%), [tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall) (90.7% on the hard exam, 80.3% on BFCL)
 - Datasets: [text-to-SQL training data](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-synthetic) (4,322 synthetic rows labelled by Nemotron 3 Ultra), [text-to-SQL exams](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams) (with every saved answer), [tool-calling training data](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-train), [hard exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard), [BFCL exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl), [recorded Scout runs](https://huggingface.co/datasets/harshbhx/ratchet-scout-runs)
 - Spaces: [exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) (browse the tool-calling answers question by question), [Scout viewer](https://huggingface.co/spaces/harshbhx/ratchet-scout) (replays recorded runs)
 

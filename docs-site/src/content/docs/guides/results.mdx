@@ -176,6 +176,10 @@ Join questions improved most from round 1 to round 2. Simple questions did not i
 
 The exam, its fingerprint, every answer and the command that recomputes the scores are in `evidence/text2sql-exam2` in the repository.
 
+## Retrained on Nebius AI Cloud
+
+On 27 Oct 2026 the round-2 recipe (the same 4,322 examples and settings) was retrained on Nebius AI Cloud, by hand, as a Serverless Job on one preemptible L40S. The retrained adapter scored **40.7%** (70 of 172) on exam 1 and **34.5%** (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter that was trained on a borrowed GPU. Row by row the two are statistically indistinguishable (6 up and 3 down on exam 1, 7 up and 4 down on exam 2), so the result reproduces; it is not an improvement. The whole Nebius effort, failed and interrupted attempts included, used 2.73 GPU-hours, about $2.16 at list prices (the Nebius bill decides). Evidence: [`evidence/text2sql-round2-nebius`](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius). The adapter is on Hugging Face: [ratchet-nemotron-nano-4b-text2sql-nebius](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius).
+
 ## Tool calling, round 3
 
 <figure class="rt-wide-chart">

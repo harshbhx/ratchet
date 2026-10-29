@@ -265,5 +265,5 @@ Always run `make lint test reference` before committing.
 - v0.4.0: PII redaction before training, gateway API keys with per-key quotas, streaming, a signed bill of materials per adapter, `/healthz`, coverage in CI, and the dashboard's Trust and privacy panel; 87% line coverage at release.
 - v0.3.0: React web app (story landing page, Scout, dashboard) replaces the hand-written pages, which stay at `/lite*`.
 - v0.2.0: loop complete and tested with mock models; Scout, landing page and the Nebius VM deploy kit added ([CHANGELOG.md](CHANGELOG.md)). Live mode and live Scout (Tavily) have run (a 20-request smoke run and three recorded Scout runs, under `evidence/`); the VM kit is scripted and tested offline, ready to run (the live gateway runs on Cloudflare).
-- Asked Nebius support about ToS §5(f) on Oct 19, 2026; followed up; no answer as of Oct 26.
+- Asked Nebius support about ToS §5(f) on Oct 19, 2026; followed up; no answer received as of 29 Oct 2026.
 - Next: serve the adapter on a Nebius Serverless Endpoint, then a measured live run with a trained student. The live gateway is on Cloudflare; the VM kit ([docs/DEPLOY_NEBIUS_VM.md](docs/DEPLOY_NEBIUS_VM.md)) is the alternative host.
