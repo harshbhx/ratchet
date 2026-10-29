@@ -48,7 +48,7 @@ export function storySteps(f: Facts): StoryStep[] {
       id: "night",
       target: "learn",
       ms: 10000,
-      caption: "Night School is the plan: the teacher's answers become the student's lessons. Built and tested, not yet run on live traffic.",
+      caption: "Night School turns answers into lessons. It ran once on Nebius, by hand; the gate rejected it. Not yet run nightly on live traffic.",
       nano: { expr: "happy", held: "book", pose: "carry", lamp: true },
       ultra: { expr: "idle", held: "papers", pose: "carry" },
       lesson: "night",

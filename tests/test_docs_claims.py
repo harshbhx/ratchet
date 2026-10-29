@@ -496,8 +496,76 @@ def test_nebius_claims_stay_within_what_ran():
         assert "serving on a nebius endpoint has not happened" not in text, rel
         assert "the student endpoint and the vm kit have not" not in text, rel
         assert "it has not run yet" not in text, rel
-    # What is still unrun stays unclaimed.
-    assert "the vm kit and the nightly loop's job have not" in _read("docs/WHERE_IT_RUNS.md").lower()
+    # What is still unrun stays unclaimed: the one-command host and the nightly schedule have not run, and the old
+    # "the nightly loop's job has not run" wording is gone now that Night School ran once, by hand (28 Oct 2026).
+    where = _read("docs/WHERE_IT_RUNS.md").lower()
+    assert "the vm kit and the nightly loop's job have not" not in where
+    assert "the one-command vm kit and the nightly schedule have not run" in where
+    _check_night_school_run_is_stated_with_its_limits()
+
+
+# The first end-to-end Night School run on Nebius (28 Oct 2026, evidence/nightschool-nebius): said plainly, with its verdict.
+NIGHT_RUN_PAGES = (
+    "README.md",
+    "AGENTS.md",
+    "docs/WHERE_IT_RUNS.md",
+    "docs-site/src/content/docs/guides/for-judges.mdx",
+    "docs-site/src/content/docs/guides/night-school.mdx",
+    "docs-site/src/content/docs/guides/release-gate.mdx",
+    "web/src/data/real.json",
+)
+# What nobody may say: that the nightly loop runs on live traffic, that the rejected student served anyone, that the live
+# site is wired to the endpoint, or that the run saved money.
+NIGHT_RUN_OVERCLAIMS = (
+    "night school runs every night on live traffic",
+    "night school runs nightly on live traffic",
+    "the nightly loop runs on live traffic",
+    "nightly loop has run on live traffic",
+    "the student serves live traffic",
+    "the student now serves live traffic",
+    "the live site is connected to the endpoint",
+    "the live gateway is connected to the endpoint",
+    "the live gateway is connected to that endpoint",
+    "the gate accepted",
+    "the gate passed",
+    "was promoted to live",
+    "the student went live",
+    "saved us",
+    "this run saved",
+    "night school saved",
+)
+
+
+def _check_night_school_run_is_stated_with_its_limits() -> None:
+    for rel in NIGHT_RUN_PAGES:
+        text = _read(rel)
+        lowered = text.lower()
+        for phrase in NIGHT_RUN_OVERCLAIMS:
+            assert phrase not in lowered, (rel, phrase)
+    for rel in ("README.md", "docs/WHERE_IT_RUNS.md", "docs-site/src/content/docs/guides/for-judges.mdx", "AGENTS.md"):
+        text = _plain(_read(rel))
+        assert "evidence/nightschool-nebius" in _read(rel), rel  # the link target, which _plain strips
+        assert "Night School ran end to end once on Nebius, by hand (28 Oct 2026)" in text, rel
+        assert "81.8% precision against the 95% target" in text and "never made live" in text, rel
+        assert "not connected" in text.lower() and "not run nightly on live traffic" in text.lower(), rel
+    assert "nightschool-nebius" in _read("web/src/data/real.json")
+    # The numbers on the pages are the evidence's numbers.
+    readme = _read("evidence/nightschool-nebius/README.md")
+    for number in ("81.8%", "17.9%", "4.8%", "966", "1,478", "3,864", "458"):
+        assert number in readme, number
+
+
+@pytest.mark.req("NFR-70")
+def test_night_school_run_overclaims_are_caught():
+    """The guard itself: each forbidden sentence is found in a sample, and the real wording is not one of them."""
+    for phrase in NIGHT_RUN_OVERCLAIMS:
+        assert phrase in f"x. {phrase.capitalize()} here.".lower()
+    honest = (
+        "Night School ran end to end once on Nebius, by hand (28 Oct 2026). The golden gate rejected it, "
+        "so it was never made live. "
+        "The loop has not run nightly on live traffic."
+    ).lower()
+    assert not [p for p in NIGHT_RUN_OVERCLAIMS if p in honest]
 
 
 def _prose(text: str) -> str:

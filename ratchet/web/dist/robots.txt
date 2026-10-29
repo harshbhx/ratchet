@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ratchet.dualmindlab.tech/sitemap.xml

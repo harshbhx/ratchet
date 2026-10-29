@@ -1,0 +1,141 @@
+START_17:10:17
+$ /opt/nightvenv/bin/aws s3 sync /var/lib/night-data s3://<bucket> --endpoint-url <s3-endpoint>
+upload: ../../var/lib/night-data/night/train.jsonl to s3://<bucket>/night/train.jsonl
+$ bash /opt/train_job_spot.sh student-v1
++ nebius ai job create --preemptible --follows-spot-price --name ratchet-student-v1 --image ghcr.io/harshbhx/ratchet-train@sha256:1f03c3c30e6c78b9186435bf535feb431bc0a0c15543cb18257d927dc5ab1027 --platform gpu-l40s-a --preset 1gpu-8vcpu-32gb --volume <storagebucket-id>:/data --disk-size 200Gi --timeout 2h --container-command bash --args -c 'pip install -q einops && bash /app/install_kernels.sh && python -m ratchet.nightschool.train --data /data/night/train.jsonl --base nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 --out /tmp/adapter-out && mkdir -p /data/adapters/student-v1 && cp -r /tmp/adapter-out/. /data/adapters/student-v1/ && ls -la /data/adapters/student-v1'
+Job ID: <aijob-id>
+Job created successfully.
+Job:
+  ID:       <aijob-id>
+  Name:     ratchet-student-v1
+  State:    RUNNING
+  Created:  10 minutes ago
+
+Container:
+  Image:    ghcr.io/harshbhx/ratchet-train@sha256:1f03c3c30e6c78b9186435bf535feb431bc0a0c15543cb18257d927dc5ab1027
+  Command:  bash
+  Args:     -c 'pip install -q einops && bash /app/install_kernels.sh && python -m ratchet.nightschool.train --data /data/night/train.jsonl --base nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 --out /tmp/adapter-out && mkdir -p /data/adapters/student-v1 && cp -r /tmp/adapter-out/. /data/adapters/student-v1/ && ls -la /data/adapters/student-v1'
+
+Resources:
+  Platform:     gpu-l40s-a
+  Preset:       1gpu-8vcpu-32gb
+  Disk:         200 GiB (NETWORK_SSD)
+  Preemptible:  Yes
+  Pricing:      Follows spot price
+
+Volumes:
+  /data -> <storagebucket-id> (READ_WRITE)
+
+Instances:
+    COMPUTE INSTANCE                    PRIVATE IP  PUBLIC IP  STATE
+    <computeinstance-id>  <IP>    -          RUNNING
+
+Metadata:
+  Timeout:           7200s
+  Parent ID:         <project-id>
+  Resource Version:  1
+  Subnet:            <vpcsubnet-id>
+
+                                                                                                                                                              
+
+Waiting for s3://<bucket>/adapters/student-v1/adapter_model.safetensors ...
+Adapter ready.
+Traceback (most recent call last):
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 103, in handle_request
+    return self._connection.handle_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_sync/http11.py", line 136, in handle_request
+    raise exc
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_sync/http11.py", line 106, in handle_request
+    ) = self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_sync/http11.py", line 177, in _receive_response_headers
+    event = self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_sync/http11.py", line 217, in _receive_event
+    data = self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_backends/sync.py", line 126, in read
+    with map_exceptions(exc_map):
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ReadTimeout: The read operation timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/ratchet/ratchet/providers.py", line 570, in complete
+    resp = retry_call(attempt, retry, sleep=self.sleep, clock=self.clock, rng=self.rng)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/ratchet/ratchet/resilience.py", line 273, in retry_call
+    return fn(max(deadline - clock(), 1e-3))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/ratchet/ratchet/providers.py", line 558, in attempt
+    resp = self.client.post(url, json=body, timeout=self._within(remaining), headers=upstream_headers() or None)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_client.py", line 1144, in post
+    return self.request(
+           ^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_client.py", line 825, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/opt/nightvenv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ReadTimeout: The read operation timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/opt/ratchet/ratchet/live.py", line 594, in <module>
+    main(sys.argv[1:])
+  File "/opt/ratchet/ratchet/live.py", line 566, in main
+    rep = run_night(
+          ^^^^^^^^^^
+  File "/opt/ratchet/ratchet/nightschool/orchestrate.py", line 286, in run_night
+    result = {**evaluator.evaluate(adapter_uri, golden_rows), "spec_hashes": hashes}
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/ratchet/ratchet/nightschool/evaluate.py", line 494, in evaluate
+    return cascade_eval(
+           ^^^^^^^^^^^^^
+  File "/opt/ratchet/ratchet/nightschool/evaluate.py", line 308, in cascade_eval
+    got = sample(prompt, task.sample_count(samples), row.get("params"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/ratchet/ratchet/nightschool/evaluate.py", line 483, in sample
+    return self.student.complete(prompt, adapter_uri, n=n, params=gen, **STUDENT_SAMPLING)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/ratchet/ratchet/providers.py", line 574, in complete
+    raise as_upstream(e) from e  # a timeout is 504, an unreachable endpoint 502; never httpx's message
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ratchet.resilience.UpstreamError: upstream 504 upstream_timeout: the upstream model did not answer in time (ReadTimeout)
+EXIT=0
+END_18:03:53

@@ -1,0 +1,23 @@
+-rw-r--r-- 1 root root 4096 Oct 28 15:31 /var/lib/docker/volumes/ratchet_ratchet-data/_data/ratchet.db
+{
+  "task": "text2sql",
+  "source": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "license": "OpenMDW-1.1",
+  "golden_only": false,
+  "dry_run": false,
+  "file": "/tmp/sql_messages.jsonl",
+  "sha256": "cde6ccf4ed4a42d73ed64516cbb471cebe0fb2645f9a5e0e685ef67da5f17bde",
+  "rows": 4322,
+  "stored": 4322,
+  "inserted": 4322,
+  "replaced_teacher": 0,
+  "replaced_human": 0,
+  "duplicates": 0,
+  "in_file_duplicates": 0,
+  "in_file_conflicts": 0,
+  "invalid": 0,
+  "invalid_by_reason": {},
+  "refused": 0,
+  "refused_by_reason": {},
+  "problems": []
+}

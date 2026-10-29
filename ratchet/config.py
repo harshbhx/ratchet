@@ -296,6 +296,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_DEMO_SPLIT_AUDIT",
             "RATCHET_DASHBOARD_KEYS",
             "RATCHET_DATA_DIR",
+            "RATCHET_BUCKET_S3",
             "RATCHET_DB",
             "RATCHET_DOMAIN",
             "RATCHET_DB_SYNC",
@@ -359,6 +360,7 @@ KNOWN_ENV: tuple[str, ...] = tuple(
             "RATCHET_STUDENT_PARAMS",
             "RATCHET_STUDENT_REASONING",
             "RATCHET_STUDENT_TIMEOUT_S",
+            "RATCHET_NIGHT_STUDENT_TIMEOUT_S",
             "RATCHET_SYNC_CMD",
             "RATCHET_TASKS_FILE",
             "RATCHET_TEACHER_BASE",
@@ -450,7 +452,6 @@ DEPLOY_ENV: frozenset[str] = frozenset(
         "RATCHET_BACKUP_KEEP",
         "RATCHET_BACKUP_TAG",
         "RATCHET_BUCKET_ID",
-        "RATCHET_BUCKET_S3",
         "RATCHET_ENDPOINT_ID",
         "RATCHET_ENDPOINT_NAME",
         "RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY",
@@ -471,6 +472,7 @@ DEPLOY_ENV: frozenset[str] = frozenset(
         "RATCHET_SSH_USER",
         "RATCHET_SUBNET_ID",
         "RATCHET_TRAIN_IMAGE",
+        "RATCHET_TRAIN_ON_DEMAND",
         "RATCHET_TRAIN_PLATFORM",
         "RATCHET_TRAIN_PRESET",
         "RATCHET_TRAIN_VERSION",
@@ -835,6 +837,9 @@ class Settings:
     teacher_deadline_s: float = field(default_factory=lambda: _float("RATCHET_TEACHER_DEADLINE_S", "180"))
     student_timeout_s: float = field(default_factory=lambda: _float("RATCHET_STUDENT_TIMEOUT_S", "15"))
     student_connect_timeout_s: float = field(default_factory=lambda: _float("RATCHET_STUDENT_CONNECT_TIMEOUT_S", "2"))
+    # The golden eval's own read timeout for student calls: the first request after an adapter hot-load can take far
+    # longer than a warm request-path call (the 28 Oct 2026 night timed out at 15 s on a cold LoRA endpoint).
+    night_student_timeout_s: float = field(default_factory=lambda: _float("RATCHET_NIGHT_STUDENT_TIMEOUT_S", "120"))
     # Student circuit breaker (ADR 0015). After RATCHET_STUDENT_BREAKER_FAILURES endpoint failures in a row (timeouts,
     # connection errors, 5xx, 408, 429) the student is skipped for RATCHET_STUDENT_BREAKER_COOLDOWN_S seconds and the
     # teacher answers at once; then one probe decides, and each failed probe doubles the wait up to 300 s. 0 = no breaker.
@@ -1126,6 +1131,12 @@ class Settings:
     def student_timeout(self) -> httpx.Timeout:
         """Timeouts for student calls (the vLLM endpoint, or the hosted fallback model)."""
         return timeouts(self.student_timeout_s, self.student_connect_timeout_s)
+
+    def night_student_timeout(self) -> httpx.Timeout:
+        """Timeouts for the student's calls inside `python -m ratchet.live night` (the golden eval): the read timeout is
+        RATCHET_NIGHT_STUDENT_TIMEOUT_S (120 s), the connect timeout the request path's. The request path keeps
+        RATCHET_STUDENT_TIMEOUT_S."""
+        return timeouts(self.night_student_timeout_s, self.student_connect_timeout_s)
 
     def teacher_retry(self) -> RetryPolicy:
         """Retries for teacher and judge calls: RATCHET_TEACHER_RETRIES more attempts, within RATCHET_TEACHER_DEADLINE_S."""
@@ -1759,6 +1770,7 @@ class Settings:
             ("RATCHET_TEACHER_TIMEOUT_S", Settings.teacher_timeout),
             ("RATCHET_STUDENT_TIMEOUT_S", lambda s: timeouts(s.student_timeout_s)),
             ("RATCHET_STUDENT_CONNECT_TIMEOUT_S", lambda s: timeouts(1.0, s.student_connect_timeout_s)),
+            ("RATCHET_NIGHT_STUDENT_TIMEOUT_S", lambda s: timeouts(s.night_student_timeout_s)),
             ("RATCHET_TEACHER_RETRIES", Settings.teacher_retry),
             ("RATCHET_STUDENT_BREAKER_FAILURES", Settings.student_breaker),
             ("RATCHET_TEACHER_BREAKER_FAILURES", Settings.teacher_breaker),

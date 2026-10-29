@@ -1,0 +1,69 @@
+{
+ "made": "2026-10-28",
+ "what": "the first end-to-end Night School run on Nebius, by hand: gateway on a CPU VM, a spot L40S training job, the adapter served from a Nebius Serverless Endpoint, the golden gate (rejected, never live); sanitised",
+ "adapter": {
+  "name": "student-v1",
+  "sha256": "dc9ad4b9d2575e7a41120cb30bb023ee7aec35e997f4735ac819b545baddd00b",
+  "bytes": 40490208,
+  "note": "weights not in git; the hash identifies them"
+ },
+ "recovered_unused_adapter_sha256": "b1b0f3a1203f0dffc8bcd6d61f2af8612f1c53c2c25076ac320047188b24061e",
+ "verdict": "rejected",
+ "files": [
+  {
+   "file": "data/adapter_hash_bom.txt",
+   "bytes": 2566,
+   "sha256": "d21c7850a4bc99f0b33e44d9077aba81fed2f2ded7532e3910b352456f82af41"
+  },
+  {
+   "file": "data/final_inventory.txt",
+   "bytes": 804,
+   "sha256": "c44e741c1850196ca83627566416f98d9d265446d71b6f28ed42652029b5796e"
+  },
+  {
+   "file": "data/gpu_intervals_and_spend.txt",
+   "bytes": 812,
+   "sha256": "0d536744d2d37365ae47a68c1cbdddea5b793ae528ff19b3ad93ef4923c82a3d"
+  },
+  {
+   "file": "data/ledger_dump.txt",
+   "bytes": 3855,
+   "sha256": "189d0a22cfed895edb6191cd48e7c2e38ae3373ef256741efbeecce347f9de62"
+  },
+  {
+   "file": "fixes/train_job_vm_local_fixes.diff",
+   "bytes": 1338,
+   "sha256": "2b9db32cda8651671f39837cc984e5e950d6c232c7124a60ccfb8216768739e5"
+  },
+  {
+   "file": "logs/night_eval_rerun.log",
+   "bytes": 4128,
+   "sha256": "fc65ce8d919f19ca267f3a5c080754734dc6aca11c8098574de8f150f9de1f59"
+  },
+  {
+   "file": "logs/night_run1.log",
+   "bytes": 8303,
+   "sha256": "af0e3bf81cb913f28d1d04e857fbe26e9a60976ec3f83a0201e4b50717aef719"
+  },
+  {
+   "file": "logs/seed_import.txt",
+   "bytes": 644,
+   "sha256": "3c4d081bf1ba239f76719e29858acc1f75788c2cc0baa1a4a71c919c6ae3a9c1"
+  },
+  {
+   "file": "logs/training_job2_FAILED_SAVE.log",
+   "bytes": 15831,
+   "sha256": "6d0cf121c5ebc5ff6e3979bdbc2a4a13c614c8eb8c84813f0e7d81ca8ef4e6d0"
+  },
+  {
+   "file": "logs/training_job3_SAVED.log",
+   "bytes": 15445,
+   "sha256": "686b734b4bdcbeabab2cc410ecd77270328601aa1cb6a4461bd55c0ad7ce34f3"
+  },
+  {
+   "file": "scripts/reuse_night.py",
+   "bytes": 955,
+   "sha256": "4355be661da44d04741b1a9bd9bc385225de30085cc5a42677541164c91d5017"
+  }
+ ]
+}

@@ -537,7 +537,7 @@ See [Roadmap](ROADMAP.md) for dates and exit criteria.
 
 | # | Question | Owner | How we close it |
 |---|---|---|---|
-| Q1 | Does Token Factory ToS 5(f) allow Ratchet? | Harsh | Asked Oct 19, 2026 (email to Token Factory support), followed up; no answer as of Oct 26, 2026 |
+| Q1 | Does Token Factory ToS 5(f) allow Ratchet? | Harsh | Asked Oct 19, 2026 (email to Token Factory support), followed up; no answer received as of 29 Oct 2026 |
 | Q2 | Do Nemotron models on Token Factory return logprobs? | Harsh | `scripts/day1_check.py` |
 | Q3 | Does vLLM serve LoRA on Nemotron-H (Nano 4B) correctly, including runtime loading? | Harsh | Day-1 endpoint test; fallback: merge adapter |
 | Q4 | What does Serverless GPU time actually cost? | Harsh | Nebius console on day 1 |

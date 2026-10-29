@@ -276,8 +276,26 @@ stateDiagram-v2
 </figure>
 
 <Aside type="caution" title="Scripted and tested offline">
-As of Oct 26, 2026, live Night School is written and tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), ready to run as a Nebius Serverless Job with `make nebius-up`. The three original adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU, outside Night School. On 27 Oct 2026 the round-2 recipe was retrained once, by hand, as a Nebius Serverless Job on one preemptible L40S; the nightly loop did not start it. The day-1 checks (`scripts/day1_check.py`) come first.
+Live Night School is tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), and it ran end to end once on Nebius, by hand, on 28 Oct 2026; the golden gate rejected that student, so it was never made live (see [It ran on Nebius](#it-ran-on-nebius)). It has not run nightly on live traffic. The three original adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU, outside Night School. On 27 Oct 2026 the round-2 recipe was retrained once, by hand, as a Nebius Serverless Job on one preemptible L40S; the nightly loop did not start it. The day-1 checks (`scripts/day1_check.py`) come first.
 </Aside>
+
+## It ran on Nebius
+
+<div class="rt-callout rt-callout--note">
+
+**Measured on Nebius, 28 Oct 2026, by hand, once.** Night School ran end to end once on Nebius, by hand (28 Oct 2026): the gateway on a Nebius CPU VM, the training job on a spot L40S, the adapter served from a Nebius Serverless Endpoint. The golden gate rejected it (81.8% precision against the 95% target), so it was never made live. The live site's own gateway is still on Cloudflare and is not connected to that endpoint, and the loop has not run nightly on live traffic. No saving is claimed.
+
+</div>
+
+| What | Result |
+|---|---|
+| Gateway | A Nebius CPU VM in `eu-west1` (2 vCPU), in live mode |
+| Data | 4,322 existing Ultra-labelled text-to-SQL rows imported (no new teacher calls, no exam rows): 3,864 to train on, 458 held out as the golden set |
+| Training | A spot L40S Serverless Job: 2 epochs, 966 steps, 1,478 s; loss about 0.15 to 0.08; token accuracy about 0.975 |
+| Serving | The adapter (SHA-256 `dc9ad4b9...`) hot-loaded into a Nebius Serverless Endpoint |
+| Golden gate | SQL compared as text: agreement 17.9%; at the gate's threshold the student would answer 4.8% of questions with 81.8% precision (9 of 11) against the 95% target. **Rejected**, never shadow, canary or live |
+
+The caveats, all of them, are in the [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius): four job submissions (an accidental on-demand job that was cancelled, a missing `einops`, a save that failed with `EPERM` and whose weights were recovered, then the job that saved); the night's own evaluation timed out at 15 s, so the gate result comes from running the eval and the gate again on the saved adapter with a 120 s timeout, through a one-off driver; five problems fixed by hand on the VM, now fixed in the repository (spot by default, `einops` pinned, the adapter saved locally and then copied, a clear stop when `aws` is missing, a separate student timeout for the night); and cost estimates (about 2.7 GPU-hours, at most about $4 at list prices) where the Nebius bill decides.
 
 ## For engineers
 
@@ -352,7 +370,7 @@ Big enough for the certificate to mean something. With about 200 golden rows, pr
 
 ### Has a real adapter been trained yet?
 
-Three, outside Night School: two text-to-SQL rounds and one tool-calling round, all trained on a borrowed GPU; the round-2 recipe was later retrained once by hand on Nebius AI Cloud (see [Text-to-SQL](/guides/text-to-sql/) and [Results](/guides/results/)). As of Oct 26, 2026, Night School's loop is tested with mock models and its live path offline, ready to run with `make nebius-up`; the first real night follows the day-1 checks.
+Three, outside Night School: two text-to-SQL rounds and one tool-calling round, all trained on a borrowed GPU; the round-2 recipe was later retrained once by hand on Nebius AI Cloud (see [Text-to-SQL](/guides/text-to-sql/) and [Results](/guides/results/)). Night School's loop is tested with mock models and its live path offline; its first real night was a hand-run on Nebius on 28 Oct 2026 and the gate rejected it ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
 
 ## Related
 
