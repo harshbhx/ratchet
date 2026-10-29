@@ -15,7 +15,7 @@ import { asnOf, cleanText, deviceLabel, deviceOf, networkLabel, verdictOf, visit
 
 export type { Kind, Reason } from "./visitor";
 
-export const VIDEO_URL = "https://youtu.be/GIeSmDtopfs";
+export const VIDEO_URL = "https://youtu.be/x9MpEdKyODc";
 
 /** The sources a link may name with ?from=. A missing or empty one is "direct", anything else "other". */
 export const SOURCES = [

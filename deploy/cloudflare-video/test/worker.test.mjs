@@ -9,7 +9,7 @@ const w = await import("../src/index.ts");
 const m = await import("../src/mail.ts");
 const worker = w.default;
 
-const VIDEO = "https://youtu.be/GIeSmDtopfs";
+const VIDEO = "https://youtu.be/x9MpEdKyODc";
 const ORIGIN = "https://video.ratchet.dualmindlab.tech";
 const KEY = "k".repeat(8) + "-stats-key-for-tests-0123456789";
 const CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";

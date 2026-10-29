@@ -51,7 +51,7 @@ export interface RealEntry {
 export interface RealLinks {
   repo: string;
   docs: string;
-  /** The video (public on YouTube since 26 Oct 2026); null hides every link to it. */
+  /** The video (public on YouTube since 29 Oct 2026); null hides every link to it. */
   video: string | null;
   /**
    * The video's counting link (video.ratchet.dualmindlab.tech): it counts the `from` tag and redirects to `video`. The page's own

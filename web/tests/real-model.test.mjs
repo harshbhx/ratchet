@@ -72,7 +72,7 @@ test("a malformed entry is dropped, an unknown status reads as pending", () => {
 
 test("the video: YouTube in links.video, the counting link in links.videoShort, tagged by where the click came from", () => {
   const data = m.parseReal(text);
-  assert.equal(data.links.video, "https://youtu.be/GIeSmDtopfs");
+  assert.equal(data.links.video, "https://youtu.be/x9MpEdKyODc");
   assert.equal(data.links.videoShort, "https://video.ratchet.dualmindlab.tech/");
   assert.equal(m.videoHref(data.links, "site"), "https://video.ratchet.dualmindlab.tech/?from=site");
   assert.equal(m.videoHref(data.links, "judges"), "https://video.ratchet.dualmindlab.tech/?from=judges");

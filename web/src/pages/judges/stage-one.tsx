@@ -64,7 +64,7 @@ export const STAGE_ONE: StageOneItem[] = [
     id: "video",
     requirement: "A video",
     status: video ? "real" : "pending",
-    evidence: video ? "Public on YouTube since 26 Oct 2026, 2 minutes 59 seconds." : "Not published yet. This row changes when the link exists.",
+    evidence: video ? "Public on YouTube since 29 Oct 2026, 2 minutes 59 seconds." : "Not published yet. This row changes when the link exists.",
     link: video ? { label: "Watch the video", href: video } : null,
   },
 ];
