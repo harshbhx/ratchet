@@ -23,6 +23,12 @@
 // the gateway). If the Durable Object fails, the call goes through: the demo key's limits and the budgets still cap the spend. The key's own rpm (60)
 // and concurrency (4) are only the ceiling all visitors share.
 //
+// THE HUMAN CHECK (Cloudflare Turnstile, turnstile.ts): off until the secret TURNSTILE_SECRET_KEY is set. Then a browser's paid call must carry a
+// token (header cf-turnstile-response, or the same query parameter for Scout's EventSource), verified once at the top of this Worker and removed
+// before forwarding; a call with no token (curl) keeps its 3 a day and shares EDGE_DAILY_CURL_TOTAL (default 100) a day across everybody. Settings:
+// TURNSTILE_SECRET_KEY (secret), TURNSTILE_SITE_KEY (public variable, served at GET /ratchet/turnstile), EDGE_TURNSTILE_MAX_FAILS (default 5),
+// EDGE_DAILY_CURL_TOTAL (default 100, 0 is off). turnstile.ts says what counts as a failure and what fails open.
+//
 // THE RUNNING TOTALS (LiveCounters, one Durable Object, SQLite-backed, migration v3): the ledger above is emptied by every restart, so the Worker
 // keeps the gateway's aggregate counters itself. After each paid call, when someone reads the totals while the container is up, and when the
 // container's idle timeout expires, it reads GET /ratchet/counters from the container and adds the difference to what it holds (counters.ts
@@ -41,7 +47,8 @@ import { Container, getContainer, type StopParams } from "@cloudflare/containers
 import { DurableObject } from "cloudflare:workers";
 import { PERSISTENT_PATH, claimPull, isPaidCall, isStreamedRun, parseSnapshot, readView, recordSnapshot, type CounterStore, type PublicView, type Snapshot } from "./counters";
 import { videoRedirect } from "./video";
-import { dailyLimits, forwardedHeaders, overQuota, takeQuota, usesDemoKey, visitorIp, type QuotaNamespace } from "./visitor";
+import { bumpCount, dailyLimits, forwardedHeaders, peekCount, takeQuota, usesDemoKey, visitorIp, type QuotaStore } from "./visitor";
+import { guardPaidCall, siteKeyAnswer, turnstileSettings, withoutTokenParam, type GuardNamespace } from "./turnstile";
 import { API_WAIT_MS, READ_RETRY_MS, WAKE_AFTER_MS, isRetryableRead, warmingFor, warmingJson, warmingPage, wantsPage } from "./waking";
 
 interface Env {
@@ -58,6 +65,14 @@ interface Env {
   /** Calls per visitor per UTC day for the `try` and `scout` buckets: default 3, "0" is off. Not RATCHET_*: those are passed to the gateway. */
   EDGE_DAILY_TRIES?: string;
   EDGE_DAILY_SCOUT?: string;
+  /** The human check (turnstile.ts). The secret turns it on; without it nothing below does anything. */
+  TURNSTILE_SECRET_KEY?: string;
+  /** The widget's PUBLIC site key. The web app reads it from GET /ratchet/turnstile, so changing it needs no rebuild. */
+  TURNSTILE_SITE_KEY?: string;
+  /** Failed human checks per visitor per UTC day before a block until 00:00 UTC: default 5, "0" is off. */
+  EDGE_TURNSTILE_MAX_FAILS?: string;
+  /** Keyless calls without a token (curl) per UTC day, all visitors together: default 100, "0" is off. */
+  EDGE_DAILY_CURL_TOTAL?: string;
   [name: string]: unknown;
 }
 
@@ -138,6 +153,20 @@ export class RatchetLive extends Container<Env> {
 
 /** One visitor's count for one bucket and one UTC day (the object's name says which; see visitor.ts). A counter and an alarm that deletes it. */
 export class VisitorQuota extends DurableObject {
+  private get store(): QuotaStore {
+    return this.ctx.storage as unknown as QuotaStore;
+  }
+
+  /** The count so far, without counting (the human check's failures: is this visitor blocked?). */
+  async peek(): Promise<number> {
+    return peekCount(this.store);
+  }
+
+  /** Add one (a failed human check). */
+  async bump(): Promise<number> {
+    return bumpCount(this.store);
+  }
+
   /** Count a call against `limit`: allowed while below it. The read and the write of one call are not interleaved with another's. */
   async take(limit: number): Promise<{ allowed: boolean; count: number }> {
     return takeQuota(this.ctx.storage, limit);
@@ -213,7 +242,8 @@ function withDemoKey(request: Request, env: Env, ip: string | null): Request {
   const url = new URL(request.url);
   const headers = forwardedHeaders(request.headers, ip);
   if (usesDemoKey(url.pathname, headers)) headers.set("authorization", `Bearer ${clean(env.DEMO_API_KEY)}`);
-  return new Request(request, { headers });
+  // The human-check token (header or Scout's query parameter) was spent at the top of fetch; the gateway never sees it.
+  return new Request(withoutTokenParam(url), new Request(request, { headers }));
 }
 
 export default {
@@ -225,9 +255,13 @@ export default {
 
     // The visitor: through the Pages proxy, the address it vouches for with EDGE_TOKEN; otherwise the connection's own.
     const ip = await visitorIp(request.headers, env.EDGE_TOKEN);
-    // A few paid calls a day per visitor (Try a real request, Scout runs), refused here without waking the container.
-    const quotas = env.VISITOR_QUOTA as unknown as QuotaNamespace | undefined;
-    const refused = await overQuota(quotas, dailyLimits(env), request.method, url.pathname, request.headers, ip);
+    const settings = turnstileSettings(env);
+    // The widget's public site key, for the web app: answered here, never wakes the container.
+    if (request.method === "GET" && url.pathname === "/ratchet/turnstile") return siteKeyAnswer(settings);
+    // The human check, then a few paid calls a day per visitor (Try a real request, Scout runs) and the shared curl total, refused here without
+    // waking the container. The token is verified once, here: the loops below that re-send a request while the container wakes never ask again.
+    const quotas = env.VISITOR_QUOTA as unknown as GuardNamespace | undefined;
+    const refused = await guardPaidCall({ quotas, limits: dailyLimits(env), settings, method: request.method, url, headers: request.headers, ip });
     if (refused) return refused;
 
     // The running totals: answered here, from the Durable Object.
