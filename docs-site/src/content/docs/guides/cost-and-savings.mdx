@@ -246,7 +246,7 @@ Ratchet never promises savings below break-even, and the cost report says so in 
 
 ### Prices used
 
-Token prices are Token Factory list prices from `DEFAULT_PRICES` in `ratchet/config.py`, Oct 2026, **unverified** until `scripts/day1_check.py` passes with a real key. Every report says "unverified list prices" until an operator sets `RATCHET_PRICES_VERIFIED=1`.
+Token prices are Token Factory list prices from `DEFAULT_PRICES` in `ratchet/config.py`, checked on 29 Oct 2026: the four teacher and judge models' per-token prices match the price list Token Factory serves, and `scripts/day1_check.py` passed ([evidence/day1](https://github.com/harshbhx/ratchet/tree/main/evidence/day1)). The GPU-hour rate is still **unverified**, so every report says "unverified list prices" until an operator sets `RATCHET_PRICES_VERIFIED=1`.
 
 | Model (key in `DEFAULT_PRICES`) | Role | Input, USD per 1M tokens | Output, USD per 1M tokens |
 |---|---|---|---|

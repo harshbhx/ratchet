@@ -1048,3 +1048,15 @@ def test_cost_settings_defaults_and_spellings(monkeypatch):
     r = cost.cost_report(_hand_ledger(), _settings(prices_verified=True))
     assert r["prices"]["label"] == "prices confirmed by the operator" and "unverified" not in r["explanation"]
     assert math.isclose(cost.parse_time("1970-01-02T00:00:00"), 86400.0)
+
+
+def test_token_factory_list_prices_match_the_published_list():
+    """The price list Token Factory serves (models endpoint, verbose), read on 29 Oct 2026: USD per 1M tokens in and out."""
+    published = {
+        "nvidia/Nemotron-3-Ultra-550b-a55b": (1.00, 3.00),
+        "nvidia/nemotron-3-super-120b-a12b": (0.30, 0.90),
+        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": (0.06, 0.24),
+        "nvidia/Nemotron-3_5-Lightning": (0.06, 0.24),
+    }
+    for model, (inp, out) in published.items():
+        assert (DEFAULT_PRICES[model].input, DEFAULT_PRICES[model].output) == (inp, out), model

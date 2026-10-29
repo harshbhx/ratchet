@@ -2,7 +2,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                     # 1993 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page, test_livesim, test_attribution, test_exam_numbers, test_reasoning, test_toolcall_results, test_hosted_student, test_demo_split, test_watch), ~120 s
+pytest -q                     # 1994 tests (test_core, test_tasks, test_registry, test_nightschool, test_release, test_system, test_hardening, test_resilience, test_scout, test_contract, test_openai_compat, test_traceability, test_live, test_cost, test_stats, test_provenance, test_receipts, test_privacy, test_erasure, test_redaction, test_kpis, test_licensing, test_feedback, test_docs_claims, test_perf, test_security, test_observability, test_readiness, test_idempotency, test_offpath, test_limits, test_admin, test_calibration, test_mock_world, test_structured, test_tools, test_model_routing, test_routing, test_adjacent_endpoints, test_drift, test_teacher_watch, test_judges_page, test_livesim, test_attribution, test_exam_numbers, test_reasoning, test_toolcall_results, test_hosted_student, test_demo_split, test_watch), ~120 s
 pytest -q --runslow           # also the full-size Monte Carlo runs marked slow (as CI does on main; pull requests run the quick versions)
 python scripts/reqtrace.py --check                   # requirements traceability (also in make lint and CI)
 pytest -q --cov=ratchet --cov=sim --cov-report=term   # with coverage (as in CI)
@@ -35,7 +35,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_live.py` | 83 (3 of them strict xfails for NFR-60) |
 | `tests/test_nebius_script.py` | 12 |
 | `tests/test_livesim.py` | 19 |
-| `tests/test_cost.py` | 47 (29 functions; one has 11 cases, one has 9) |
+| `tests/test_cost.py` | 48 (30 functions; one has 11 cases, one has 9) |
 | `tests/test_stats.py` | 19 (2 of them slow: skipped without `--runslow`) |
 | `tests/test_provenance.py` | 26 |
 | `tests/test_receipts.py` | 44 (32 functions; one has 8 cases, one has 5) |
@@ -75,7 +75,7 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_watch.py` | 70 (38 functions; counted on Linux, the file imports `fcntl` and does not collect on Windows) |
 | `tests/test_student_endpoint_evidence.py` | 4 |
 | `tests/test_nightschool_nebius_evidence.py` | 6 |
-| **Total** | **1993** |
+| **Total** | **1994** |
 
 Tests without a table of their own yet: `test_model_routing`, `test_attribution`, `test_exam_numbers`, `test_reasoning`, `test_toolcall_results`, `test_hosted_student`, `test_demo_split` and `test_judges_page` (the file names and the docstrings of their tests say what each covers); `test_watch` has a paragraph below and no table.
 

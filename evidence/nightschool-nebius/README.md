@@ -37,7 +37,7 @@ Everything in this folder is sanitised: IPs, URLs, ids and keys are replaced by 
 | Mean token accuracy | about 0.975 (0.9752 at the end) |
 | Adapter | `student-v1`, 40,490,208 bytes, sha256 `dc9ad4b9d2575e7a41120cb30bb023ee7aec35e997f4735ac819b545baddd00b` |
 
-The adapter's hash and its unsigned bill of materials (no signing key was set) are in `data/adapter_hash_bom.txt`. The bill lists the teacher (Nemotron 3 Ultra, OpenMDW-1.1, distillation allowed) and the base model's licence.
+The adapter's hash and the start of its unsigned bill of materials (no signing key was set) are in `data/adapter_hash_bom.txt`. **That file is a cut-off excerpt**: the capture stopped inside the first `NOTICE.md` text (2,566 bytes) and the VM that held the full file was deleted, so the whole BOM was not kept and cannot be signed or verified afterwards. A signature over a rebuilt copy would not be the run's own record, so none was made. The bill lists the teacher (Nemotron 3 Ultra, OpenMDW-1.1, distillation allowed) and the base model's licence.
 
 ## The gate: rejected
 

@@ -763,7 +763,9 @@ class ScoutPolicy:
 
 
 DEFAULT_PRICES: dict[str, Price] = {
-    # Token Factory list prices (USD / 1M tokens), Oct 2026. Verify in the console.
+    # Token Factory list prices (USD / 1M tokens). Checked on 29 Oct 2026 against the price list Token Factory serves from
+    # GET /v1/models?verbose=true (pricing.prompt and pricing.completion per token): all four match; evidence/day1/README.md.
+    # Reasoning tokens are billed as output tokens and are already inside usage.completion_tokens.
     "nvidia/Nemotron-3-Ultra-550b-a55b": Price(1.00, 3.00),
     "nvidia/nemotron-3-super-120b-a12b": Price(0.30, 0.90),
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": Price(0.06, 0.24),
