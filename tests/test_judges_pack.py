@@ -15,7 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 JUDGES_MD = ROOT / "JUDGES.md"
 DOCS_MDX = ROOT / "docs-site" / "src" / "content" / "docs" / "guides" / "for-judges.mdx"
-PACK = ROOT / "web" / "src" / "pages" / "judges" / "pack-data.ts"
+PACK = ROOT / "web" / "src" / "data" / "pack.json"
 
 HEADLINE = (
     "Built on NVIDIA Nemotron and Nebius: every model call on the live site runs on Nebius Token Factory, "
@@ -89,7 +89,7 @@ def _plain(text: str) -> str:
 def _surfaces() -> dict[str, str]:
     out = {"JUDGES.md": JUDGES_MD.read_text(encoding="utf-8"), "for-judges.mdx": DOCS_MDX.read_text(encoding="utf-8")}
     if PACK.is_file():
-        out["pack-data.ts"] = PACK.read_text(encoding="utf-8")
+        out["pack.json"] = PACK.read_text(encoding="utf-8")
     return out
 
 
@@ -97,12 +97,13 @@ def _surfaces() -> dict[str, str]:
 def test_every_surface_carries_the_headline_facts_and_links():
     for name, text in _surfaces().items():
         plain = _plain(text)
-        if name != "pack-data.ts":
-            assert HEADLINE in plain, name
+        assert HEADLINE in plain, name
         for fact in FACTS:
             assert fact in text, (name, fact)
         for link in LINKS:
-            assert link in text, (name, link)
+            # the page's own links are paths of this site (the router adds the host)
+            want = link.removeprefix("https://ratchet.dualmindlab.tech") if name == "pack.json" else link
+            assert want in text, (name, link)
         for folder in EVIDENCE:
             assert f"evidence/{folder}" in text, (name, folder)
 
@@ -152,7 +153,11 @@ def test_honest_box_and_costs_and_no_overclaims():
         lowered = text.lower()
         for phrase in ("beats the teacher", "model you own", "hosted on nebius", "not on nebius", "simulat", "demo "):
             assert phrase not in lowered, (name, phrase)
-        assert "not run nightly on live traffic" in lowered or "not run on live traffic" in lowered or "not yet" in lowered, name
+        assert (
+            "nightly loop on live traffic" in lowered
+            or "not run nightly on live traffic" in lowered
+            or "not run on live traffic" in lowered
+        ), name
     md = JUDGES_MD.read_text(encoding="utf-8")
     assert "not connected to a student endpoint" in md and "unverified" in md
     assert "Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc=" in md
