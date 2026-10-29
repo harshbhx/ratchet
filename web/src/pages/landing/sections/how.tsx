@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { EASE } from "@/lib/motion";
 import { Chapter, ChapterHead, Lead } from "../shared";
 import { HowDiagram } from "./how-diagram";
+import { MeasuredOnNebius } from "./measured-on-nebius";
 
 /** The colour behind the diagram follows the step: the student's blue, the teacher's orange, the night, the gate. */
 const TINTS = [
@@ -41,10 +42,10 @@ const STEPS: { title: string; body: ReactNode; chips: string[] }[] = [
     body: (
       <>
         Built to run each night, Night School fine-tunes a new adapter from the base model, on every teacher answer so far, never on the student's own
-        answers. Then it is tested on a held-out golden set that training never sees. It is built to run as a Nebius Serverless Job. One such job has run, by hand: on 27 Oct 2026 the round-2 adapter was retrained on a Nebius L40S. The original adapters were trained by hand on a borrowed GPU; the nightly loop itself is built and tested but has not run on live traffic.
+        answers. Then it is tested on a held-out golden set that training never sees. It runs as a Nebius Serverless Job. Two such jobs have run, by hand: on 27 Oct 2026 the round-2 adapter was retrained on a Nebius L40S, and on 28 Oct 2026 Night School ran end to end once and the golden gate rejected its student. The original adapters were trained by hand on a borrowed GPU; the nightly loop has not run nightly on live traffic.
       </>
     ),
-    chips: ["Serverless Job · one hand-run job, nightly loop scripted", "from base, cumulative", "golden set held out"],
+    chips: ["Serverless Job · two hand-run jobs, nightly schedule scripted", "from base, cumulative", "golden set held out"],
   },
   {
     title: "The release gate decides.",
@@ -162,6 +163,7 @@ export function How() {
             </div>
           </div>
         </div>
+        <MeasuredOnNebius className="mt-10 lg:mx-auto lg:max-w-[880px]" />
       </Container>
     </Chapter>
   );

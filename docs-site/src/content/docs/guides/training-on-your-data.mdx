@@ -19,7 +19,7 @@ import GradientText from '../../../components/ui/GradientText.astro';
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains <GradientText text="a new LoRA adapter you own" tone="owned" />, which the endpoint then loads from your bucket.</Summary>
 
 <Aside type="caution" title="The GPU path is scripted and ready to run">
-As of Oct 26, 2026, everything on this page is written and tested offline, and **the GPU path (the training job and the endpoint) is ready to run with `make nebius-plan` and `make nebius-up`**; the training image's pins are still candidates. The teacher runs on Nebius Token Factory; the three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a borrowed GPU. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. This path has no live results yet.
+As of Oct 26, 2026, everything on this page is written and tested offline, and **the GPU path (the training job and the endpoint) is ready to run with `make nebius-plan` and `make nebius-up`**; the training image's pins are still candidates. The teacher runs on Nebius Token Factory; the three adapters trained so far (two text-to-SQL, one tool-calling) were trained on a borrowed GPU. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. On 28 Oct 2026 this path ran end to end once, by hand, and the golden gate rejected the student ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)); so it has no live results yet.
 </Aside>
 
 <Eli10>
@@ -407,7 +407,7 @@ Ready to run, or still to check:
 | Part | Status (Oct 26, 2026) |
 |---|---|
 | The training image | Not built yet; pins are candidates |
-| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Scripted and tested offline, ready to run with `make nebius-up`. The adapters so far were trained on a borrowed GPU, outside this path |
+| A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Ran once by hand on 28 Oct 2026 (spot L40S job, endpoint, hot-load), and the golden gate rejected the result; the one-command host is scripted and tested offline. The three published adapters were trained on a borrowed GPU, outside this path |
 | The endpoint's arguments as the container splits them, thinking off | Not checked yet |
 | Serverless pricing, the S3 endpoint URL | Unverified (the S3 URL format in the docs is an assumption) |
 | Live numbers from this path | None yet; they come only from a published live run |
@@ -528,7 +528,7 @@ That is what the day-1 checks are for. The script dry runs, the image's build-ti
 
 ### What runs on Nebius today?
 
-The teacher: it runs on Nebius Token Factory. As of Oct 26, 2026 the training job and the endpoint are written and tested offline, ready to run with `make nebius-plan` and `make nebius-up`, and the three adapters so far were trained on a borrowed GPU. Treat every GPU command here as a plan until the day-1 checks pass.
+The teacher: it runs on Nebius Token Factory. The training job and the endpoint are tested offline, and ran once by hand on 28 Oct 2026 (the golden gate rejected that student); the three published adapters were trained on a borrowed GPU. Treat every GPU command here as a plan until the day-1 checks pass.
 
 ## Related
 

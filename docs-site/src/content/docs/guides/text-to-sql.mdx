@@ -253,7 +253,7 @@ python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json 
 - **"Matches the teacher" is not "is what the user meant".** The teacher is a model too and can be wrong. The score measures how well the student copies the teacher, on queries that run.
 - **Small slices mean little.** The split by difficulty or by industry has few questions per cell.
 - **The cost is an estimate.** Token counts are measured. Prices are inputs. No student endpoint was run, so no GPU-hour bill is included. See [Cost and savings](/guides/cost-and-savings/).
-- **Trained on a borrowed GPU.** Both rounds were trained on a borrowed GPU with the training script in `scripts/text2sql/`; the teacher ran on Nebius Token Factory. Night School's Nebius Serverless Job is separate: it trains with `ratchet.nightschool.train` through `deploy/train_job.sh`, scripted and tested offline, ready to run with `make nebius-up`.
+- **Trained on a borrowed GPU.** Both rounds were trained on a borrowed GPU with the training script in `scripts/text2sql/`; the teacher ran on Nebius Token Factory. Night School's Nebius Serverless Job is separate: it trains with `ratchet.nightschool.train` through `deploy/train_job.sh`, and ran once by hand on 28 Oct 2026 on Nebius (a spot L40S; the golden gate rejected that student).
 
 ## The license chain
 

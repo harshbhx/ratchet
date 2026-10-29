@@ -41,7 +41,7 @@ const ROLES: Role[] = [
   },
   {
     role: "Night School",
-    service: "Nebius Serverless Jobs (L40S) with Unsloth (one hand-run job on 27 Oct 2026; the nightly job is scripted, ready to run)",
+    service: "Nebius Serverless Jobs (L40S) with Unsloth (a hand-run retraining on 27 Oct 2026 and one hand-run Night School on 28 Oct 2026, rejected by the gate; the nightly schedule is scripted, ready to run)",
     why: "Built to fine-tune a new adapter each night. A job is billed only while it runs. The round-2 adapter was retrained once by hand on a Nebius L40S (27 Oct 2026); the original adapters were trained on a borrowed GPU.",
     badge: <RealBadge status="not-run" />,
   },

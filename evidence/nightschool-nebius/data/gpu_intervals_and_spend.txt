@@ -1,0 +1,16 @@
+SPEND
+COUNT
+Error: in prepare, no such column: cost_usd
+  select count(*), sum(cost_usd) from spend
+                       ^--- error here
+COMPUTE
+id|kind|start_ts|end_ts|usd_per_hour|gpus|version|source|note
+1|training_job|1793204134.51899|1793204175.90128|1.55|1||night|adapter student-v1: training failed
+2|training_job|1793204411.04647||1.55|1||night|adapter student-v1
+3|training_job|1793205059.98284||1.55|1||night|adapter student-v1
+4|training_job|1793207313.82566|1793207315.26971|1.55|1||night|adapter student-v1: training failed
+5|training_job|1793207356.91079|1793207358.34618|1.55|1||night|adapter student-v1: training failed
+6|training_job|1793207417.53248|1793210603.42|1.55|1|1|night|adapter student-v1
+7|training_job|1793210726.44836|1793210726.59572|1.55|1|2|night|adapter student-v2
+REQUESTS
+0

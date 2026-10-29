@@ -2,7 +2,7 @@
 
 There are two ways to run Ratchet: **mock** (local, no keys, about a minute) and **live** (real Nemotron on Nebius). The `nebius ai` commands in `deploy/` follow the Nebius CLI reference (auto generated on 19-Oct-2026, read Oct 21, 2026) and Nebius's L40S fine-tuning tutorial. They are tested offline and ready to run: run both scripts with `DRY_RUN=1` first, and check anything marked **verify on day 1** with `--help` before relying on it. `python scripts/day1_check.py` runs the checks.
 
-> **One command for the whole path:** `make nebius-plan` prints every step below (the CPU VM, the bucket, the student endpoint, the wiring and the smoke check) and changes nothing; `deploy/nebius/nebius.sh up --yes --with-student` runs them, with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`. Same status as everything here: scripted, tested offline, ready to run. Two Nebius steps have run by hand: a training job (the round-2 retraining on 27 Oct 2026, evidence in `evidence/text2sql-round2-nebius/`) and one speed test of the student on a Serverless Endpoint the same day (evidence in `evidence/student-endpoint-nebius/`; the endpoint was deleted afterwards). The VM and the wiring of the live gateway to an endpoint have not run. [Where everything runs](WHERE_IT_RUNS.md) has the map and the costs.
+> **One command for the whole path:** `make nebius-plan` prints every step below (the CPU VM, the bucket, the student endpoint, the wiring and the smoke check) and changes nothing; `deploy/nebius/nebius.sh up --yes --with-student` runs them, with `RATCHET_I_UNDERSTAND_THIS_COSTS_MONEY=1`. Same status as everything here: scripted, tested offline, ready to run. Three things have run on Nebius by hand: a training job (the round-2 retraining on 27 Oct 2026, evidence in `evidence/text2sql-round2-nebius/`), one speed test of the student on a Serverless Endpoint the same day (evidence in `evidence/student-endpoint-nebius/`; the endpoint was deleted afterwards), and one Night School end to end on 28 Oct 2026 (a CPU VM, a spot L40S job and an endpoint; the golden gate rejected the new student, so it was never made live; evidence in `evidence/nightschool-nebius/`). The wiring of the live gateway to an endpoint and a nightly schedule have not run. [Where everything runs](WHERE_IT_RUNS.md) has the map and the costs.
 
 ## 1. Local mock mode
 
@@ -11,7 +11,7 @@ git clone <your repo> ratchet && cd ratchet
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                                          # 1983 tests, ~120 s
+pytest -q                                                          # 1993 tests, ~120 s
 RATCHET_MODE=mock uvicorn ratchet.gateway:app --port 8000          # http://localhost:8000
 ```
 
@@ -141,14 +141,16 @@ curl -s ${RATCHET_STUDENT_BASE%/v1}/v1/load_lora_adapter -H "Authorization: Bear
 `deploy/train_job.sh <version>` submits (`DRY_RUN=1` adds `--dry-run`: nebius validates the request and submits nothing):
 
 ```
-nebius ai job create --name ratchet-<version> --image $RATCHET_TRAIN_IMAGE
+nebius ai job create --preemptible --follows-spot-price --name ratchet-<version> --image $RATCHET_TRAIN_IMAGE
   --platform gpu-l40s-a --preset 1gpu-8vcpu-32gb --volume $RATCHET_BUCKET_ID:/data
   --disk-size 200Gi --timeout 2h --container-command bash
-  --args "-c 'python -m ratchet.nightschool.train --data /data/night/train.jsonl --base <base> --out /data/adapters/<version>'"
+  --args "-c 'bash /app/install_kernels.sh && python -m ratchet.nightschool.train --data /data/night/train.jsonl --base <base> --out /tmp/adapter-out && mkdir -p /data/adapters/<version> && cp -r /tmp/adapter-out/. /data/adapters/<version>/'"
   [--subnet-id $RATCHET_SUBNET_ID] [--registry-secret $RATCHET_REGISTRY_SECRET]
 ```
 
 `nebius ai create` is the interactive wizard; scripts use `nebius ai job create` ([CLI reference](https://docs.nebius.com/cli/reference/ai/job/create)). `--timeout` is the job's own limit (1 h to 168 h, default 24 h), `--subnet-id` defaults to the project's default subnet, and `--registry-secret` names a MysteryBox secret with the credentials of a private image. With `RATCHET_BUCKET_S3` set, the script then polls for `adapters/<version>/adapter_model.safetensors` every 30 s for up to 2 h. That makes it suitable as `RATCHET_TRAIN_CMD`, which must block until the adapter exists; a refused job fails the script, so the night stops instead of waiting.
+
+What the 28 Oct 2026 run taught the script (evidence: `evidence/nightschool-nebius/`): the job is **spot by default** (`--preemptible --follows-spot-price`); `RATCHET_TRAIN_ON_DEMAND=1` is the only way to pay the on-demand price. The adapter is saved to the job's **local disk** and then copied into the bucket mount, because the mount refuses the in-place rename safetensors makes (`EPERM`). `einops` is pinned in `deploy/train-versions.txt` and installed by the image (rebuild it with the build-train-image workflow after this change). With `RATCHET_BUCKET_S3` set, the script and the night both need the **`aws` CLI on PATH** and stop with a message when it is missing, instead of waiting for an adapter they cannot see. The student endpoint must be **running before the hot-load**: the night does not start or wake it, and the first call after a hot-load into a cold LoRA endpoint is slow, so the golden eval's student calls have their own timeout, `RATCHET_NIGHT_STUDENT_TIMEOUT_S` (120 s by default; the request path keeps `RATCHET_STUDENT_TIMEOUT_S`).
 
 Training defaults (`train.py`): 2 epochs, learning rate 2e-4, LoRA rank 16 (alpha 32), max sequence 2048, batch 8, bf16, assistant-only loss.
 

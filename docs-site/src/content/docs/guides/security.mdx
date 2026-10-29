@@ -299,7 +299,7 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 | Stolen BOM signing key (T21) | Read from the environment only; only the public half is served | A secrets manager, signing on a separate machine |
 
 <Aside type="caution" title="What runs where today">
-As of Oct 28, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are scripted and tested offline, ready to run with `make nebius-up`; the live gateway answers every request with a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
+As of Oct 28, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are tested offline and ran once by hand on 28 Oct 2026 (Night School, rejected by the golden gate), with the one-command host ready to run with `make nebius-up`; the live gateway answers every request with a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
 </Aside>
 
 ### The safety rules the loop never breaks

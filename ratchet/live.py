@@ -24,6 +24,12 @@ Environment (in addition to ratchet.config):
     RATCHET_TRAIN_CMD     command that runs the training job and waits for it; {version} and {data}
                           are substituted, e.g. "bash deploy/train_job.sh {version}"
     RATCHET_ADAPTER_ROOT  where the endpoint sees adapters (default /data/adapters)
+    RATCHET_NIGHT_STUDENT_TIMEOUT_S
+                          read timeout of the student's calls in the night's golden eval (default 120 s; the first
+                          call after a hot-load is slow). The student endpoint must be RUNNING before the hot-load:
+                          the night does not start or wake it
+    RATCHET_BUCKET_S3     when set with the default train command, `aws` must be on PATH (the night stops with a
+                          message if it is not)
 
 After a night that trained, the adapter's BOM and NOTICE.md go to RATCHET_DATA_DIR/adapters/<name>/ (ratchet_bom.json,
 NOTICE.md) and RATCHET_SYNC_CMD runs again, so the bucket's adapter folder holds the weights and their licenses together.
@@ -62,6 +68,10 @@ from .resilience import describe_failure
 # never passes them.
 RunFn = Callable[..., Any]
 ProviderFactory = Callable[..., Provider]
+NO_AWS = (
+    "the `aws` CLI is not on PATH, and deploy/train_job.sh needs it to wait for the adapter (RATCHET_BUCKET_S3 is set): "
+    "install it or put it on this process's PATH, or unset RATCHET_BUCKET_S3 and wait for the job another way"
+)
 NO_STUDENT_BASE = "RATCHET_STUDENT_BASE is not set: no student endpoint to load adapters into"
 RELOAD_INTERVAL_S = 60.0  # the gateway reloads one adapter at most this often, however many requests hit its 404
 # An adapter name that is one folder under adapters/ (and never `.` or `..`: `adapter_dir` also refuses any `..`).
@@ -142,6 +152,9 @@ class NebiusTrainer:
         # Check before the sync and the paid GPU job: an adapter with no endpoint to load into cannot be evaluated.
         if not self.s.student_base:
             raise RuntimeError(NO_STUDENT_BASE)
+        # train_job.sh polls the bucket with `aws`; without it on PATH the night would wait two hours for nothing.
+        if os.environ.get("RATCHET_BUCKET_S3") and "train_job.sh" in self.train_cmd and shutil.which("aws") is None:
+            raise RuntimeError(NO_AWS)
         dataset.write_training(train_rows, self.data / "night" / "train.jsonl")  # prompt-completion rows (FR-8.42)
         if self.sync_cmd:
             _run(self.sync_cmd, self.run)
@@ -526,9 +539,10 @@ def main(
         if not sealed:
             print("nothing to seal: every day that has ended is sealed")
     elif cmd == "night":
-        # The student keeps its own timeouts but is retried like the teacher: in the golden eval no teacher stands
+        # The student gets the night's own read timeout (RATCHET_NIGHT_STUDENT_TIMEOUT_S, 120 s: the first call after a
+        # hot-load is slow) and is retried like the teacher: in the golden eval no teacher stands
         # behind it, and one failed call would end the night (ADR 0014). The judge is a teacher call.
-        student = provider_factory(s.student_base, s.student_api_key, timeout=s.student_timeout(), retry=s.teacher_retry())
+        student = provider_factory(s.student_base, s.student_api_key, timeout=s.night_student_timeout(), retry=s.teacher_retry())
         judge = provider_factory(s.teacher_base, s.teacher_api_key, timeout=s.teacher_timeout(), retry=s.teacher_retry())
         evaluator = LiveEvaluator(
             student,

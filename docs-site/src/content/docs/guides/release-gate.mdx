@@ -383,6 +383,26 @@ Every decision writes an event (the `events` table, shown in the dashboard's rel
 As of Oct 26, 2026, the release gate is built and tested with mock models and offline tests. The live gateway has no student endpoint yet, so no live canary has run. Live mode, the cron tick and the admin CLI are tested offline.
 </Aside>
 
+## It ran on Nebius, and the gate said no
+
+<div class="rt-callout rt-callout--note">
+
+**Measured on Nebius, 28 Oct 2026, by hand, once.** Night School ran end to end once on Nebius, by hand (28 Oct 2026): the gateway on a Nebius CPU VM, the training job on a spot L40S, the adapter served from a Nebius Serverless Endpoint. The golden gate rejected it (81.8% precision against the 95% target), so it was never made live. The live site's own gateway is still on Cloudflare and is not connected to that endpoint, and the loop has not run nightly on live traffic. No saving is claimed.
+
+</div>
+
+| What | Result |
+|---|---|
+| Gateway | A Nebius CPU VM in `eu-west1` (2 vCPU), in live mode |
+| Data | 4,322 existing Ultra-labelled text-to-SQL rows imported (no new teacher calls, no exam rows): 3,864 to train on, 458 held out as the golden set |
+| Training | A spot L40S Serverless Job: 2 epochs, 966 steps, 1,478 s; loss about 0.15 to 0.08; token accuracy about 0.975 |
+| Serving | The adapter (SHA-256 `dc9ad4b9...`) hot-loaded into a Nebius Serverless Endpoint |
+| Golden gate | SQL compared as text: agreement 17.9%; at the gate's threshold the student would answer 4.8% of questions with 81.8% precision (9 of 11) against the 95% target. **Rejected**, never shadow, canary or live |
+
+The caveats, all of them, are in the [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius): four job submissions (an accidental on-demand job that was cancelled, a missing `einops`, a save that failed with `EPERM` and whose weights were recovered, then the job that saved); the night's own evaluation timed out at 15 s, so the gate result comes from running the eval and the gate again on the saved adapter with a 120 s timeout, through a one-off driver; five problems fixed by hand on the VM, now fixed in the repository (spot by default, `einops` pinned, the adapter saved locally and then copied, a clear stop when `aws` is missing, a separate student timeout for the night); and cost estimates (about 2.7 GPU-hours, at most about $4 at list prices) where the Nebius bill decides.
+
+The gate did its job: a student that is right 81.8% of the time on the few answers it would serve is below a 95% target, so nothing reached shadow, canary or live traffic.
+
 ## For engineers
 
 | What | Where |

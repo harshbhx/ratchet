@@ -1,0 +1,20 @@
+--- a/deploy/train_job.sh
++++ b/deploy/train_job.sh (the VM-local spot copy)
+@@ -29,7 +29,7 @@
+ [[ "${VERSION}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "error: bad version name: ${VERSION}" >&2; exit 2; }
+ [[ "${BASE}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || { echo "error: bad RATCHET_STUDENT_BASE_MODEL: ${BASE}" >&2; exit 2; }
+ 
+-CMD=(nebius ai job create
++CMD=(nebius ai job create --preemptible --follows-spot-price
+   --name "ratchet-${VERSION}"
+   --image "${IMAGE}"
+   --platform "${PLATFORM}" --preset "${PRESET}"
+@@ -37,7 +37,7 @@
+   --disk-size 200Gi
+   --timeout 2h
+   --container-command bash
+-  --args "-c 'bash /app/install_kernels.sh && python -m ratchet.nightschool.train --data /data/night/train.jsonl --base ${BASE} --out /data/adapters/${VERSION}'")
++  --args "-c 'pip install -q einops && bash /app/install_kernels.sh && python -m ratchet.nightschool.train --data /data/night/train.jsonl --base ${BASE} --out /tmp/adapter-out && mkdir -p /data/adapters/${VERSION} && cp -r /tmp/adapter-out/. /data/adapters/${VERSION}/ && ls -la /data/adapters/${VERSION}'")
+ if [[ -n "${RATCHET_SUBNET_ID:-}" ]]; then CMD+=(--subnet-id "${RATCHET_SUBNET_ID}"); fi
+ if [[ -n "${RATCHET_REGISTRY_SECRET:-}" ]]; then CMD+=(--registry-secret "${RATCHET_REGISTRY_SECRET}"); fi
+ if [[ "${DRY_RUN}" == "1" ]]; then CMD+=(--dry-run); fi
