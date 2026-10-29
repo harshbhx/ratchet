@@ -26,7 +26,7 @@ function siteverify() {
     if (token === "boom") throw new Error("network down");
     if (token === "5xx") return new Response("bad gateway", { status: 502 });
     if (token === "badsecret") return Response.json({ success: false, "error-codes": ["invalid-input-secret"] });
-    if (form.get("secret") === PASS) return Response.json({ success: true });
+    if (form.get("secret") === PASS) return Response.json({ success: true, hostname: token.startsWith("other") ? "evil.example" : "ratchet.dualmindlab.tech" });
     if (token.startsWith("dup")) return Response.json({ success: false, "error-codes": ["timeout-or-duplicate"] });
     return Response.json({ success: false, "error-codes": ["invalid-input-response"] });
   };
@@ -158,7 +158,7 @@ test("a retry with a fresh token passes: the spent one is refused, the new one i
     const token = init.body.get("response");
     const ok = !seen.has(token); // Cloudflare accepts a token once
     seen.add(token);
-    return Response.json(ok ? { success: true } : { success: false, "error-codes": ["timeout-or-duplicate"] });
+    return Response.json(ok ? { success: true, hostname: "live.ratchet.dualmindlab.tech" } : { success: false, "error-codes": ["timeout-or-duplicate"] });
   };
   assert.equal(await guard(ns, { ...withToken("one"), rest: { send } }), null);
   const again = await guard(ns, { ...withToken("one"), rest: { send } });
@@ -309,4 +309,32 @@ test("Scout: a stream that dies after events closes and says so; with no EventSo
   release("late");
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(cancelled.opened.length, 0);
+});
+
+test("the hostname of a good token must be on the allowlist: right passes, wrong is invalid and counted, the setting overrides the default", async () => {
+  assert.deepEqual(t.turnstileSettings({}).hostnames, ["ratchet.dualmindlab.tech", "live.ratchet.dualmindlab.tech"]);
+  for (const h of t.DEFAULT_HOSTNAMES) assert.ok(!/localhost|127\.0\.0\.1/.test(h));
+  assert.deepEqual(t.hostnamesOf(" "), t.DEFAULT_HOSTNAMES);
+  assert.deepEqual(t.hostnamesOf(" Example.com , preview.ratchet.pages.dev,"), ["example.com", "preview.ratchet.pages.dev"]);
+
+  const ns = namespace();
+  const sv = siteverify();
+  assert.equal(await guard(ns, { ...withToken("good"), rest: { send: sv.send } }), null, "the right hostname passes");
+  // The wrong hostname is a 403 with the usual words, and counts toward the block.
+  const wrong = await guard(ns, { ...withToken("other1"), rest: { send: sv.send } });
+  assert.equal(wrong.status, 403);
+  assert.equal((await body(wrong)).error.message, "Human check failed. Refresh the page and try again.");
+  assert.equal(ns.stores.get(t.failsName("2026-10-29", await v.sha256Hex("203.0.113.7"))).get("n"), 1);
+  for (let i = 2; i <= 5; i++) await guard(ns, { ...withToken("other" + i), rest: { send: sv.send } });
+  assert.equal((await guard(ns, { ...withToken("good"), rest: { send: sv.send } })).status, 429, "five wrong hostnames block");
+  // A success with no hostname at all is wrong too.
+  const bare = async () => Response.json({ success: true });
+  assert.equal(await t.verifyToken(PASS, "x", null, bare, t.DEFAULT_HOSTNAMES), "invalid");
+  // The setting replaces the default: example.com (what Cloudflare's test keys answer) passes only when listed.
+  const example = async () => Response.json({ success: true, hostname: "example.com" });
+  assert.equal(await t.verifyToken(PASS, "x", null, example, t.turnstileSettings({}).hostnames), "invalid");
+  assert.equal(await t.verifyToken(PASS, "x", null, example, t.turnstileSettings({ TURNSTILE_HOSTNAMES: "example.com" }).hostnames), "valid");
+  assert.equal(await t.verifyToken(PASS, "x", null, siteverify().send, t.turnstileSettings({ TURNSTILE_HOSTNAMES: "example.com" }).hostnames), "invalid", "the default host is no longer allowed");
+  // Siteverify unreachable still fails open.
+  assert.equal(await t.verifyToken(PASS, "boom", null, sv.send, t.DEFAULT_HOSTNAMES), "error");
 });
