@@ -31,7 +31,7 @@ python scripts/text2sql/exam_numbers.py --check
 
 Expected: `OK: both exams.json files match the saved answers`.
 
-This reruns the strict scoring over every saved answer of the untrained model, the teacher and both adapters on both exams, and compares the result with the numbers the website and the README chart show (`web/src/data/exams.json`). Scoring is strict: an answer is right only if running it on the exam's database returns exactly the reference rows.
+This reruns the strict scoring over every saved answer of the untrained model, the [teacher](https://docs.ratchet.dualmindlab.tech/guides/glossary/#teacher) and both adapters on both exams, and compares the result with the numbers the website and the README chart show (`web/src/data/exams.json`). Scoring is strict: an answer is right only if running it on the exam's database returns exactly the reference rows.
 
 **It shows:** the published numbers are the saved answers' numbers, with no typed-in figure.
 **It does not show:** that the answers were produced the way the README says. For that, read the [exam 2 evidence](../evidence/text2sql-exam2/README.md) and [exam 1 and round 1](../evidence/text2sql-round1/README.md), which name each script and, where recorded, its cost.
@@ -48,7 +48,7 @@ python scripts/measure_adapter.py verify \
 
 Expected: `OK: every number in results.json was recomputed from raw.jsonl and matches`.
 
-This runs each of the 200 answers against the exam's SQLite databases and recomputes the agreement, the coverage and the confidence-gate numbers. Swap `raw_v2` and `results_v2` for `raw_v1` and `results_v1` to check the round 1 adapter.
+This runs each of the 200 answers against the exam's [SQLite](https://docs.ratchet.dualmindlab.tech/guides/glossary/#sqlite) databases and recomputes the agreement, the coverage and the confidence-gate numbers. Swap `raw_v2` and `results_v2` for `raw_v1` and `results_v1` to check the round 1 adapter.
 
 ## 3. The exam was frozen before any model answered it
 
@@ -85,7 +85,7 @@ curl -s https://live.ratchet.dualmindlab.tech/v1/chat/completions \
 
 The reply carries a `ratchet` block. Expect `served_by: "teacher"`, the model `nvidia/Nemotron-3-Ultra-550b-a55b`, a small `cost_usd` (a fraction of a cent) and a `request_id`. It is a real call, so please keep it to a few. No trained student is served in the live gateway yet, so the teacher answers every request.
 
-**The run on record:** `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` recomputes the client-side numbers of a recorded 20-request run from its 21 per-request records. Expected: `recomputed 11 client-side values and 1 rounds from 21 records`. It also prints a line that starts `not recomputable here (ledger snapshots or entered by hand)`; those values are listed, not checked. Three recorded live Scout runs are in [`evidence/scout`](../evidence/scout), and you can replay them [in your browser](https://huggingface.co/spaces/harshbhx/ratchet-scout).
+**The run on record:** `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` recomputes the client-side numbers of a recorded 20-request run from its 21 per-request records. Expected: `recomputed 11 client-side values and 1 rounds from 21 records`. It also prints a line that starts `not recomputable here (ledger snapshots or entered by hand)`; those values are listed, not checked. Three recorded live Scout runs are in [`evidence/scout`](../evidence/scout), and you can [replay](https://docs.ratchet.dualmindlab.tech/guides/glossary/#replay) them [in your browser](https://huggingface.co/spaces/harshbhx/ratchet-scout).
 
 ## 6. The loop and the rollback, on mock models
 
@@ -99,7 +99,7 @@ These run **mock models**. They show how the cascade, the release gate and the r
 
 ## 7. A signed bill of materials per adapter
 
-In the mock-mode gateway you can generate a key, sign an adapter's bill of materials and verify it offline:
+In the mock-mode gateway you can generate a key, sign an adapter's [bill of materials](https://docs.ratchet.dualmindlab.tech/guides/glossary/#bom) and verify it offline:
 
 ```bash
 python -m ratchet.bom keygen                       # a signing key and its public key
@@ -107,7 +107,7 @@ RATCHET_BOM_SIGNING_KEY=<the signing key> make demo
 curl -s localhost:8000/ratchet/versions/2/bom | python -m ratchet.bom verify - --public-key <the public key>
 ```
 
-The public half of Ratchet's own signing key (Ed25519, key id `81b0a086250a81d0`) is in [evidence/keys](../evidence/keys/README.md). The 28 Oct Night School BOM was signed with it afterwards, on 29 Oct 2026 (`evidence/nightschool-nebius/ratchet_bom.signed.json`; the content is unchanged from the run's own record). Check a document against it with `--public-key Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc=` (and `--notice NOTICE.md` for the adapter's notice).
+The public half of Ratchet's own signing key ([Ed25519](https://docs.ratchet.dualmindlab.tech/guides/glossary/#ed25519), key id `81b0a086250a81d0`) is in [evidence/keys](../evidence/keys/README.md). The 28 Oct Night School [BOM](https://docs.ratchet.dualmindlab.tech/guides/glossary/#bom) was signed with it afterwards, on 29 Oct 2026 (`evidence/nightschool-nebius/ratchet_bom.signed.json`; the content is unchanged from the run's own record). Check a document against it with `--public-key Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc=` (and `--notice NOTICE.md` for the adapter's notice).
 
 A signed BOM is the operator's signed statement of the data and evaluation behind an adapter: it shows that nothing changed after signing, not that the weights were trained on that data. See [Features in depth](FEATURES.md).
 
@@ -135,14 +135,14 @@ About $17 on record for the two text-to-SQL adapters. All are estimates recorded
 | GPU job, round 2 training and exam 1 answers | 4.80 | `evidence/text2sql-round2/logs/final_status.json` (`spent_usd`) |
 | Round 1 training | 0 | a borrowed GPU, no charge |
 
-Not costed: the GPU runs that answered exam 2, small teacher re-runs on exam 1, and any earlier probes. The tool-calling round (about $2.33 of GPU time, plus teacher spend) is separate and is not in this sum. So is the hosted Nano's calibration ($0.16 of Token Factory calls, `evidence/hosted-nano/collect.json`).
+Not costed: the GPU runs that answered exam 2, small teacher re-runs on exam 1, and any earlier probes. The tool-calling round (about $2.33 of GPU time, plus teacher spend) is separate and is not in this sum. So is the hosted Nano's [calibration](https://docs.ratchet.dualmindlab.tech/guides/glossary/#calibration) ($0.16 of Token Factory calls, `evidence/hosted-nano/collect.json`).
 
 ## What none of this proves
 
 - The exams are synthetic text-to-SQL, not your data. A strict one-reference exam also marks a correct query wrong when it returns extra columns; the teacher's own score shows that.
 - Agreement is with the teacher's answers, not with ground truth.
 - The adapters were trained on a borrowed GPU with the standalone scripts in `scripts/text2sql/`; Night School's Nebius job ran once by hand on 28 Oct 2026 ([`evidence/nightschool-nebius`](../evidence/nightschool-nebius)), and these exam results do not test it.
-- The hard tool-calling exam was written by one model (Claude Sonnet 5.5), so it may favour that model's style; the BFCL exam is a sample of a public benchmark, which models may have seen.
+- The hard tool-calling exam was written by one model (Claude Sonnet 5.5), so it may favour that model's style; the [BFCL](https://docs.ratchet.dualmindlab.tech/guides/glossary/#bfcl) exam is a sample of a public benchmark, which models may have seen.
 - On the BFCL exam the adapter's gain over the untrained model is not significant (sign test p = 0.0784), and its gain comes from the `irrelevance` category only. See [Tool-calling round 3](#tool-calling-round-3).
 - Scores come from one run of each model at one setting. The 95% ranges say how much a different sample of questions could move them; they do not cover a different training run.
 

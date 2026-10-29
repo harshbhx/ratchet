@@ -11,6 +11,7 @@ import StatRow from '../../../components/StatRow.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>The ledger is one SQLite file that logs every request's metadata, keeps every stored teacher answer with its provenance (teacher, license, hash, redactions), and records every adapter version and release decision, so the training data behind an adapter can be checked later.</Summary>
 
@@ -38,21 +39,21 @@ The **apprentice chef's** own dishes are never copied into the book. A customer 
 
 <Steps>
 
-1. **The request arrives.** The gateway validates it and works out whether it may be stored at all. If the request names an end user (`user` or `safety_identifier`), that value is turned into a keyed hash at once (HMAC-SHA256 under the deployment's key, scoped to the API key's name, 16 hex digits). The raw value goes no further. The broadest storage opt-out that applies is settled here (see [opt-outs](#storage-opt-outs-and-no-train-end-users) below).
+1. **The request arrives.** The gateway validates it and works out whether it may be stored at all. If the request names an end user (`user` or `safety_identifier`), that value is turned into a keyed hash at once (HMAC-SHA256 under the deployment's key, scoped to the API key's name, 16 hex digits). The raw value goes no further. The broadest storage <Term t="opt-out">opt-out</Term> that applies is settled here (see [opt-outs](#storage-opt-outs-and-no-train-end-users) below).
 
-2. **The cascade runs** (student first, teacher when needed; see [the request journey](/guides/request-journey/)). Whatever happens, the request gets **one row in `requests`**: task, route, who served it, which version, confidence and the threshold it was held to, the audit and shadow flags, costs (with the student and teacher split), latency, the API key's *name*, the end user's hash, the opt-out reason and whether anything was stored. There is no message text and no answer text in this row.
+2. **The <Term t="cascade">cascade</Term> runs** (student first, teacher when needed; see [the request journey](/guides/request-journey/)). Whatever happens, the request gets **one row in `requests`**: task, route, who served it, which version, <Term t="confidence">confidence</Term> and the threshold it was held to, the <Term t="audit">audit</Term> and shadow flags, costs (with the student and teacher split), latency, the API key's *name*, the end user's hash, the opt-out reason and whether anything was stored. There is no message text and no answer text in this row.
 
 3. **No teacher answer, nothing more.** When the student served the request and the teacher was not called (no audit drawn, no shadow disagreement to settle), the request row is all that is written. The student's text is not kept anywhere.
 
-4. **Every teacher answer goes through one function**, `Ratchet._store_example`. That covers escalations, cold starts, audits and shadow arbitrations. It is the only caller of `Ledger.add_example` on the request path (feedback corrections and imports have their own single writer, `feedback.store_label`). It asks again whether an opt-out applies, so an end user who opted out while the request waited for the teacher is still kept out.
+4. **Every teacher answer goes through one function**, `Ratchet._store_example`. That covers <Term t="escalation">escalations</Term>, cold starts, audits and shadow arbitrations. It is the only caller of `Ledger.add_example` on the request path (feedback corrections and imports have their own single writer, `feedback.store_label`). It asks again whether an opt-out applies, so an end user who opted out while the request waited for the teacher is still kept out.
 
 5. **The answer is checked.** It is skipped (served, but not stored) when its `finish_reason` is not `stop` or `tool_calls`, when it is empty once reasoning is stripped, when it is not valid under the task's spec (a missing field, a label outside the vocabulary), or when the client sent sampling that could choose the label (`logit_bias`, a non-zero penalty, a temperature above 1, a vendor field). Each skip writes a throttled `skip_example` event that names the task and the reason, never the answer.
 
 6. **The text is redacted.** With `RATCHET_REDACT_PII=1` (the default) the messages, the answer and every string in the stored conditions get `[LABEL]` placeholders. The answer is checked once more: if a placeholder broke a structured answer, it is skipped as `invalid after redaction`. The teacher always saw the original request.
 
-7. **The example is stored with its provenance**: the teacher model that wrote it, that teacher's license and license URL, the number of placeholders, the conditions it was answered under (`response_format`, `tools`, `tool_choice`, `stop`), the client and the end user's hash. Its golden or train split comes from a hash of the task and the redacted messages. An identical request bumps `seen` instead of adding a row (a client's retry does not count), and a hash that an erasure tombstoned is refused.
+7. **The example is stored with its <Term t="provenance">provenance</Term>**: the teacher model that wrote it, that teacher's license and license URL, the number of placeholders, the conditions it was answered under (`response_format`, `tools`, `tool_choice`, `stop`), the client and the end user's hash. Its golden or train split comes from a hash of the task and the redacted messages. An identical request bumps `seen` instead of adding a row (a client's retry does not count), and a hash that an <Term t="erasure">erasure</Term> tombstoned is refused.
 
-8. **Later, other parts write their own rows.** Night School reads `examples` every night and writes `versions` (with each adapter's bill of materials, signed when a key is set) and `version_leaves`. The release gate moves versions and writes `events`. Retention, erasure and receipts write their own tables.
+8. **Later, other parts write their own rows.** Night School reads `examples` every night and writes `versions` (with each adapter's <Term t="bom">bill of materials</Term>, signed when a key is set) and `version_leaves`. The release gate moves versions and writes `events`. Retention, erasure and receipts write their own tables.
 
 </Steps>
 
@@ -127,7 +128,7 @@ flowchart LR
 
 ### The evidence tables, append-only
 
-Two tables exist so that someone else can check Ratchet's claims later. `version_leaves` holds, for each adapter, one leaf per training and golden example (the example's hash and a hash of its label, teacher, license and redaction count). The adapter's signed BOM carries the Merkle roots over those leaves, so a leaf can be proven to be in, or absent from, the set the adapter was trained on. `receipts` holds one signed savings receipt per ledger day and API client, sealed once the day is over and chained to the previous one. SQLite triggers refuse UPDATE, DELETE and a replacing INSERT on both tables, on every connection, because a changed row would silently break the roots and chains built from it. [Evidence you can check](/guides/evidence/) shows how to verify them offline.
+Two tables exist so that someone else can check Ratchet's claims later. `version_leaves` holds, for each adapter, one leaf per training and golden example (the example's hash and a hash of its label, teacher, license and redaction count). The adapter's signed BOM carries the <Term t="merkle-root">Merkle roots</Term> over those leaves, so a leaf can be proven to be in, or absent from, the set the adapter was trained on. `receipts` holds one signed savings <Term t="receipt">receipt</Term> per ledger day and API client, sealed once the day is over and chained to the previous one. SQLite triggers refuse UPDATE, DELETE and a replacing INSERT on both tables, on every connection, because a changed row would silently break the roots and chains built from it. [Evidence you can check](/guides/evidence/) shows how to verify them offline.
 
 ### Human labels: feedback and imports
 
@@ -305,7 +306,7 @@ stateDiagram-v2
 
 <figcaption>
 
-**Reading this diagram.** A purge is reversible in one way only: if the same request arrives again and may be stored, its text comes back. An erasure is not. From the moment the hash is a tombstone, no client can store it again, and the row keeps only hashes and counts. The adapters that may have learned from it are reported, but their signed BOMs are never rewritten.
+**Reading this diagram.** A purge is reversible in one way only: if the same request arrives again and may be stored, its text comes back. An erasure is not. From the moment the hash is a <Term t="tombstone">tombstone</Term>, no client can store it again, and the row keeps only hashes and counts. The adapters that may have learned from it are reported, but their signed BOMs are never rewritten.
 
 <ul class="rt-key">
   <li class="ok">Text kept</li>
@@ -417,7 +418,7 @@ python -m ratchet.live purge --dry-run                                          
 
 ### Does Ratchet keep my users' prompts?
 
-Only the prompts of requests the teacher answered (an escalation, a cold start, an audit or an arbitration), only when no opt-out applies, and only after redaction. Requests the student served without an audit leave a metadata row and nothing else.
+Only the prompts of requests the teacher answered (an escalation, a cold start, an audit or an <Term t="arbitration">arbitration</Term>), only when no opt-out applies, and only after redaction. Requests the student served without an audit leave a metadata row and nothing else.
 
 ### Is the student's answer ever stored?
 

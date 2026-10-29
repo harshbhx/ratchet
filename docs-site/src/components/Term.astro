@@ -1,0 +1,178 @@
+---
+/**
+ * A glossary word in running text: <Term t="lora">LoRA</Term>.
+ * The word is a real link to /guides/glossary/#lora (so it works without JavaScript) with a dotted underline. On hover and
+ * keyboard focus a small card shows the term, its one-line definition and a "Read more" link; the definition comes from
+ * src/data/glossary.ts at build time, so the tooltip and the glossary page cannot disagree. The tiny script below only keeps
+ * the card inside the window and lets Escape close it. Link a term once per page, at its first meaningful use.
+ */
+import { getTerm, inline, GLOSSARY_PATH } from '../lib/glossary';
+
+interface Props {
+  /** The term's slug in src/data/glossary.ts. */
+  t: string;
+}
+const { t } = Astro.props;
+const term = getTerm(t);
+const href = `${GLOSSARY_PATH}#${term.slug}`;
+// A counter keeps the description id unique even if a page uses one term twice.
+const g = globalThis as { __rtTermId?: number };
+g.__rtTermId = (g.__rtTermId ?? 0) + 1;
+const id = `rt-term-${term.slug}-${g.__rtTermId}`;
+const learnLabel = term.learn && term.learn[0].length > 38 ? 'Source' : term.learn?.[0];
+---
+
+<span class="rt-term"><a class="rt-term__link" href={href} aria-describedby={id}><slot /></a><span class="rt-term__tip" role="tooltip"><span class="rt-term__card"><span class="rt-term__name">{term.name}</span><span class="rt-term__def" id={id} set:html={inline(term.short, false)} /><span class="rt-term__more"><a href={href}>Read more in the glossary &rarr;</a>{term.learn && <a href={term.learn[1]} rel="noopener">{learnLabel} &#8599;</a>}</span></span></span></span>
+
+<style is:global>
+  .rt-term {
+    position: relative;
+    display: inline;
+  }
+  .sl-markdown-content a.rt-term__link {
+    color: inherit;
+    text-decoration: underline dotted var(--rt-muted);
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 0.22em;
+    transition:
+      text-decoration-color 0.15s,
+      color 0.15s;
+  }
+  .sl-markdown-content a.rt-term__link:hover,
+  .sl-markdown-content a.rt-term__link:focus-visible {
+    color: var(--rt-owned-ink);
+    text-decoration-color: var(--rt-owned);
+  }
+  .rt-term__tip {
+    position: absolute;
+    z-index: 30;
+    top: 100%;
+    left: 0;
+    width: min(21rem, calc(100vw - 2rem));
+    padding-top: 0.45rem; /* an invisible bridge, so the pointer can travel from the word to the card */
+    transform: translateX(var(--rt-tip-dx, 0px));
+    visibility: hidden;
+    opacity: 0;
+    transition:
+      opacity 0.14s ease,
+      visibility 0s linear 0.14s;
+    font-size: 0.85rem;
+    font-weight: 400;
+    font-style: normal;
+    line-height: 1.5;
+    text-align: left;
+    white-space: normal;
+    pointer-events: none;
+  }
+  .rt-term[data-flip] > .rt-term__tip {
+    top: auto;
+    bottom: 100%;
+    padding-top: 0;
+    padding-bottom: 0.45rem;
+  }
+  .rt-term__card {
+    display: block;
+    padding: 0.7rem 0.85rem 0.75rem;
+    background: var(--rt-surface);
+    color: var(--rt-ink-2);
+    border: 1px solid var(--rt-line-strong);
+    border-radius: 0.65rem;
+    box-shadow: var(--rt-shadow-lift);
+  }
+  .rt-term__name {
+    display: block;
+    margin-bottom: 0.15rem;
+    font-size: 0.78rem;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    color: var(--rt-ink);
+  }
+  .rt-term__def {
+    display: block;
+  }
+  .rt-term__def code {
+    font-size: 0.8em;
+  }
+  .rt-term__more {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.9rem;
+    margin-top: 0.5rem;
+    font-size: 0.78rem;
+  }
+  .sl-markdown-content .rt-term__more a {
+    color: var(--rt-owned-ink);
+    text-decoration: none;
+    font-weight: 550;
+  }
+  .sl-markdown-content .rt-term__more a:hover {
+    text-decoration: underline;
+  }
+  /* Keyboard focus always shows the card; hover only where a pointer can hover. */
+  .rt-term:focus-within:not([data-dismissed]) > .rt-term__tip {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    transition-delay: 0s;
+  }
+  @media (hover: hover) {
+    .rt-term:hover:not([data-dismissed]) > .rt-term__tip {
+      visibility: visible;
+      opacity: 1;
+      pointer-events: auto;
+      transition-delay: 0s;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rt-term__tip,
+    .sl-markdown-content a.rt-term__link {
+      transition: none;
+    }
+  }
+  @media (forced-colors: active) {
+    .rt-term__card {
+      border-color: CanvasText;
+    }
+  }
+  @media print {
+    .rt-term__tip {
+      display: none;
+    }
+    .sl-markdown-content a.rt-term__link {
+      text-decoration: none;
+    }
+  }
+</style>
+
+<script>
+  // Keep the card inside the window, flip it above the word when there is no room below, and let Escape close it.
+  const place = (w: HTMLElement) => {
+    const tip = w.querySelector<HTMLElement>('.rt-term__tip');
+    if (!tip) return;
+    w.removeAttribute('data-flip');
+    w.style.setProperty('--rt-tip-dx', '0px');
+    const r = tip.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    let dx = 0;
+    if (r.right > vw - 8) dx = vw - 8 - r.right;
+    if (r.left + dx < 8) dx = 8 - r.left;
+    w.style.setProperty('--rt-tip-dx', `${Math.round(dx)}px`);
+    if (r.bottom > window.innerHeight - 8 && w.getBoundingClientRect().top > r.height + 16) w.setAttribute('data-flip', '');
+  };
+  const wordOf = (e: Event) => (e.target instanceof Element ? e.target.closest<HTMLElement>('.rt-term') : null);
+  const show = (e: Event) => {
+    const w = wordOf(e);
+    if (w) place(w);
+  };
+  document.addEventListener('pointerover', show);
+  document.addEventListener('focusin', show);
+  document.addEventListener('pointerout', (e) => {
+    const w = wordOf(e);
+    if (w && !w.contains((e as PointerEvent).relatedTarget as Node | null)) w.removeAttribute('data-dismissed');
+  });
+  document.addEventListener('focusout', (e) => wordOf(e)?.removeAttribute('data-dismissed'));
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    document.querySelectorAll<HTMLElement>('.rt-term:hover, .rt-term:focus-within').forEach((w) => w.setAttribute('data-dismissed', ''));
+  });
+</script>

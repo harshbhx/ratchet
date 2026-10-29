@@ -6,6 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { getCollection } from 'astro:content';
+import { glossaryMarkdown } from './glossary';
 
 const SITE = 'https://docs.ratchet.dualmindlab.tech/';
 
@@ -117,7 +118,7 @@ export async function llmsFull(site?: URL): Promise<string> {
   const out = ['# Ratchet docs: full text', '', `> ${SUMMARY}`, ''];
   for (const s of await ordered()) {
     for (const e of s.entries) {
-      out.push('---', '', `# ${e.data.title}`, '', `Source: ${url(e.id, site)}`, '', clean(e.body ?? ''), '');
+      out.push('---', '', `# ${e.data.title}`, '', `Source: ${url(e.id, site)}`, '', clean((e.body ?? '').replace('<Glossary />', glossaryMarkdown())), '');
     }
   }
   // The generated HTTP API pages come from the OpenAPI schema, not from a content file.

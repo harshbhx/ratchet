@@ -6,6 +6,7 @@ description: What Ratchet is worth to a team paying for LLM calls, a team that m
 import Summary from '../../../components/Summary.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Ratchet matters for four kinds of reader: the team with a growing LLM bill, the team that must show where its data went, the team that must show a model is safe to ship, and the builder who wants to own the adapter and its license trail. Each section below says what you get and links to the page that backs it.</Summary>
 
@@ -49,13 +50,13 @@ The catch is that a self-hosted model runs on a GPU that bills by the hour, busy
 | Per token | The price of each call actually made | No |
 | By GPU-hours paid | Teacher spend, plus every hour the endpoint and the training jobs ran | **Yes**, and it is never clamped to zero |
 
-The break-even is the number of student answers per endpoint hour at which the GPU pays for itself:
+The <Term t="break-even">break-even</Term> is the number of student answers per endpoint hour at which the GPU pays for itself:
 
 ```text
 break-even = GPU price per hour / teacher spend avoided per student answer
 ```
 
-With estimated prices (an L40S at $1.35 a GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and an assumed $0.001 of teacher spend avoided per ticket-triage answer), that is about 1,350 student answers an hour, roughly 32,000 a day. All figures here are **estimates**, not measurements.
+With estimated prices (an <Term t="l40s">L40S</Term> at $1.35 a GPU-hour on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026, and an assumed $0.001 of teacher spend avoided per ticket-triage answer), that is about 1,350 student answers an hour, roughly 32,000 a day. All figures here are **estimates**, not measurements.
 
 | Traffic | Student answers an hour, against break-even (about 1,350) | What Ratchet's report says |
 |---|---|---|
@@ -97,10 +98,10 @@ flowchart TB
 Every example Ratchet keeps carries its history. The ledger stores, for each training example, the teacher that wrote the answer and the license that permits training on it, after personal data has been redacted.
 
 - **Redaction before storage.** Emails, phone numbers, card numbers (checksum-validated), Indian identifiers such as UPI and GSTIN, and similar patterns are replaced before anything is stored. Names and street addresses are **not** caught yet.
-- **Opt-outs only reduce storage.** A request can ask not to be stored (`store: false`), and a key, a task or an end user can be set to never train. Nothing in a request can undo an opt-out.
+- **Opt-outs only reduce storage.** A request can ask not to be stored (`store: false`), and a key, a task or an end user can be set to never train. Nothing in a request can undo an <Term t="opt-out">opt-out</Term>.
 - **End users are never stored as typed.** An end-user identifier is kept only as a keyed hash scoped to the API key.
-- **Erasure is final.** An erased example leaves only a hash, so it cannot be stored again. Retention windows purge old rows on a schedule.
-- **Export.** Stored data can be exported as NDJSON with its provenance.
+- **<Term t="erasure">Erasure</Term> is final.** An erased example leaves only a hash, so it cannot be stored again. Retention windows purge old rows on a schedule.
+- **Export.** Stored data can be exported as NDJSON with its <Term t="provenance">provenance</Term>.
 
 <figure class="rt-diagram">
 
@@ -138,7 +139,7 @@ You need to show a model was tested before it served real users, and that you ca
 | Staged release | Shadow, then canary at 10%, 50% and 100%, with automatic rollback when the 95% upper bound of audited precision falls below 92% | [Release gate](/guides/release-gate/) |
 | Savings receipts | One signed receipt per day and API client, chained, that a third party can verify | [Evidence](/guides/evidence/) |
 
-**What this does not show.** Precision means agreement with the teacher, not ground truth. A signed bill of materials is the operator's signed statement: it proves nothing changed after signing, not that the weights were trained on that data. See [Escalation and audits](/guides/escalation-and-audits/).
+**What this does not show.** Precision means agreement with the teacher, not ground truth. A signed <Term t="bom">bill of materials</Term> is the operator's signed statement: it proves nothing changed after signing, not that the weights were trained on that data. See [Escalation and audits](/guides/escalation-and-audits/).
 
 <figure class="rt-diagram">
 
@@ -160,7 +161,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** A new student only moves down when evidence allows it, and each canary stage can send it back. The first gate is the held-out exam, then a silent trial on real traffic, then growing shares of live traffic judged by teacher audits. Because every step leaves a record in the ledger, a reviewer can ask which version served which request and why it was promoted.
+**Reading this diagram.** A new student only moves down when evidence allows it, and each canary stage can send it back. The first gate is the <Term t="held-out">held-out</Term> exam, then a silent trial on real traffic, then growing shares of live traffic judged by teacher audits. Because every step leaves a record in the ledger, a reviewer can ask which version served which request and why it was promoted.
 
 <ul class="rt-key">
   <li class="student">The new student, on trial</li>
@@ -174,8 +175,8 @@ flowchart TB
 
 ## If you build on open models
 
-- **License-clean teachers.** Ratchet distills only from teachers whose license allows it. Nemotron 3 Ultra is under [OpenMDW-1.1](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16), which places no restrictions on outputs (license page checked Oct 21, 2026). Closed models are refused as teachers in code. Not legal advice.
-- **The adapter you own.** What Night School produces is a LoRA adapter plus its signed lineage. The base model, Nemotron 3 Nano 4B, stays under the NVIDIA Nemotron Open Model License.
+- **<Term t="license-clean-distillation">License-clean</Term> teachers.** Ratchet distills only from teachers whose license allows it. Nemotron 3 Ultra is under [OpenMDW-1.1](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16), which places no restrictions on outputs (license page checked Oct 21, 2026). Closed models are refused as teachers in code. Not legal advice.
+- **The adapter you own.** What Night School produces is a <Term t="lora">LoRA</Term> adapter plus its signed lineage. The base model, Nemotron 3 Nano 4B, stays under the <Term t="nemotron-license">NVIDIA Nemotron Open Model License</Term>.
 - **Licenses travel with the adapter.** The bill of materials names the base model's license, and a `NOTICE.md` next to the weights lists the licenses of the base and each teacher.
 - **Open code.** Apache-2.0, with a mock mode that runs the whole loop with no keys and no GPU. See [Quickstart](/guides/quickstart/).
 

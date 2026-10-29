@@ -7,6 +7,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>This page answers the questions people ask most about Ratchet in a few honest sentences each, including what is not built or not proven yet, and links to the page that tells the whole story.</Summary>
 
@@ -26,8 +27,8 @@ The whole loop in four steps; [the big picture](/guides/big-picture/) has every 
 
 1. **Your app sends a request** to the gateway, in the OpenAI chat-completions format.
 2. **The student tries first** <Who as="student" />: it samples three answers, scores its confidence and serves the answer if the confidence reaches the version's threshold.
-3. **Otherwise the teacher answers** <Who as="teacher" />, and its answer is stored with its provenance (which teacher, which license). A random 5% of the student's answers are also checked by the teacher (audits).
-4. **Every night, Night School** trains a new adapter on the teacher's answers, tests it on held-out data, and releases it through shadow, canary and live, with automatic rollback of a bad canary.
+3. **Otherwise the teacher answers** <Who as="teacher" />, and its answer is stored with its <Term t="provenance">provenance</Term> (which teacher, which license). A random 5% of the student's answers are also checked by the teacher (audits).
+4. **Every night, Night School** trains a new adapter on the teacher's answers, tests it on <Term t="held-out">held-out</Term> data, and releases it through shadow, canary and live, with automatic rollback of a bad canary.
 
 </Steps>
 
@@ -53,7 +54,7 @@ flowchart LR
 </figure>
 
 <Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
-- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot <Term t="l40s">L40S</Term>: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
 - **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
 - **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
 </Aside>
@@ -70,7 +71,7 @@ An OpenAI-compatible gateway that answers each request with a small open model w
 
 ### Is this legal?
 
-Ratchet only learns from teachers whose licenses allow training on their outputs. The default teacher, Nemotron 3 Ultra, is under [OpenMDW-1.1](https://openmdw.ai/license/1-1/), which "does not impose any restrictions or obligations with respect to any use, modification, or sharing of any outputs" (license page last updated May 27, 2026; checked Oct 21, 2026). The student's base, Nemotron 3 Nano 4B, stays under the NVIDIA Nemotron Open Model License, which asks you to pass a copy of that license on when you distribute it. One question is open: Token Factory's Terms of Service §5(f) ("competing service") is broad, and it was put to Nebius support in writing on Oct 19, 2026, with no final answer yet. This is not legal advice; check the licenses yourself. [Licenses](/guides/licenses/)
+Ratchet only learns from teachers whose licenses allow training on their outputs. The default teacher, Nemotron 3 Ultra, is under [OpenMDW-1.1](https://openmdw.ai/license/1-1/), which "does not impose any restrictions or obligations with respect to any use, modification, or sharing of any outputs" (license page last updated May 27, 2026; checked Oct 21, 2026). The student's base, Nemotron 3 Nano 4B, stays under the <Term t="nemotron-license">NVIDIA Nemotron Open Model License</Term>, which asks you to pass a copy of that license on when you distribute it. One question is open: Token Factory's Terms of Service §5(f) ("competing service") is broad, and it was put to Nebius support in writing on Oct 19, 2026, with no final answer yet. This is not legal advice; check the licenses yourself. [Licenses](/guides/licenses/)
 
 ### Can I use GPT as the teacher?
 
@@ -78,15 +79,15 @@ No, and the code refuses it. Every teacher goes through `licenses.require_distil
 
 ### Do I own the model?
 
-No. You own the LoRA adapter Night School trains and its signed training lineage (its bill of materials). The student is NVIDIA's Nemotron 3 Nano 4B with that adapter on top, and the Nano base stays under NVIDIA's Nemotron Open Model License. When you hand an adapter on, `python -m ratchet.live export` writes it with its BOM and a `NOTICE.md` naming every license. [Licenses](/guides/licenses/)
+No. You own the <Term t="lora">LoRA</Term> adapter Night School trains and its signed training lineage (its <Term t="bom">bill of materials</Term>). The student is NVIDIA's Nemotron 3 Nano 4B with that adapter on top, and the Nano base stays under NVIDIA's Nemotron Open Model License. When you hand an adapter on, `python -m ratchet.live export` writes it with its BOM and a `NOTICE.md` naming every license. [Licenses](/guides/licenses/)
 
 ### What if the student is wrong?
 
 Sometimes it will be, and Ratchet is built to keep that rare and visible:
 
-- The student serves only when its confidence reaches its version's threshold, which is set on half of a held-out golden set for 97% precision and measured on the other half. A new version must reach at least 95% there before it serves anyone.
+- The student serves only when its confidence reaches its version's threshold, which is set on half of a held-out <Term t="golden-set">golden set</Term> for 97% precision and measured on the other half. A new version must reach at least 95% there before it serves anyone.
 - 5% of the answers it serves are audited by the teacher (`RATCHET_AUDIT_RATE`), and every disagreement becomes training data.
-- A canary is rolled back automatically when the 95% upper bound of its audited precision falls below 92%. A live version is never rolled back automatically: an anytime-valid alert tells the operator, who can retire it or turn the student off in one admin command.
+- A canary is rolled back automatically when the 95% upper bound of its audited precision falls below 92%. A live version is never rolled back automatically: an <Term t="anytime-valid">anytime-valid</Term> alert tells the operator, who can retire it or turn the student off in one admin command.
 
 "Precision" means agreement with Nemotron 3 Ultra, not ground truth. [Release gate](/guides/release-gate/), [escalation and audits](/guides/escalation-and-audits/)
 
@@ -106,7 +107,7 @@ All of these are estimates, with their sources:
 
 ### When does self-hosting lose money?
 
-When too few requests reach the student. A GPU endpoint bills every hour it runs, whether requests arrive or not. Break-even is the GPU price per hour divided by the teacher spend each student answer avoids: with estimated prices ($1.35 a GPU-hour for an L40S, about $0.001 avoided per ticket-triage answer, from list prices), that is about 1,350 student answers an hour, roughly 32,000 a day. At a few thousand requests a day, a 24/7 endpoint loses money, and Ratchet's own cost report says so and recommends the hosted fallback or scaling the endpoint to zero. [Cost and savings](/guides/cost-and-savings/)
+When too few requests reach the student. A GPU endpoint bills every hour it runs, whether requests arrive or not. <Term t="break-even">Break-even</Term> is the GPU price per hour divided by the teacher spend each student answer avoids: with estimated prices ($1.35 a GPU-hour for an L40S, about $0.001 avoided per ticket-triage answer, from list prices), that is about 1,350 student answers an hour, roughly 32,000 a day. At a few thousand requests a day, a 24/7 endpoint loses money, and Ratchet's own cost report says so and recommends the hosted fallback or scaling the endpoint to zero. [Cost and savings](/guides/cost-and-savings/)
 
 ### What happens when the GPU endpoint is off?
 
@@ -114,7 +115,7 @@ Leave `RATCHET_STUDENT_BASE` empty and the student's calls go to the hosted fall
 
 ### How is this different from a router or a distillation service?
 
-A cascade router saves money on each call but learns nothing: every call stays rented. Distillation services turn traffic into a fine-tune, but the student usually stays on the provider's platform, you start each job yourself, and none of the services we found records each example's teacher license when the example is captured. Ratchet does the loop by itself: the license is recorded when each example is captured and signed into the adapter's BOM, a new adapter is trained every night, a statistical gate decides each release, and the cost report says when the small model loses money. The pieces are prior art (FrugalGPT, Cache & Distil, NVIDIA's Data Flywheel Blueprint and others); putting them in one loop is what is new. [What is Ratchet?](/guides/what-is-ratchet/)
+A <Term t="cascade">cascade</Term> router saves money on each call but learns nothing: every call stays rented. <Term t="distillation">Distillation</Term> services turn traffic into a fine-tune, but the student usually stays on the provider's platform, you start each job yourself, and none of the services we found records each example's teacher license when the example is captured. Ratchet does the loop by itself: the license is recorded when each example is captured and signed into the adapter's BOM, a new adapter is trained every night, a statistical gate decides each release, and the cost report says when the small model loses money. The pieces are prior art (FrugalGPT, Cache & Distil, NVIDIA's Data Flywheel Blueprint and others); putting them in one loop is what is new. [What is Ratchet?](/guides/what-is-ratchet/)
 
 ## For evaluators
 
@@ -124,7 +125,7 @@ The story page at https://ratchet.dualmindlab.tech, then `/scout` (ask an exampl
 
 ### Is the live gateway real?
 
-Yes. The gateway at live.ratchet.dualmindlab.tech runs in live mode and calls the real teacher on Token Factory. It has no GPU and no trained student yet, so the teacher answers every request (as of Oct 28, 2026), apart from a random split that sends a share of eligible calls to the hosted Nano 30B <Who as="fallback" />, labelled as such. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
+Yes. The gateway at live.ratchet.dualmindlab.tech runs in live mode and calls the real teacher on Token Factory. It has no GPU and no trained student yet, so the teacher answers every request (as of Oct 28, 2026), apart from a <Term t="random-split">random split</Term> that sends a share of eligible calls to the hosted Nano 30B <Who as="fallback" />, labelled as such. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Which numbers are real?
 

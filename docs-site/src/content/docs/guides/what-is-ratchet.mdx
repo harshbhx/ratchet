@@ -15,6 +15,7 @@ import FlowStep from '../../../components/FlowStep.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import GradientText from '../../../components/ui/GradientText.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Ratchet is a gateway you point your OpenAI client at. A small Nemotron model with your LoRA adapter on top answers the requests it is sure about. A large open model answers the rest, and its answers become training data. Every night a new small model is trained and is released only if it passes a held-out exam, a silent trial and a staged rollout.</Summary>
 
@@ -40,7 +41,7 @@ Every model call on the live site runs on Nebius Token Factory, the adapter was 
 
 - **The bill grows with traffic.** Enterprise spend on model APIs was $12.5B in 2025 ([Menlo Ventures](https://menlovc.com/perspective/2025-the-state-of-generative-ai-in-the-enterprise/), report of Dec 9, 2025, read Oct 26, 2026). Much of it is narrow and repetitive: labelling, extraction, ticket triage, steps inside agents.
 - **The obvious fix is often not allowed.** Training a cheaper model on a closed model's answers breaks the terms of the largest vendors. [OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/) and [Anthropic Commercial Terms §D.4(a)](https://www.anthropic.com/legal/commercial-terms) (both pages read Oct 21, 2026) forbid using outputs to train competing models. A tool that distills that traffic puts its users at risk. Not legal advice.
-- **Doing it by hand is slow.** Logging, cleaning, fine-tuning, evaluating, deploying and watching for regressions are separate chores, and most tools cover one.
+- **Doing it by hand is slow.** Logging, cleaning, <Term t="fine-tuning">fine-tuning</Term>, evaluating, deploying and watching for regressions are separate chores, and most tools cover one.
 
 <Compare before="Renting a large model for every call" after="With Ratchet">
   <div slot="before">Every request, repeated or not, is a paid call to the teacher. Distilling by hand is slow, and closed models forbid training on their outputs.</div>
@@ -54,10 +55,10 @@ Learn from the traffic you already have, but only from teachers whose license al
 Change one line, your base URL, and four parts start working:
 
 <Flow loop loopLabel="Every night, again" label="The four parts">
-  <FlowStep title="The student answers first" tone="owned" meta="Nano 4B + your LoRA">Sampled 3 times; its confidence decides.</FlowStep>
-  <FlowStep title="The teacher answers the rest" tone="rented" meta="Ultra on Token Factory">And checks a random 5% of the student's answers.</FlowStep>
-  <FlowStep title="Answers become training data" meta="with provenance">Each with its teacher and license, after redaction.</FlowStep>
-  <FlowStep title="Released through gates" meta="every night">Golden set, shadow, canary 10%, 50%, 100%, rollback.</FlowStep>
+  <FlowStep title="The student answers first" tone="owned" meta="Nano 4B + your LoRA">Sampled 3 times; its <Term t="confidence">confidence</Term> decides.</FlowStep>
+  <FlowStep title="The teacher answers the rest" tone="rented" meta="Ultra on Token Factory">And checks a random 5% of the <Term t="student">student</Term>'s answers.</FlowStep>
+  <FlowStep title="Answers become training data" meta="with provenance">Each with its <Term t="teacher">teacher</Term> and license, after redaction.</FlowStep>
+  <FlowStep title="Released through gates" meta="every night">Golden set, shadow, <Term t="canary">canary</Term> 10%, 50%, 100%, rollback.</FlowStep>
 </Flow>
 
 In more detail:
@@ -91,10 +92,10 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Start at the top: every request reaches the student first, and the thick path is the cheap one, where a confident student answers at once. Only unsure requests go to the teacher, and every teacher answer also flows down into the ledger. The dotted line closes the loop: what the ledger collects trains the next student, and the gate decides whether that student replaces the current one. That loop is why the share of rented answers can shrink over time.
+**Reading this diagram.** Start at the top: every request reaches the student first, and the thick path is the cheap one, where a confident student answers at once. Only unsure requests go to the teacher, and every teacher answer also flows down into the <Term t="ledger">ledger</Term>. The dotted line closes the loop: what the ledger collects trains the next student, and the gate decides whether that student replaces the current one. That loop is why the share of rented answers can shrink over time.
 
 <ul class="rt-key">
-  <li class="student">The student: Nano plus your adapter</li>
+  <li class="student">The student: Nano plus your <Term t="adapter">adapter</Term></li>
   <li class="teacher">The teacher, rented per token</li>
   <li class="store">Stored data</li>
   <li class="gate">A check that can stop a release</li>
@@ -136,7 +137,7 @@ sequenceDiagram
 
 <figcaption>
 
-**Reading this diagram.** Time runs downward. The gateway always asks the student first. The `alt` block is the fork: a confident answer returns at once and costs the teacher nothing, while an unsure one is answered by the teacher and stored with its provenance. The `opt` block at the bottom is the audit: on a random share of confident answers the teacher quietly checks the student, so wrong-but-sure answers show up in the numbers instead of staying hidden. For the full detail see [One request's journey](/guides/request-journey/).
+**Reading this diagram.** Time runs downward. The gateway always asks the student first. The `alt` block is the fork: a confident answer returns at once and costs the teacher nothing, while an unsure one is answered by the teacher and stored with its <Term t="provenance">provenance</Term>. The `opt` block at the bottom is the audit: on a random share of confident answers the teacher quietly checks the student, so wrong-but-sure answers show up in the numbers instead of staying hidden. For the full detail see [One request's journey](/guides/request-journey/).
 
 </figcaption>
 </figure>
@@ -165,5 +166,5 @@ Ratchet also reports the bill honestly: savings per token and by GPU-hours actua
 </PathGrid>
 
 <Aside type="note" title="Common questions">
-Is the student as good as the teacher? It is held to agreement with the teacher on held-out rows, not to ground truth (see [Escalation and audits](/guides/escalation-and-audits/)). Does it always save money? No, see [Cost and savings](/guides/cost-and-savings/). What do you own? The adapter and its signed bill of materials; the Nano base stays under NVIDIA's license. More in the [FAQ](/guides/faq/).
+Is the student as good as the teacher? It is held to agreement with the teacher on <Term t="held-out">held-out rows</Term>, not to ground truth (see [Escalation and audits](/guides/escalation-and-audits/)). Does it always save money? No, see [Cost and savings](/guides/cost-and-savings/). What do you own? The adapter and its signed <Term t="bom">bill of materials</Term>; the Nano base stays under NVIDIA's license. More in the [FAQ](/guides/faq/).
 </Aside>

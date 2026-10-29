@@ -11,6 +11,7 @@ import StatRow from '../../../components/StatRow.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>This page covers the controls that keep a Ratchet gateway from being used, billed or read by the wrong people, and the safety rules that keep its learning loop honest.</Summary>
 
@@ -63,7 +64,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Every arrow that crosses the boundary of the VM is HTTPS with a credential. Inbound there is one door: Caddy on 443. Outbound, the thick arrow stands for three connections, each with its own key: a bearer key for Token Factory and for Tavily, the endpoint token for the student endpoint. The dotted line is the one file of secrets, readable only by the service user. The gateway's port 8000 has no way in from outside: only Caddy can reach it.
+**Reading this diagram.** Every arrow that crosses the boundary of the VM is HTTPS with a credential. Inbound there is one door: Caddy on 443. Outbound, the thick arrow stands for three connections, each with its own key: a bearer key for Token Factory and for <Term t="tavily">Tavily</Term>, the endpoint token for the student endpoint. The dotted line is the one file of secrets, readable only by the service user. The gateway's port 8000 has no way in from outside: only Caddy can reach it.
 
 </figcaption>
 </figure>
@@ -72,7 +73,7 @@ flowchart TB
 
 1. **The edge.** In the VM kit, Caddy serves HTTPS with automatic certificates, adds security headers (`Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, a referrer and a permissions policy) and, with `RATCHET_API_GUARD=guarded`, blocks the paid and management paths unless a request carries the edge token. The gateway's port 8000 is only reachable from Caddy.
 
-2. **Keys and access levels.** The gateway gives every route one access level (`ratchet/access.py`) and checks the caller's key for it. Live mode refuses to start without API keys unless you say something else checks callers.
+2. **Keys and access levels.** The gateway gives every route one access level (`ratchet/access.py`) and checks the caller's key for it. <Term t="live-mode">Live mode</Term> refuses to start without API keys unless you say something else checks callers.
 
 3. **Limits, before any model call.** A chat request passes a rate limit, an in-flight cap, validation, the key's task scope, its daily quota and its dollar budgets, and the gateway's own daily budget. A refusal calls no model and costs nothing.
 
@@ -142,7 +143,7 @@ sequenceDiagram
 
 <figcaption>
 
-**Reading this diagram.** The key is used once, to look up a name, and then it is gone: the ledger and the logs see only the name. The spend meter is in memory and is filled from the ledger at startup, so the request path never runs a query for it and a restart does not reset it. The last step is why a leaked key spends at most its own budget.
+**Reading this diagram.** The key is used once, to look up a name, and then it is gone: the <Term t="ledger">ledger</Term> and the logs see only the name. The spend meter is in memory and is filled from the ledger at startup, so the request path never runs a query for it and a restart does not reset it. The last step is why a leaked key spends at most its own budget.
 
 </figcaption>
 </figure>
@@ -200,7 +201,7 @@ Four kinds of secret, each with one role. A key that appears in two roles stops 
 | Dashboard key | `RATCHET_DASHBOARD_KEYS` | Reads the dashboard API, writes nothing |
 | Metrics token | `RATCHET_METRICS_TOKEN` | `GET /metrics` only, for a Prometheus scraper |
 
-Keys are at least 16 characters, sent as `Authorization: Bearer <key>` or `X-API-Key`, and compared as SHA-256 digests in constant time (`KeyRing.identify`). The ledger, the logs and `/ratchet/stats` see the key's **name** only (`acme`), never the key.
+Keys are at least 16 characters, sent as `Authorization: Bearer <key>` or `X-API-Key`, and compared as <Term t="sha-256">SHA-256</Term> digests in constant time (`KeyRing.identify`). The ledger, the logs and `/ratchet/stats` see the key's **name** only (`acme`), never the key.
 
 Every route has one access level:
 
@@ -256,7 +257,7 @@ The request ID, failure and metrics behaviour:
 
 A chat request with an `Idempotency-Key` header runs once per API key. A retry with the same key and body gets the first answer again with `Idempotent-Replayed: true`, and makes no model call, ledger row or quota use. The same key with a different body is a 400 `idempotency_key_reused`. Answers are kept in memory only, for `RATCHET_IDEMPOTENCY_TTL_S` (600 s); an error is never kept, so a retry after a failure runs again.
 
-Separately, a retry never counts as a repeat of the request. A request whose `x-stainless-retry-count` is above 0 (OpenAI's SDKs send it) does not add to an example's repeat count, and the same client's repeat within `RATCHET_SEEN_DEDUP_S` (300 s in live mode) counts once. That matters because a request seen 3 times leaves the sealed golden set for training: retries must not drain it.
+Separately, a retry never counts as a repeat of the request. A request whose `x-stainless-retry-count` is above 0 (OpenAI's SDKs send it) does not add to an example's repeat count, and the same client's repeat within `RATCHET_SEEN_DEDUP_S` (300 s in live mode) counts once. That matters because a request seen 3 times leaves the sealed <Term t="golden-set">golden set</Term> for training: retries must not drain it.
 
 ### PII redaction and storage opt-outs
 
@@ -280,9 +281,9 @@ Rotate `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `RATCHET_STUDENT_KEY`, `RATCHET_ADMIN
 
 From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists today and what is planned.
 
-**Assets**: customer request text (stored examples, the training file in the bucket, and what adapters memorise), teacher outputs and their license provenance, the adapters the customer owns, the ledger, the API keys, the BOM signing key, the spend budget, and the release decisions that choose which model answers users.
+**Assets**: customer request text (stored examples, the training file in the bucket, and what adapters memorise), teacher outputs and their license <Term t="provenance">provenance</Term>, the adapters the customer owns, the ledger, the API keys, the <Term t="bom">BOM</Term> signing key, the spend budget, and the release decisions that choose which model answers users.
 
-**Trust boundaries**: client to gateway (keys); gateway to Token Factory (HTTPS, bearer key); gateway to the vLLM endpoint (HTTPS, endpoint token); the cron host to the Nebius CLI (local credentials); job and endpoint to the bucket (a Nebius-managed mount); gateway to Tavily (search results are **untrusted web content**); internet to Caddy in the VM kit.
+**Trust boundaries**: client to gateway (keys); gateway to Token Factory (HTTPS, bearer key); gateway to the <Term t="vllm">vLLM</Term> endpoint (HTTPS, endpoint token); the cron host to the Nebius CLI (local credentials); job and endpoint to the bucket (a Nebius-managed mount); gateway to Tavily (search results are **untrusted web content**); internet to Caddy in the VM kit.
 
 | Threat | Present today | Planned |
 |---|---|---|
@@ -299,7 +300,7 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 | Stolen BOM signing key (T21) | Read from the environment only; only the public half is served | A secrets manager, signing on a separate machine |
 
 <Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
-- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot <Term t="l40s">L40S</Term>: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
 - **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
 - **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
 </Aside>
@@ -316,9 +317,9 @@ The project keeps a list of rules that code and tests enforce. The ones about th
 
 - **Only teachers whose license allows training on their outputs.** Every teacher passes `licenses.require_distillable`. Closed models such as GPT are refused, because their terms forbid training competing models ([OpenAI Business Terms §3.3(e)](https://openai.com/policies/business-terms/)).
 - **The sealed exam stays sealed.** Golden examples are never trained on, except requests seen 3 or more times, which move to training and leave the golden set.
-- **Champion and challenger sit the same exam.** Each night the live version is re-scored on the current golden set before a candidate is compared with it.
+- **<Term t="champion-challenger">Champion and challenger</Term> sit the same exam.** Each night the live version is re-scored on the current golden set before a candidate is compared with it.
 - **No training while a release is in flight.** Nothing trains while a version is in shadow or canary.
-- **Precision is measured on held-out data.** The threshold is calibrated on even golden rows and precision measured on odd rows.
+- **Precision is measured on <Term t="held-out">held-out</Term> data.** The threshold is calibrated on even golden rows and precision measured on odd rows.
 - **A student failure never fails the request.** It falls back to the teacher. A teacher failure on the serving path returns a mapped status (400 or 429 for client causes, 502, 503 or 504 otherwise).
 - **Model ids and prices are unverified until the day-1 check passes** with a real key.
 - **Pinned tasks never become training data** and never reach the student.
@@ -380,7 +381,7 @@ Send chat requests until its own limits stop it: its daily quota, its dollar bud
 
 ### Does Ratchet log what people send?
 
-No prompt or answer text goes into logs, metrics or `failures` rows. Request text is stored only in training examples, redacted first, unless an opt-out keeps it out. Scout questions do appear in the web servers' access logs, because the stream URL carries them.
+No prompt or answer text goes into logs, metrics or `failures` rows. Request text is stored only in training examples, redacted first, unless an <Term t="opt-out">opt-out</Term> keeps it out. Scout questions do appear in the web servers' access logs, because the stream URL carries them.
 
 ### What is not protected yet?
 

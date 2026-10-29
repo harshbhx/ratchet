@@ -12,6 +12,7 @@ import StatRow from '../../../components/StatRow.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Confidence is the score that decides, on every request, whether the student's answer goes out or the teacher is asked, and each adapter version gets its own threshold, set on half of the golden set and checked on the other half.</Summary>
 
@@ -62,7 +63,7 @@ sequenceDiagram
 
 <figcaption>
 
-**Reading this diagram.** Time runs downward. The student is always asked first, three times in one call. Only the gateway looks at the samples: it cleans them, counts agreement and computes one confidence number, and that number alone decides who answers. When the student answers, the teacher may still be called for a random audit (the `opt` block), but in live mode the client never waits for it. When the student does not answer, the teacher's answer goes to the client and is stored as training data if it is valid.
+**Reading this diagram.** Time runs downward. The <Term t="student">student</Term> is always asked first, three times in one call. Only the gateway looks at the samples: it cleans them, counts agreement and computes one confidence number, and that number alone decides who answers. When the student answers, the teacher may still be called for a random audit (the `opt` block), but in live mode the client never waits for it. When the student does not answer, the teacher's answer goes to the client and is stored as training data if it is valid.
 
 <ul class="rt-key">
   <li class="student">The student: Nano plus your adapter</li>
@@ -72,7 +73,7 @@ sequenceDiagram
 </figcaption>
 </figure>
 
-The student (<Who as="student" />) answers first. The gateway samples it several times, scores the samples, and compares the score with a threshold that belongs to the version that answered and, since per-task calibration, to the task.
+The student (<Who as="student" />) answers first. The gateway samples it several times, scores the samples, and compares the score with a threshold that belongs to the version that answered and, since per-task <Term t="calibration">calibration</Term>, to the task.
 
 <Steps>
 
@@ -82,11 +83,11 @@ The student (<Who as="student" />) answers first. The gateway samples it several
 
 3. **Count agreement.** Valid samples are compared pairwise with the task's field comparators (`Task.match`). Each sample's votes are the valid samples it matches, itself included. The majority is the first sample with the most votes, and `agreement` is its votes divided by the number of samples. With a tolerance, agreement is not always "all equal": under a number field with `abs_tol` 1, the answers 0, 0.6 and 1.2 all match 0.6, so 0.6 is served with agreement 1.0.
 
-4. **Read token probability.** Among the majority's samples with the top vote count, the gateway picks the one with the highest token probability, `p = exp(mean token logprob)`, from the logprobs vLLM returns.
+4. **Read token probability.** Among the majority's samples with the top vote count, the gateway picks the one with the highest token probability, `p = exp(mean token logprob)`, from the logprobs <Term t="vllm">vLLM</Term> returns.
 
 5. **Combine.** `confidence = 0.4 × p + 0.6 × agreement`. If the endpoint returned no logprobs, confidence is the agreement alone.
 
-6. **Compare.** If the answer is valid and confidence is at least the threshold, the student's answer is served (route `student`), and a random share of such answers is audited by the teacher. Otherwise the request escalates to the teacher (route `confidence`), whose answer is served and, if valid, stored as training data with its provenance.
+6. **Compare.** If the answer is valid and confidence is at least the threshold, the student's answer is served (route `student`), and a random share of such answers is audited by the teacher. Otherwise the request escalates to the teacher (route `confidence`), whose answer is served and, if valid, stored as training data with its <Term t="provenance">provenance</Term>.
 
 </Steps>
 
@@ -143,7 +144,7 @@ Raising the threshold usually serves fewer answers at higher precision. Usually,
 The numbers below are made up to show the arithmetic. They are not results from Ratchet.
 </Aside>
 
-Take 20 golden rows. The ten **calibration** rows, sorted by the student's confidence, with whether its answer agreed with the teacher:
+Take 20 <Term t="golden-set">golden rows</Term>. The ten **calibration** rows, sorted by the student's confidence, with whether its answer agreed with the teacher:
 
 | Confidence | Agrees? | Served at this bar | Agreeing among served | Precision at this bar |
 |---|---|---|---|---|
@@ -158,7 +159,7 @@ Take 20 golden rows. The ten **calibration** rows, sorted by the student's confi
 | 0.65 | yes | 9 | 7 | 78% |
 | 0.55 | no | 10 | 7 | 70% |
 
-The lowest bar where precision is still at least 97% is **0.88**. Now grade it on the ten **held-out** rows: confidences 0.99, 0.96, 0.94, 0.91 and 0.89 are at or above 0.88, and one of those five (the 0.89) disagrees with the teacher. So on held-out data this toy version has **coverage 50%** (5 of 10) and **precision 80%** (4 of 5), not the 100% the calibration half showed. That gap is why Ratchet never grades a threshold on the rows it was tuned on, and why this toy version would be rejected by the golden gate (80% is below the 95% floor). With only five served rows, its certified lower bound would also be weak: 34% (exact Clopper–Pearson at delta 0.05, from `ratchet/stats.py`).
+The lowest bar where precision is still at least 97% is **0.88**. Now grade it on the ten **<Term t="held-out">held-out</Term>** rows: confidences 0.99, 0.96, 0.94, 0.91 and 0.89 are at or above 0.88, and one of those five (the 0.89) disagrees with the teacher. So on held-out data this toy version has **coverage 50%** (5 of 10) and **precision 80%** (4 of 5), not the 100% the calibration half showed. That gap is why Ratchet never grades a threshold on the rows it was tuned on, and why this toy version would be rejected by the golden gate (80% is below the 95% floor). With only five served rows, its certified lower bound would also be weak: 34% (exact <Term t="clopper-pearson">Clopper–Pearson</Term> at delta 0.05, from `ratchet/stats.py`).
 
 ## The threshold, per version
 
@@ -174,7 +175,7 @@ Each trained adapter version carries its own threshold in its eval (`versions.ev
 
 4. **Clamp.** `threshold = min(1.01, max(0.5, calibrated))`. The floor 0.5 keeps the student from serving coin-flip answers. Scores are at most 1, so **1.01 means "serve nothing"** (`SERVE_NOTHING`); it is a finite number so the eval stays valid JSON. Since v0.5 the threshold is stored exactly, so the router serves at the threshold the eval measured.
 
-5. **Measure on the odd half.** Coverage and precision at that threshold, plus the certificate, the frontier, the per-task bounds and the per-row outcomes (`test_vector`). These held-out numbers are what the [release gate](/guides/release-gate/) reads.
+5. **Measure on the odd half.** Coverage and precision at that threshold, plus the <Term t="certificate">certificate</Term>, the frontier, the per-task bounds and the per-row outcomes (`test_vector`). These held-out numbers are what the [release gate](/guides/release-gate/) reads.
 
 </Steps>
 
@@ -211,7 +212,7 @@ Which requests are golden is decided by a hash of the request (`RATCHET_GOLDEN_F
 
 Golden rows are teacher answers to escalations, audits and arbitrations, so they lean towards requests the student found hard. Precision measured on them means agreement with Nemotron 3 Ultra, not ground truth.
 
-The router reads the threshold on every request with a dictionary lookup (`Ratchet.threshold`). Thresholds differ between versions because each adapter's confidence scale is its own; that is also why the ledger replay never pools two versions.
+The router reads the threshold on every request with a dictionary lookup (`Ratchet.threshold`). Thresholds differ between versions because each adapter's confidence scale is its own; that is also why the ledger <Term t="replay">replay</Term> never pools two versions.
 
 ## Per-task thresholds
 
@@ -238,7 +239,7 @@ Each per-task record stores the `spec_hash` it was scored under. If an operator 
 
 Every eval also carries a **certificate**: on the held-out half, how many answers the version would serve, how many of those agree with the teacher, and an exact one-sided Clopper–Pearson lower bound on its precision (`RATCHET_CERT_TARGET` 0.95, `RATCHET_CERT_DELTA` 0.05). [Evidence you can check](/guides/evidence/) explains how to read and recompute it.
 
-The default point rule picks the threshold and the certificate checks it afterwards. With `RATCHET_CALIBRATION=ltt` (opt-in), the threshold itself is chosen so that its precision is certified, by **Learn-then-Test**:
+The default point rule picks the threshold and the certificate checks it afterwards. With `RATCHET_CALIBRATION=ltt` (opt-in), the threshold itself is chosen so that its precision is certified, by **<Term t="learn-then-test">Learn-then-Test</Term>**:
 
 <Steps>
 
@@ -321,7 +322,7 @@ When the student's GPU endpoint is off (`RATCHET_STUDENT_BASE` unset), a trained
 That model never sat the exam, so no calibrated threshold or per-task record applies to it. `Ratchet.threshold` returns the fixed `Settings.confidence_threshold` (`RATCHET_CONFIDENCE_THRESHOLD`, default 0.80) for it, and its answers are **not covered by the adapter's certificate**. The same 0.80 is used for a version whose eval has no calibrated threshold.
 
 <Aside type="caution" title="Calibrated offline so far">
-As of Oct 29, 2026, the teacher runs on Nebius Token Factory and the live gateway calls it for real. The text-to-SQL recipe was retrained once on Nebius AI Cloud, by hand (27 Oct 2026, a spot L40S Serverless Job; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)). The student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), and the endpoint was deleted. Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it (81.8% precision against the 95% target), so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)). The live site is not connected to a student endpoint, the teacher answers every live request, and the nightly loop has not run on live traffic. Night School has not calibrated a threshold on a live ledger; the one run on Nebius calibrated one on 458 golden rows, imported rather than served. The scoring, calibration and certificate code is tested offline with mock models. The text-to-SQL adapter, trained on a borrowed GPU, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
+As of Oct 29, 2026, the teacher runs on Nebius Token Factory and the live gateway calls it for real. The text-to-SQL recipe was retrained once on Nebius AI Cloud, by hand (27 Oct 2026, a spot <Term t="l40s">L40S</Term> Serverless Job; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)). The student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), and the endpoint was deleted. Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it (81.8% precision against the 95% target), so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)). The live site is not connected to a student endpoint, the teacher answers every live request, and the nightly loop has not run on live traffic. Night School has not calibrated a threshold on a live ledger; the one run on Nebius calibrated one on 458 golden rows, imported rather than served. The scoring, calibration and certificate code is tested offline with mock models. The text-to-SQL adapter, trained on a borrowed GPU, sets a similar gate on real Nano 4B outputs from its average token probability; its measured numbers are on [Results](/guides/results/).
 </Aside>
 
 ## For engineers
@@ -362,7 +363,7 @@ Where to see it:
 - `GET /ratchet/versions/{id}/certificate` serves the signed and the latest certificate.
 - `GET /ratchet/replay?threshold=0.4` replays a version's logged traffic at another threshold ([Evidence you can check](/guides/evidence/)).
 - Routes in `requests.route`: `student`, `confidence`, `cold_start`, `task_disabled`, `n_choices` (the student was sure, but fewer than the client's `n` samples agreed).
-- `GET /ratchet/drift` reports the drift alarm's streams.
+- `GET /ratchet/drift` reports the <Term t="drift">drift</Term> alarm's streams.
 - Events: `rescored`, `rescore_failed`, `task_disabled`, `drift`.
 
 ```bash

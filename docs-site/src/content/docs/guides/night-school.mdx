@@ -15,6 +15,7 @@ import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
 import GradientText from '../../../components/ui/GradientText.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Night School is the nightly job that trains <GradientText text="a fresh LoRA adapter" tone="owned" /> from the base model on every teacher answer stored so far, grades it on a sealed golden set it never studied, and hands it to the release gate.</Summary>
 
@@ -31,10 +32,10 @@ Night school is skipped when there is nothing new to learn, when the new apprent
 </Eli10>
 
 <Flow loop loopLabel="Every night, again" label="One night">
-  <FlowStep title="Build the sets" meta="dataset.build">Training rows and the sealed golden rows, split by a hash of each request.</FlowStep>
+  <FlowStep title="Build the sets" meta="dataset.build">Training rows and the sealed <Term t="golden-set">golden rows</Term>, split by a hash of each request.</FlowStep>
   <FlowStep title="Train from the base" tone="owned" meta="Nano 4B + a new LoRA">A fresh adapter on every training row so far, never on student answers.</FlowStep>
   <FlowStep title="Grade on the golden set" meta="cascade_eval">Even rows set the threshold, odd rows it never saw grade it.</FlowStep>
-  <FlowStep title="Sign and hand over" meta="BOM, then gate.admit">A bill of materials, signed when a key is set, then shadow, canary or rejected.</FlowStep>
+  <FlowStep title="Sign and hand over" meta="BOM, then gate.admit">A <Term t="bom">bill of materials</Term>, signed when a key is set, then shadow, canary or rejected.</FlowStep>
 </Flow>
 
 ## How it really works
@@ -88,15 +89,15 @@ flowchart TB
 
 7. **Re-score the champion.** The live version is evaluated again on **tonight's** golden set, under tonight's task specs, and its eval is overwritten. The candidate will be compared with this score, not with an old one (champion against challenger on the same data).
 
-8. **Commit to the rows.** The training and golden sets are each turned into a Merkle root (`dataset.commitment`), before the paid job starts, so the signed BOM can later prove what was and was not trained on ([evidence](/guides/evidence/)).
+8. **Commit to the rows.** The training and golden sets are each turned into a <Term t="merkle-root">Merkle root</Term> (`dataset.commitment`), before the paid job starts, so the signed BOM can later prove what was and was not trained on ([evidence](/guides/evidence/)).
 
 9. **Train.** `trainer.train(train_rows, base_model, "student-vN")` trains a new adapter **from the base model** on **every** training row so far. In live mode the wall-clock time is recorded as a `training_job` compute interval for the cost report, also when training fails.
 
 10. **Register the candidate.** A `candidate` version is created and its committed leaves are written once (append-only).
 
-11. **Golden eval.** The candidate is sampled on each golden row exactly as production samples it (3 samples at temperature 0.7 with token logprobs). The confidence threshold is calibrated on the **even** rows (target precision 0.97), and precision and coverage are measured on the **odd** rows it never saw. The eval also carries an exact precision certificate, and, when a version is live, a row-by-row comparison with tonight's re-score. Free-text tasks also get a judge score from <Who as="judge" />, recorded as `judge_pass_rate`; it does not gate the release.
+11. **Golden eval.** The candidate is sampled on each golden row exactly as production samples it (3 samples at temperature 0.7 with token logprobs). The confidence threshold is calibrated on the **even** rows (target precision 0.97), and precision and coverage are measured on the **odd** rows it never saw. The eval also carries an exact precision <Term t="certificate">certificate</Term>, and, when a version is live, a row-by-row comparison with tonight's re-score. Free-text tasks also get a judge score from <Who as="judge" />, recorded as `judge_pass_rate`; it does not gate the release.
 
-12. **Sign the BOM.** The adapter's bill of materials is written from the exact rows: sources and licenses, the base model's license, the NOTICE.md text, the eval, the set roots. It is signed with Ed25519 when `RATCHET_BOM_SIGNING_KEY` is set.
+12. **Sign the BOM.** The adapter's bill of materials is written from the exact rows: sources and licenses, the base model's license, the NOTICE.md text, the eval, the set roots. It is <Term t="ed25519">signed with Ed25519</Term> when `RATCHET_BOM_SIGNING_KEY` is set.
 
 13. **Admit.** A `trained` event is written, then `gate.admit(vN)` decides: **rejected**, **shadow** (a live version exists), or **canary 10%** (cold start, no live version). See [the release gate](/guides/release-gate/).
 
@@ -130,7 +131,7 @@ sequenceDiagram
 
 <figcaption>
 
-**Reading this diagram.** Everything starts on the gateway host, where cron runs `python -m ratchet.live night` next to the ledger and the release gate. The live version is graded again first, on the student endpoint (1). Then the night uploads the training file to the bucket (2) and starts a Serverless Job (3), which reads it from `/data` and writes the new adapter's folder back (4); `deploy/train_job.sh` waits until the weights are there. The night tells vLLM to load the adapter at runtime (5), grades it with 3 samples per golden row (6) and has the judge score free-text rows (7). It records the candidate, its eval and its signed bill of materials in the ledger and calls the gate. Last, it writes the BOM and the signed `NOTICE.md` into the adapter's folder and syncs the bucket again (8).
+**Reading this diagram.** Everything starts on the gateway host, where cron runs `python -m ratchet.live night` next to the ledger and the release gate. The live version is graded again first, on the student endpoint (1). Then the night uploads the training file to the bucket (2) and starts a <Term t="serverless-job">Serverless Job</Term> (3), which reads it from `/data` and writes the new adapter's folder back (4); `deploy/train_job.sh` waits until the weights are there. The night tells <Term t="vllm">vLLM</Term> to load the adapter at runtime (5), grades it with 3 samples per golden row (6) and has the judge score free-text rows (7). It records the candidate, its eval and its signed bill of materials in the ledger and calls the gate. Last, it writes the BOM and the signed `NOTICE.md` into the adapter's folder and syncs the bucket again (8).
 
 </figcaption>
 </figure>
@@ -150,8 +151,8 @@ The live commands, file paths and polling are on [Training on your data](/guides
 - **Split by hash.** When an example is first stored, its split is fixed: `golden` if the first 8 hex digits of its hash, divided by `0xFFFFFFFF`, are below `RATCHET_GOLDEN_FRACTION` (default 0.10), else `train`. The hash is over the task and the redacted messages, so the split never changes and nothing leaks from re-splitting.
 - **Variants share a split.** The same prompt stored under other conditions (a `stop`, a JSON schema) is another example, but it lands in the same split. The trainer only sees the messages, so a golden prompt stored again in train would be trained on.
 - **Never trained on**, with one exception, the FREQUENT rule below. Golden rows are only ever used to calibrate and grade.
-- **Half calibrates, half grades.** `cascade_eval` picks the lowest threshold whose served answers reach the target precision on the even-indexed golden rows, and reports precision and coverage on the odd-indexed rows. Each task also gets its own threshold; with fewer than `RATCHET_MIN_TASK_GOLDEN` (20) calibration rows it is never below the global one. Thresholds are clamped between 0.5 and 1.01, and 1.01 means "serve nothing".
-- **Human-verified golden rows.** An operator can import a golden set that is held out for good, even past FREQUENT, with every variant of its prompt (`python -m ratchet.importer ... --golden-only`).
+- **Half calibrates, half grades.** `cascade_eval` picks the lowest threshold whose served answers reach the target precision on the even-indexed golden rows, and reports precision and coverage on the odd-indexed rows. Each task also gets its own threshold; with fewer than `RATCHET_MIN_TASK_GOLDEN` (20) <Term t="calibration">calibration</Term> rows it is never below the global one. Thresholds are clamped between 0.5 and 1.01, and 1.01 means "serve nothing".
+- **Human-verified golden rows.** An operator can import a golden set that is <Term t="held-out">held out</Term> for good, even past FREQUENT, with every variant of its prompt (`python -m ratchet.importer ... --golden-only`).
 
 The golden set comes from teacher-labelled traffic (escalations, audits, arbitrations), so it leans toward requests the student found hard. Its coverage is a conservative estimate of live coverage, and its precision means agreement with the teacher, not ground truth.
 
@@ -163,9 +164,9 @@ A request whose `seen` count reaches **3** (`dataset.FREQUENT`) is treated as a 
 
 ### What LoRA is
 
-**Simply:** the base model, NVIDIA Nemotron 3 Nano 4B, stays frozen. LoRA trains a small set of extra weights that sit beside some of its layers and nudge their output. Those extra weights are the adapter: a few files, cheap to train, quick to load and easy to swap. The adapter is yours; the base stays under NVIDIA's license.
+**Simply:** the base model, NVIDIA Nemotron 3 Nano 4B, stays frozen. <Term t="lora">LoRA</Term> trains a small set of extra weights that sit beside some of its layers and nudge their output. Those extra weights are the adapter: a few files, cheap to train, quick to load and easy to swap. The adapter is yours; the base stays under NVIDIA's license.
 
-**Precisely:** for a frozen weight matrix W, LoRA learns two thin matrices B and A of rank r, and the layer computes W·x + (α / r)·B·A·x. With rank 16 and alpha 32, the update is scaled by 2. Ratchet's training script, [`ratchet/nightschool/train.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/nightschool/train.py), uses Transformers, PEFT and TRL's `SFTTrainer` with these defaults:
+**Precisely:** for a frozen weight matrix W, LoRA learns two thin matrices B and A of rank r, and the layer computes W·x + (α / r)·B·A·x. With rank 16 and alpha 32, the update is scaled by 2. Ratchet's training script, [`ratchet/nightschool/train.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/nightschool/train.py), uses Transformers, <Term t="peft">PEFT</Term> and TRL's `SFTTrainer` with these defaults:
 
 | Setting | Default | Flag |
 |---|---|---|
@@ -180,13 +181,13 @@ A request whose `seen` count reaches **3** (`dataset.FREQUENT`) is treated as a 
 | Loss | On the answer only (`completion_only_loss=True`) | |
 | Target modules | `q_proj, k_proj, v_proj, o_proj` (attention), `up_proj, down_proj` (MLP), `in_proj, out_proj` (Mamba) | `--targets` |
 
-Nemotron-H mixes attention, Mamba and MLP layers. The default targets include the Mamba projections. Whether vLLM loads and applies LoRA on them is checked on day 1; if it refuses, the fallback is `--targets q_proj,k_proj,v_proj,o_proj,up_proj,down_proj` (`TARGETS_ATTENTION_MLP`). The student endpoint is started with `--max-lora-rank 16`, so a higher rank needs that flag raised too.
+Nemotron-H mixes attention, <Term t="mamba">Mamba</Term> and MLP layers. The default targets include the Mamba projections. Whether vLLM loads and applies LoRA on them is checked on day 1; if it refuses, the fallback is `--targets q_proj,k_proj,v_proj,o_proj,up_proj,down_proj` (`TARGETS_ATTENTION_MLP`). The student endpoint is started with `--max-lora-rank 16`, so a higher rank needs that flag raised too.
 
 ### Retrain from the base every night
 
 Each night trains a **new** adapter from the **base model** on **all** training rows so far. Adapters are never stacked or continued.
 
-- No drift compounds from one adapter to the next, and each version is one dataset snapshot, named by its `dataset_hash`.
+- No <Term t="drift">drift</Term> compounds from one adapter to the next, and each version is one dataset snapshot, named by its `dataset_hash`.
 - Replay of old data is built in, which limits forgetting.
 - Rollback is simple: the previous adapter is still there, unchanged.
 - The cost: training time grows with the dataset. Deduplication, sampling or recency-weighted replay are the later fixes.
