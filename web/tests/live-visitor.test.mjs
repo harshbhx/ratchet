@@ -269,7 +269,7 @@ test("the Worker is wired to the quota and the stripping; wrangler.json declares
   assert.match(readFileSync(new URL("../../deploy/cloudflare-live/src/turnstile.ts", import.meta.url), "utf8"), /overQuota\(a\.quotas, a\.limits, a\.method, a\.url\.pathname, a\.headers, a\.ip, now\)/);
   assert.match(index, /forwardedHeaders\(request\.headers, ip\)/);
   assert.match(index, /export class VisitorQuota extends DurableObject/);
-  assert.match(index, /demo:daily_requests=300,daily_usd=1\.5,rpm=60,concurrency=4/);
+  assert.match(readFileSync(new URL("../../deploy/cloudflare-live/src/containerenv.ts", import.meta.url), "utf8"), /demo:daily_requests=300,daily_usd=1\.5,rpm=60,concurrency=4/);
   assert.doesNotMatch(index, /RATCHET_EDGE/, "a RATCHET_* name would be passed to the gateway, which warns about unknown variables");
   assert.doesNotMatch(index, /EDGE_TOKEN\s*[:=]\s*["'`][^"'`]{8,}/, "no secret value in the source");
   const wrangler = JSON.parse(readFileSync(new URL("../../deploy/cloudflare-live/wrangler.json", import.meta.url), "utf8"));
