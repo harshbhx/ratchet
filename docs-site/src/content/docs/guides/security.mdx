@@ -299,14 +299,15 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 | Prompt injection from search results (T15) | Results are data in a user message, never a system prompt; the writer is pinned to the teacher; no agent runs tools or code from model output | Stricter delimiting, shorter excerpts |
 | Stolen BOM signing key (T21) | Read from the environment only; only the public half is served | A secrets manager, signing on a separate machine |
 
-<Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
-- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot <Term t="l40s">L40S</Term>: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
-- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
-- **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
+<Aside type="tip" title="Ran on Nebius">
+- **Live site, as of 29 Oct 2026:** every model call on the live site runs on Nebius <Term t="token-factory">Token Factory</Term>. Nemotron 3 Ultra teaches, and a <Term t="random-split">random</Term> 40% of eligible requests are answered by the hosted Nemotron 3 Nano 30B, with a quarter of those re-checked by Ultra ([live stats](https://live.ratchet.dualmindlab.tech/ratchet/stats)).
+- **27 Oct 2026:** the text-to-SQL adapter was retrained on Nebius AI Cloud, by hand, as one spot <Term t="l40s">L40S</Term> Serverless Job: 40.7% on exam 1 and 34.5% on exam 2 (originally 39.0% and 33.0%) ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint with 16 users at once: median 1.6 s for SQL and 1.2 s for tool calling. The endpoint was deleted afterwards, so no GPU sits idle ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+- **28 Oct 2026:** Night School ran end to end once, by hand. The golden gate rejected the candidate at 81.8% precision against the 95% target, so it was never made live: the safety check doing its job ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
 </Aside>
 
 <Aside type="caution" title="What is still unchecked or not run">
-As of Oct 29, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are tested offline and ran once by hand on 28 Oct 2026 (Night School, rejected by the golden gate), with the one-command host ready to run with `make nebius-up`; the live gateway answers every request with a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
+As of Oct 29, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are tested offline and ran once by hand on 28 Oct 2026 (Night School, rejected by the golden gate), with the one-command host ready to run with `make nebius-up`; every model call on the live gateway is a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
 </Aside>
 
 ### The safety rules the loop never breaks

@@ -101,7 +101,7 @@ if [[ "$DRY" == "1" ]]; then
 fi
 
 # --- settings (the same names create_vm.sh and student_endpoint.sh read) --------------------
-VM_NAME="${RATCHET_VM_NAME:-ratchet-demo}"
+VM_NAME="${RATCHET_VM_NAME:-ratchet-host}"
 SSH_USER="${RATCHET_SSH_USER:-ubuntu}"
 PLATFORM="${RATCHET_VM_PLATFORM:-cpu-e2}"
 SSH_KEY_PATH="${SSH_PUBLIC_KEY_PATH:-$HOME/.ssh/id_ed25519.pub}"
