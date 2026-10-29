@@ -83,7 +83,7 @@ curl -s https://live.ratchet.dualmindlab.tech/v1/chat/completions \
   -d '{"model":"ratchet","messages":[{"role":"user","content":"In one sentence, what is a LoRA adapter?"}]}'
 ```
 
-The reply carries a `ratchet` block. Expect `served_by: "teacher"`, the model `nvidia/Nemotron-3-Ultra-550b-a55b`, a small `cost_usd` (a fraction of a cent) and a `request_id`. It is a real call, so please keep it to a few. No trained student is served in the live gateway yet, so the teacher answers every request.
+The reply carries a `ratchet` block. Expect `served_by: "teacher"` and the model `nvidia/Nemotron-3-Ultra-550b-a55b`, or, for a random 40% of eligible requests, the hosted Nano 30B (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`, route `demo_split`). Either way you get a small `cost_usd` (a fraction of a cent) and a `request_id`. It is a real call, so please keep it to a few. Ratchet's own adapter is not connected to the live gateway; every model call on it runs on Nebius Token Factory.
 
 **The run on record:** `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` recomputes the client-side numbers of a recorded 20-request run from its 21 per-request records. Expected: `recomputed 11 client-side values and 1 rounds from 21 records`. It also prints a line that starts `not recomputable here (ledger snapshots or entered by hand)`; those values are listed, not checked. Three recorded live Scout runs are in [`evidence/scout`](../evidence/scout), and you can [replay](https://docs.ratchet.dualmindlab.tech/guides/glossary/#replay) them [in your browser](https://huggingface.co/spaces/harshbhx/ratchet-scout).
 

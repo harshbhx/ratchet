@@ -4,8 +4,9 @@ The same gateway image as the optional mock-mode host (`../cloudflare`), but in 
 Nemotron 3 Ultra on Nebius Token Factory, behind a Worker at `live.ratchet.dualmindlab.tech`. The mock-mode host stays at
 `demo.ratchet.dualmindlab.tech` (not linked from the site).
 
-What it is, honestly: the live gateway has no student endpoint yet (serving the student needs a GPU endpoint), so the
-teacher answers every request, each one logged with its provenance, cost and request id. The student's real results are on the story
+What it is, honestly: Ratchet's own student adapter is not connected to the live gateway (serving it needs a GPU endpoint), so
+Ultra teaches and a random 40% of eligible requests are answered by the hosted Nano 30B (a quarter of those
+re-checked by Ultra), each one logged with its provenance, cost and request id. The student's real results are on the story
 page and the judges' page; the cascade's behaviour with a student is covered by the mock-mode tests; the student was served on a Nebius endpoint for speed tests on 27 to 28 Oct 2026 but the live gateway is not connected to it.
 
 ## Keys: Cloudflare Worker secrets, never in this repo, the image or chat

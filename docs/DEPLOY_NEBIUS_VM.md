@@ -58,7 +58,7 @@ The script:
 
 1. Finds the first subnet in the project (`nebius vpc subnet list`), unless you set `NEBIUS_SUBNET_ID`.
 2. Creates a 30 GiB `network_ssd` boot disk from the image family `ubuntu24.04-driverless` (`nebius compute disk create`).
-3. Creates the VM `ratchet-demo` (`nebius compute instance create`) with that disk, a **static** public IP (kept while the VM is stopped), and [`cloud-init.yaml`](../deploy/vm/cloud-init.yaml) as user data.
+3. Creates the VM `ratchet-host` (`nebius compute instance create`) with that disk, a **static** public IP (kept while the VM is stopped), and [`cloud-init.yaml`](../deploy/vm/cloud-init.yaml) as user data.
 4. Prints the public IP, the VM and disk IDs, and the next steps.
 
 On first boot, cloud-init installs Docker Engine and the Compose plugin from Docker's apt repository, turns on unattended security upgrades and the `ufw` firewall (ports 22, 80, 443), creates a `ratchet` service user, clones the repo to `/opt/ratchet`, writes `deploy/vm/.env` from [`.env.vm.example`](../deploy/vm/.env.vm.example), and runs `docker compose up -d --build`. This takes 5–10 minutes.
@@ -294,9 +294,9 @@ On Dec 16, or whenever judging ends. The boot disk was created on its own, so de
 # Optional: keep a last copy of the ledger
 scp ubuntu@<ip>:/var/backups/ratchet/*.db.gz ./ratchet-backups/
 
-VM_ID=$(nebius compute instance get-by-name --parent-id $NEBIUS_PROJECT_ID --name ratchet-demo --format json | jq -r .metadata.id)
+VM_ID=$(nebius compute instance get-by-name --parent-id $NEBIUS_PROJECT_ID --name ratchet-host --format json | jq -r .metadata.id)
 nebius compute instance delete --id $VM_ID
-nebius compute disk list --parent-id $NEBIUS_PROJECT_ID     # find ratchet-demo-boot (verify on day 1: flags)
+nebius compute disk list --parent-id $NEBIUS_PROJECT_ID     # find ratchet-host-boot (verify on day 1: flags)
 nebius compute disk delete --id <disk ID>
 ```
 

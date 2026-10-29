@@ -94,7 +94,7 @@ Sometimes it will be, and Ratchet is built to keep that rare and visible:
 
 ### Does it work on real traffic yet?
 
-Not yet. As of Oct 29, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data) and Night School ran once on Nebius (rejected by the gate), but the loop has not served real traffic and the live gateway has no student endpoint, so there are no live savings numbers. Live figures will come only from a published live-run results file. The measured results are the text-to-SQL and tool-calling adapters' exams, on [Results](/guides/results/); the loop's own numbers will come only from a published live run. [Evidence](/guides/evidence/)
+Not yet. As of Oct 29, 2026 the teacher side has run for real (Token Factory calls built the text-to-SQL data) and Night School ran once on Nebius (rejected by the gate), but the loop has not served real traffic and Ratchet's own adapter is not connected to the live gateway, so there are no live savings numbers. Live figures will come only from a published live-run results file. The measured results are the text-to-SQL and tool-calling adapters' exams, on [Results](/guides/results/); the loop's own numbers will come only from a published live run. [Evidence](/guides/evidence/)
 
 ### What does it cost?
 
@@ -126,7 +126,7 @@ The story page at https://ratchet.dualmindlab.tech, then `/scout` (ask an exampl
 
 ### Is the live gateway real?
 
-Yes. The gateway at live.ratchet.dualmindlab.tech runs in live mode and calls the real teacher on Token Factory. It has no GPU and no trained student yet, so the teacher answers every request (as of Oct 28, 2026), apart from a <Term t="random-split">random split</Term> that sends a share of eligible calls to the hosted Nano 30B <Who as="fallback" />, labelled as such. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
+Yes. The gateway at live.ratchet.dualmindlab.tech runs in live mode and calls the real teacher on Token Factory. It has no GPU and Ratchet's own adapter is not connected to it. Ultra teaches, and a <Term t="random-split">random split</Term> sends 40% of eligible calls to the hosted Nano 30B <Who as="fallback" /> (a quarter of those re-checked by Ultra), labelled as such. `GET /healthz` reports the `mode` the gateway runs in. [Host it on Nebius](/guides/host-on-nebius/)
 
 ### Which numbers are real?
 
@@ -261,7 +261,7 @@ No. Below break-even, the hosted fallback on Token Factory is cheaper: you pay p
 
 ### Is it ready for production?
 
-Not yet, and it says so. The live gateway has no student endpoint yet, so the teacher answers every request; it runs as one gateway process; PII redaction is pattern-based, so names and street addresses are not caught; precision means agreement with the teacher, not ground truth; and Scout's reader is checked on its labels only, not on the free-text fact it extracts. The README's [limitations](https://github.com/harshbhx/ratchet#limitations) list is the full picture. [Security](/guides/security/)
+Not yet, and it says so. Ratchet's own adapter is not connected to the live gateway (a random 40% of eligible requests go to the hosted Nano 30B); it runs as one gateway process; PII redaction is pattern-based, so names and street addresses are not caught; precision means agreement with the teacher, not ground truth; and Scout's reader is checked on its labels only, not on the free-text fact it extracts. The README's [limitations](https://github.com/harshbhx/ratchet#limitations) list is the full picture. [Security](/guides/security/)
 
 ### Where does my data go?
 

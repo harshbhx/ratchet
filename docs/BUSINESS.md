@@ -81,7 +81,7 @@ Natural acquirers for Ratchet: Nebius (fills its continuous-optimization roadmap
 
 ## 10. Unit economics sketch (illustrative)
 
-No measured savings figure exists yet: the live gateway has no student endpoint, so the teacher answers every request, and Night School has not run on live traffic. Everything below is arithmetic on list prices, to be confirmed with live numbers before it is quoted to customers.
+No measured savings figure exists yet: Ratchet's own adapter is not connected to the live gateway (a random 40% of eligible requests are answered by the hosted Nano 30B), and Night School has not run on live traffic. Everything below is arithmetic on list prices, to be confirmed with live numbers before it is quoted to customers.
 
 ### When self-hosting pays (utilization-aware)
 

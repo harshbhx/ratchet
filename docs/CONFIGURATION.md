@@ -247,7 +247,7 @@ Read only by Docker Compose and Caddy on the VM ([DEPLOY_NEBIUS_VM.md](DEPLOY_NE
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RATCHET_VM_NAME` | `ratchet-demo` | The VM's name (`create_vm.sh` refuses a name that exists) |
+| `RATCHET_VM_NAME` | `ratchet-host` | The VM's name (`create_vm.sh` refuses a name that exists) |
 | `RATCHET_VM_PLATFORM` | `cpu-e2` | Nebius platform; `cpu-e2` exists only in `eu-north1`, elsewhere use `cpu-d3` |
 | `RATCHET_VM_PRESET` | `2vcpu-8gb` | Nebius preset, for example `4vcpu-16gb` |
 | `RATCHET_VM_DISK_GB` | `30` | Boot disk size in GB |

@@ -360,7 +360,7 @@ Then the report does not know the GPU cost. Student answers in hours with no rec
 
 ### Are these real numbers?
 
-Not yet. The per-token prices were checked on 29 Oct 2026 against the price list Token Factory serves (`/v1/models?verbose=true`) and match; the GPU-hour rate is still unverified, and every figure on this page is an estimate. As of Oct 29, 2026 the teacher runs on Nebius Token Factory and the live gateway has no student endpoint (one was served in speed tests and deleted), so the teacher answers every request; the live-run harness will publish measured numbers, including the Nebius bill.
+Not yet. The per-token prices were checked on 29 Oct 2026 against the price list Token Factory serves (`/v1/models?verbose=true`) and match; the GPU-hour rate is still unverified, and every figure on this page is an estimate. As of Oct 29, 2026 the teacher runs on Nebius Token Factory and Ratchet's own adapter is not connected to the live gateway (one was served in speed tests and deleted), where a random 40% of eligible requests are answered by the hosted Nano 30B; the live-run harness will publish measured numbers, including the Nebius bill.
 
 ### Does the baseline overstate savings?
 

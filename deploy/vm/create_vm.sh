@@ -6,7 +6,7 @@
 #   export SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub # default shown
 #   bash deploy/vm/create_vm.sh                      # DRY_RUN=1 prints the commands instead
 #
-# Optional: NEBIUS_SUBNET_ID (default: first subnet in the project), RATCHET_VM_NAME (ratchet-demo),
+# Optional: NEBIUS_SUBNET_ID (default: first subnet in the project), RATCHET_VM_NAME (ratchet-host),
 # RATCHET_VM_PLATFORM (cpu-e2), RATCHET_VM_PRESET (2vcpu-8gb), RATCHET_VM_DISK_GB (30),
 # RATCHET_SSH_USER (ubuntu), RATCHET_REPO_URL, RATCHET_DOMAIN (empty: <ip>.sslip.io).
 #
@@ -21,7 +21,7 @@ DRY_RUN="${DRY_RUN:-0}"
 
 PARENT_ID="${NEBIUS_PROJECT_ID:-${NEBIUS_PARENT_ID:-}}"
 [[ -n "$PARENT_ID" ]] || { echo "Set NEBIUS_PROJECT_ID (your Nebius project ID, used as --parent-id)." >&2; exit 1; }
-VM_NAME="${RATCHET_VM_NAME:-ratchet-demo}"
+VM_NAME="${RATCHET_VM_NAME:-ratchet-host}"
 # cpu-e2 (Intel Ice Lake) exists only in eu-north1; use cpu-d3 (AMD EPYC Genoa) in other regions.
 PLATFORM="${RATCHET_VM_PLATFORM:-cpu-e2}"
 PRESET="${RATCHET_VM_PRESET:-2vcpu-8gb}"
