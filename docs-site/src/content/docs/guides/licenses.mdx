@@ -11,6 +11,7 @@ import Eli10 from '../../../components/Eli10.astro';
 import Who from '../../../components/Who.astro';
 import Stat from '../../../components/Stat.astro';
 import StatRow from '../../../components/StatRow.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Ratchet distills only from teachers whose license allows training other models on their outputs, refuses closed models in code, records the license on every training example, and ships the licenses with every adapter, because the terms of closed models such as GPT forbid using their outputs to train competing models.</Summary>
 
@@ -40,9 +41,9 @@ The apprentice's own schooling came from NVIDIA, under NVIDIA's license. The not
 
 3. **Each stored answer records its license.** When a teacher answer is stored, the ledger row gets `teacher_model`, `license` and `license_url`: the license Ratchet holds for the configured model that answered (the teacher, or the fallback teacher), never one read from the response's `model` string.
 
-4. **Night School re-checks provenance.** `dataset.rows` reads each row's license with `licenses.lookup_source` and drops any row whose provenance is unknown or not distillable.
+4. **Night School re-checks <Term t="provenance">provenance</Term>.** `dataset.rows` reads each row's license with `licenses.lookup_source` and drops any row whose provenance is unknown or not distillable.
 
-5. **The adapter's bill of materials names every license.** The signed BOM lists each source (teacher, license, URL, `distill_ok`, number of examples, and `license_origin`: `builtin` or `config`), the base model's license, and the exact text of `NOTICE.md` with its SHA-256. Each set-commitment leaf binds an example's answer to its teacher, license and redaction count.
+5. **The adapter's <Term t="bom">bill of materials</Term> names every license.** The signed BOM lists each source (teacher, license, URL, `distill_ok`, number of examples, and `license_origin`: `builtin` or `config`), the base model's license, and the exact text of `NOTICE.md` with its <Term t="sha-256">SHA-256</Term>. Each set-commitment leaf binds an example's answer to its teacher, license and redaction count.
 
 6. **The licenses travel with the weights.** The training job writes `NOTICE.md` and `ratchet_manifest.json` next to the adapter. After the night, `python -m ratchet.live night` replaces `NOTICE.md` with the text the BOM signed and syncs both into the adapter's bucket folder. `python -m ratchet.live export` bundles the adapter, the BOM and that `NOTICE.md`.
 
@@ -126,7 +127,7 @@ So the rule is hard, not a warning: the teacher must be in the registry with `di
 
 ### The teacher Ratchet uses: Nemotron 3 Ultra under OpenMDW-1.1
 
-<Who as="teacher" /> is `nvidia/Nemotron-3-Ultra-550b-a55b` on Nebius Token Factory, under [OpenMDW-1.1](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16). In its own words, OpenMDW-1.1 "does not impose any restrictions or obligations with respect to any use, modification, or sharing of any outputs" ([license page](https://openmdw.ai/license/1-1/), last updated May 27, 2026; checked Oct 21, 2026).
+<Who as="teacher" /> is `nvidia/Nemotron-3-Ultra-550b-a55b` on Nebius Token Factory, under [OpenMDW-1.1](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16). In its own words, <Term t="openmdw">OpenMDW-1.1</Term> "does not impose any restrictions or obligations with respect to any use, modification, or sharing of any outputs" ([license page](https://openmdw.ai/license/1-1/), last updated May 27, 2026; checked Oct 21, 2026).
 
 ### The license registry
 
@@ -155,7 +156,7 @@ An open teacher that Ratchet does not list yet can be added without a code chang
 
 An entry is accepted only when:
 
-- its license is one of `ALLOWED_LICENSES`: **OpenMDW-1.1, Apache-2.0, MIT, NVIDIA Nemotron Open Model License** (any case; stored in the canonical spelling);
+- its license is one of `ALLOWED_LICENSES`: **OpenMDW-1.1, Apache-2.0, MIT, <Term t="nemotron-license">NVIDIA Nemotron Open Model License</Term>** (any case; stored in the canonical spelling);
 - its model id belongs to **no closed family** (`closed_family`): the id is split at every character that is not a letter or digit, and no part may start with a closed prefix or with `o` and a digit, or contain a closed prefix of three letters or more such as `gpt` (so `chatgpt-4o-latest` is refused), a closed model's name such as `davinci` or `codex`, or a closed vendor's name such as `openai`. This is stricter than the startup lookup, and it also refuses an open model under a closed vendor's name, which has to be added in code after its license is read;
 - it is **no router alias** (a router's name such as `openrouter` anywhere in the id, or a last segment of `auto`): the model that answers an alias is chosen per request and may be closed;
 - it does not name a built-in teacher, does not repeat an earlier entry, has an `https://` URL, and has no other keys (at most 100 entries).
@@ -168,7 +169,7 @@ Configuration **cannot relabel a closed model Ratchet knows of**. But `closed_fa
 
 ### The student's base: the NVIDIA Nemotron Open Model License
 
-The student is <Who as="student" />: `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` plus a LoRA adapter. The base model is under the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/) (v. Dec 15, 2025), which asks you to give anyone you distribute it to a copy of that license. `licenses.BASE_MODELS` maps the known Nano bases (4B BF16 and FP8, and the 30B-A3B variants) to that license, so the BOM can name it (`base_model_license`). For a base model Ratchet does not know, the BOM and NOTICE carry a warning instead of a license name: then you find and ship its license yourself.
+The student is <Who as="student" />: `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` plus a <Term t="lora">LoRA</Term> adapter. The base model is under the [NVIDIA Nemotron Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/) (v. Dec 15, 2025), which asks you to give anyone you distribute it to a copy of that license. `licenses.BASE_MODELS` maps the known Nano bases (4B BF16 and FP8, and the 30B-A3B variants) to that license, so the BOM can name it (`base_model_license`). For a base model Ratchet does not know, the BOM and NOTICE carry a warning instead of a license name: then you find and ship its license yourself.
 
 ### What you own
 
@@ -179,7 +180,7 @@ The student is <Who as="student" />: `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` plu
 </div>
 
 - **The LoRA adapter** Night School trains: the files in `adapters/student-vN/` in your bucket.
-- **Its signed training lineage**: the bill of materials, signed with your Ed25519 key (`RATCHET_BOM_SIGNING_KEY`), which commits to the exact training and golden sets, every teacher and license, and the evaluation.
+- **Its signed training lineage**: the bill of materials, signed with your <Term t="ed25519">Ed25519</Term> key (`RATCHET_BOM_SIGNING_KEY`), which commits to the exact training and golden sets, every teacher and license, and the evaluation.
 
 You do **not** own the base model: Nemotron 3 Nano 4B stays under NVIDIA's license, and the adapter runs on top of it. The code is Apache-2.0. A signed BOM is your signed statement of the data and evaluation behind an adapter: it shows that nothing changed after signing, not that the weights were trained on that data.
 
@@ -304,7 +305,7 @@ Yes: `NOTICE.md`, which Ratchet writes for you, and the base model's license wit
 
 ### Does the judge's license matter?
 
-The judge only scores free-text answers in the golden eval and never writes training data, but the startup check still requires it to be distillable. Super is under the NVIDIA Nemotron Open Model License.
+The judge only scores free-text answers in the <Term t="golden-set">golden eval</Term> and never writes training data, but the startup check still requires it to be distillable. Super is under the NVIDIA Nemotron Open Model License.
 
 ### Is Nebius itself fine with this?
 
@@ -319,4 +320,4 @@ No. The registry matches names and records the licenses you configure; it is not
 - [The ledger](/guides/ledger/): where each example's license is stored
 - [Night School](/guides/night-school/): where the BOM is written
 - [Training on your data](/guides/training-on-your-data/): the export and the bucket folder
-- [Evidence](/guides/evidence/): set commitments and certificates in the BOM
+- [Evidence](/guides/evidence/): set commitments and <Term t="certificate">certificates</Term> in the BOM

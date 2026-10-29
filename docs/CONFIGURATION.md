@@ -2,7 +2,7 @@
 
 All settings come from environment variables. Defaults live in `ratchet/config.py` (`Settings`), `ratchet/live.py`, the `deploy/` scripts and `deploy/vm/`. Model IDs and prices were read from the Nebius Token Factory catalog in October 2026 and are unverified until `python scripts/day1_check.py` passes with a real key (INV-9).
 
-Terms (shadow, canary, Wilson interval, e-value) are in [GLOSSARY.md](GLOSSARY.md); FR-, NFR- and INV- ids are requirement and invariant ids ([REQUIREMENTS.md](REQUIREMENTS.md)). A one-page overview is in [README.md](../README.md).
+Terms (shadow, canary, [Wilson interval](https://docs.ratchet.dualmindlab.tech/guides/glossary/#wilson-bound), [e-value](https://docs.ratchet.dualmindlab.tech/guides/glossary/#e-value)) are in [GLOSSARY.md](GLOSSARY.md); FR-, NFR- and INV- ids are requirement and invariant ids ([REQUIREMENTS.md](REQUIREMENTS.md)). A one-page overview is in [README.md](../README.md).
 
 ## Gateway and cascade (`ratchet/config.py`)
 
@@ -68,7 +68,7 @@ A client's retry neither pays for a second cascade nor counts as a second occurr
 
 ## Generation parameters and token caps
 
-Read in `ratchet/config.py` (`Settings.gen_policy()`); used by `ratchet/router.py`, the golden eval (`ratchet/nightschool/evaluate.py`, `sim/mock_models.py`) and `ratchet/providers.py` ([API.md](API.md#generation-parameters), [ADR 0017](adr/0017-generation-parameters-by-role.md)). A bad value (a field that cannot be forwarded, a name that is not an identifier, a negative number) stops the gateway, `python -m ratchet.live night` and the simulator at startup with `ValueError`.
+Read in `ratchet/config.py` (`Settings.gen_policy()`); used by `ratchet/router.py`, the [golden eval](https://docs.ratchet.dualmindlab.tech/guides/glossary/#golden-set) (`ratchet/nightschool/evaluate.py`, `sim/mock_models.py`) and `ratchet/providers.py` ([API.md](API.md#generation-parameters), [ADR 0017](adr/0017-generation-parameters-by-role.md)). A bad value (a field that cannot be forwarded, a name that is not an identifier, a negative number) stops the gateway, `python -m ratchet.live night` and the simulator at startup with `ValueError`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -109,7 +109,7 @@ Read in `ratchet/config.py`; used by `ratchet/providers.py` and `ratchet/resilie
 
 ## When the teacher is down
 
-Read in `ratchet/config.py`; used by `ratchet/router.py` and `ratchet/gateway.py` ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md), [RUNBOOK.md](RUNBOOK.md#teacher-api-down-token-factory-errors-or-timeouts)). Every teacher call goes through a circuit breaker; the other two features are off by default. On an escalation the order is: the teacher, then the fallback teacher (if set), then the student's own answer (with `serve_student`), then the error.
+Read in `ratchet/config.py`; used by `ratchet/router.py` and `ratchet/gateway.py` ([ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md), [RUNBOOK.md](RUNBOOK.md#teacher-api-down-token-factory-errors-or-timeouts)). Every teacher call goes through a [circuit breaker](https://docs.ratchet.dualmindlab.tech/guides/glossary/#circuit-breaker); the other two features are off by default. On an escalation the order is: the teacher, then the fallback teacher (if set), then the student's own answer (with `serve_student`), then the error.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -150,7 +150,7 @@ Read in `ratchet/config.py`; used by `ratchet/router.py`, `ratchet/auth.py`, `ra
 
 The switches above take `0` or `1`; any other value stops startup, and unset or empty takes the default. Every response also carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` ([ADR 0061](adr/0061-endpoint-access-levels.md)).
 
-Keep `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS`, `RATCHET_END_USER_KEY`, `RATCHET_DASHBOARD_KEYS`, `RATCHET_METRICS_TOKEN` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old BOMs: each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
+Keep `RATCHET_API_KEYS`, `RATCHET_ADMIN_KEYS`, `RATCHET_END_USER_KEY`, `RATCHET_DASHBOARD_KEYS`, `RATCHET_METRICS_TOKEN` and `RATCHET_BOM_SIGNING_KEY` out of git, like every other key. Rotating the signing key does not invalidate old [BOMs](https://docs.ratchet.dualmindlab.tech/guides/glossary/#bom): each one embeds the public key and key id it was signed with, so keep a list of the public keys you have published.
 
 ## Spend and rate limits
 
@@ -362,7 +362,7 @@ Embeddings models (`EMBEDDING_PRICES`, kept apart because they are never teacher
 
 ## Cost accounting
 
-Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py`, the gateway (`GET /ratchet/cost`, the `cost` block of `/ratchet/stats`, `POST /ratchet/cost/endpoint`), `python -m ratchet.cost`, `python -m ratchet.live night` and the simulator ([ARCHITECTURE.md](ARCHITECTURE.md#7-cost-accounting), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). A bad value (negative, not a number, above $1,000 per GPU-hour or 1,024 GPUs, not a whole number of GPUs, an unknown model) stops startup with `ValueError` naming the variable; the CLI, `POST /ratchet/cost/endpoint` and the ledger refuse the same values. Each interval stores the rate it was recorded at, so changing a rate later prices new intervals only; the break-even and the hosted-fallback crossover use the rate the window's intervals recorded (`endpoint_usd_per_hour`), and the configured student rate only while no uptime is recorded. The crossover compares price per answer with the hosted fallback (`RATCHET_FALLBACK_STUDENT`) and assumes that untuned model serves as many requests as the tuned student; the report says so.
+Read in `ratchet/config.py` (`Settings.cost_policy()`); used by `ratchet/cost.py`, the gateway (`GET /ratchet/cost`, the `cost` block of `/ratchet/stats`, `POST /ratchet/cost/endpoint`), `python -m ratchet.cost`, `python -m ratchet.live night` and the simulator ([ARCHITECTURE.md](ARCHITECTURE.md#7-cost-accounting), [ADR 0023](adr/0023-utilization-aware-cost-accounting.md)). A bad value (negative, not a number, above $1,000 per GPU-hour or 1,024 GPUs, not a whole number of GPUs, an unknown model) stops startup with `ValueError` naming the variable; the CLI, `POST /ratchet/cost/endpoint` and the ledger refuse the same values. Each interval stores the rate it was recorded at, so changing a rate later prices new intervals only; the [break-even](https://docs.ratchet.dualmindlab.tech/guides/glossary/#break-even) and the hosted-fallback crossover use the rate the window's intervals recorded (`endpoint_usd_per_hour`), and the configured student rate only while no uptime is recorded. The crossover compares price per answer with the hosted fallback (`RATCHET_FALLBACK_STUDENT`) and assumes that untuned model serves as many requests as the tuned student; the report says so.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -377,7 +377,7 @@ The mock endpoint's hours a day are `RATCHET_MOCK_ENDPOINT_HOURS` ([Mock mode](#
 
 ## Savings receipts
 
-Read in `ratchet/config.py` (`Settings.receipt_policy()`); used by `ratchet/receipts.py`, the gateway's receipt endpoints and its mock days, `python -m ratchet.live seal`, `python -m ratchet.receipt seal` and `python -m sim.simulate --receipts` ([ADR 0029](adr/0029-verified-savings-receipts.md), [API](API.md#savings-receipts)). A bad value stops startup with `ValueError` naming the variable, because a sealed receipt can never be corrected (invariant 17). Receipts are signed with `RATCHET_BOM_SIGNING_KEY` ([Privacy and security](#privacy-and-security)) when it is set; without it they carry their sha256 only.
+Read in `ratchet/config.py` (`Settings.receipt_policy()`); used by `ratchet/receipts.py`, the gateway's [receipt](https://docs.ratchet.dualmindlab.tech/guides/glossary/#receipt) endpoints and its mock days, `python -m ratchet.live seal`, `python -m ratchet.receipt seal` and `python -m sim.simulate --receipts` ([ADR 0029](adr/0029-verified-savings-receipts.md), [API](API.md#savings-receipts)). A bad value stops startup with `ValueError` naming the variable, because a sealed [receipt](https://docs.ratchet.dualmindlab.tech/guides/glossary/#receipt) can never be corrected (invariant 17). Receipts are signed with `RATCHET_BOM_SIGNING_KEY` ([Privacy and security](#privacy-and-security)) when it is set; without it they carry their sha256 only.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -388,7 +388,7 @@ A day is sealed once it is over: on a live ledger 5 minutes after it ended (`rec
 
 ## Certified precision (`Settings.cert_policy()`)
 
-How Night School's golden eval picks each version's threshold and what its certificate claims (FR-16.3, [ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)). The gateway (mock mode's golden eval) and `python -m ratchet.live night` read them; a bad value stops startup with a `ValueError` naming the variable. The simulator takes `--calibration`, `--cert-target` and `--cert-delta` instead. The gate's opt-in rules that read certificates are in the [release policy](#release-policy-ratchetreleasepy).
+How Night School's [golden eval](https://docs.ratchet.dualmindlab.tech/guides/glossary/#golden-set) picks each version's threshold and what its [certificate](https://docs.ratchet.dualmindlab.tech/guides/glossary/#certificate) claims (FR-16.3, [ADR 0026](adr/0026-certified-thresholds-and-a-paired-release-gate.md)). The gateway (mock mode's golden eval) and `python -m ratchet.live night` read them; a bad value stops startup with a `ValueError` naming the variable. The simulator takes `--calibration`, `--cert-target` and `--cert-delta` instead. The gate's opt-in rules that read certificates are in the [release policy](#release-policy-ratchetreleasepy).
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -396,7 +396,7 @@ How Night School's golden eval picks each version's threshold and what its certi
 | `RATCHET_CERT_TARGET` | `0.95` | The precision a certificate must show (`certified` when the lower bound reaches it), and Learn-then-Test's target. Strictly between 0 and 1 |
 | `RATCHET_CERT_DELTA` | `0.05` | The certificate's error rate: the one-sided Clopper–Pearson bound holds with probability at least 1 − delta (the frontier's rows at delta / 10 each). Strictly between 0 and 1 |
 
-Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served held-out rows; `python -m ratchet.stats plan --target T --delta D`): 95% at delta 0.05 needs 59, 93, 124 or 153 served rows; 97% needs 99, 157, 208 or 257; 90% needs 29, 46, 61 or 76. Only the held-out half counts, so the golden set must be about twice that, divided by the coverage.
+Golden rows a target needs (with 0, 1, 2 or 3 wrong answers among the served [held-out rows](https://docs.ratchet.dualmindlab.tech/guides/glossary/#held-out); `python -m ratchet.stats plan --target T --delta D`): 95% at delta 0.05 needs 59, 93, 124 or 153 served rows; 97% needs 99, 157, 208 or 257; 90% needs 29, 46, 61 or 76. Only the [held-out](https://docs.ratchet.dualmindlab.tech/guides/glossary/#held-out) half counts, so the golden set must be about twice that, divided by the coverage.
 
 ## Ledger and hot path
 
@@ -410,7 +410,7 @@ How the ledger file is written and how often the request path does periodic work
 
 ## Off-path quality checks
 
-Where a request's teacher audit, shadow samples and arbitration run ([ADR 0072](adr/0072-off-path-audits-and-shadow.md), [ARCHITECTURE §15](ARCHITECTURE.md#15-off-path-quality-checks)). With workers, a request the gateway serves returns as soon as its answer is ready, and a bounded sidecar finishes its ledger row afterwards; Scout's agents, the simulator and the mock warm-up keep every check on the request path in any case. Read in `ratchet/config.py` (`Settings.sidecar`); a bad value stops startup naming the variable.
+Where a request's teacher audit, shadow samples and [arbitration](https://docs.ratchet.dualmindlab.tech/guides/glossary/#arbitration) run ([ADR 0072](adr/0072-off-path-audits-and-shadow.md), [ARCHITECTURE §15](ARCHITECTURE.md#15-off-path-quality-checks)). With workers, a request the gateway serves returns as soon as its answer is ready, and a bounded sidecar finishes its ledger row afterwards; Scout's agents, the simulator and the mock warm-up keep every check on the request path in any case. Read in `ratchet/config.py` (`Settings.sidecar`); a bad value stops startup naming the variable.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -496,7 +496,7 @@ At the defaults a night makes at most 120 teacher calls (20 probes, 50 adjudicat
 
 ## Release policy (`ratchet/release.py`)
 
-`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so mock mode can show the anytime-valid gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`, `--drift-alarm`, `--drift-boost`, `--drift-early-night`, `--teacher-watch`; `--teacher-noise` and `--teacher-noise-day` make its mock teacher unstable).
+`ReleasePolicy` defaults. The gateway (both modes) and `ratchet.live` read each field from the variable in the second column (`ReleasePolicy.from_env()` reads `RATCHET_<FIELD>` for every field). Integers stay integers, the rest are floats. Mock mode uses `min_audits=15` unless `RATCHET_MIN_AUDITS` is set, so mock mode can show the [anytime-valid](https://docs.ratchet.dualmindlab.tech/guides/glossary/#anytime-valid) gate with `RATCHET_SEQUENTIAL=1`. The simulator ignores them and takes its own flags (`--min-audits`, `--release`, `--promote-evidence`, `--canary-audit-rate`, `--paired-gate`, `--min-certified`, `--drift-alarm`, `--drift-boost`, `--drift-early-night`, `--teacher-watch`; `--teacher-noise` and `--teacher-noise-day` make its mock teacher unstable).
 
 | Field | Variable | Default | Used in |
 |---|---|---|---|
@@ -527,7 +527,7 @@ At the defaults a night makes at most 120 teacher calls (20 probes, 50 adjudicat
 | `alpha_teacher` | `RATCHET_ALPHA_TEACHER` | 0.01 | The freeze rule's error rate: a teacher within `teacher_noise_max` freezes Night School with probability at most this per check epoch, however often the gate looks (threshold 1/alpha: 100). Strictly between 0 and 1 |
 | `teacher_watch` | `RATCHET_TEACHER_WATCH` | 1 | 1: the teacher watch acts: contested labels are left out of training and the golden set, the freeze rule pauses Night School (`teacher_drift`, FR-6.42), the golden gate warns about the agreement ceiling (FR-6.43), and Night School probes and adjudicates. 0: none of that; the free checks are still recorded (one indexed lookup per stored duplicate) and shown by `GET /ratchet/teacher`, so turning it on later has history. 0 or 1 |
 
-`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance`, `min_judge_pass` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, `drift_alarm` 0 or more than 1, `drift_audit_boost` 1 or more, `teacher_noise_max` and `alpha_teacher` strictly between 0 and 1, the switches 0 or 1, `task_mode` `disable` or `reject`. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed), and a drift action (`drift_audit_boost` above 1 or `drift_early_night=1`) with `drift_alarm=0`. The live gateway's startup check (and `python -m ratchet.config check`) also applies the rules across fields, which building a policy does not, so tests and test runs may still use any value: 0 < `live_floor` <= `min_precision` <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate admitted), `min_audits` and `min_shadow` at least 1, `tolerance` at most 0.2 ([Configuration checks](#configuration-checks)).
+`ReleasePolicy` checks its values when it is built (`from_env` included), so a typo stops startup with a `ValueError` naming the variable: whole numbers for the integer fields, `min_precision`, `min_coverage`, `tolerance`, `min_judge_pass` and `min_certified_precision` from 0 to 1, `live_floor` and the alphas strictly between 0 and 1, `max_nfr` above 0 and at most 1, `drift_alarm` 0 or more than 1, `drift_audit_boost` 1 or more, `teacher_noise_max` and `alpha_teacher` strictly between 0 and 1, the switches 0 or 1, `task_mode` `disable` or `reject`. It also refuses settings that would decide nothing: `promote_evidence=1` without `sequential=1`, with `sequential=1` a `max_stage_audits` below `min_audits` or too small for `promote_evidence` to ever pass (the message names the audits needed), and a [drift](https://docs.ratchet.dualmindlab.tech/guides/glossary/#drift) action (`drift_audit_boost` above 1 or `drift_early_night=1`) with `drift_alarm=0`. The live gateway's startup check (and `python -m ratchet.config check`) also applies the rules across fields, which building a policy does not, so tests and test runs may still use any value: 0 < `live_floor` <= `min_precision` <= 1 (a rollback floor above the golden gate's bar would roll back versions the gate admitted), `min_audits` and `min_shadow` at least 1, `tolerance` at most 0.2 ([Configuration checks](#configuration-checks)).
 
 A new `ReleasePolicy` field needs a row here: `python scripts/reqtrace.py --check` derives the variable names from the dataclass and fails on an undocumented one. No policy field is reserved today ([Reserved settings](#reserved-settings)).
 
@@ -563,7 +563,7 @@ The evidence features (PRD §6.16) are built one at a time. Their settings are d
 
 ## Tasks
 
-A task tells Ratchet when two answers "agree" and which answers are valid (`ratchet/tasks.py`, [ADR 0021](adr/0021-field-comparators-and-task-specs.md)). Its `fields` list the parts of the answer that must match, each a path and a typed comparator (`ratchet/compare.py`); anything else in the answer, such as a free-text `reply`, is ignored.
+A task tells Ratchet when two answers "agree" and which answers are valid (`ratchet/tasks.py`, [ADR 0021](adr/0021-field-comparators-and-task-specs.md)). Its `fields` list the parts of the answer that must match, each a path and a typed [comparator](https://docs.ratchet.dualmindlab.tech/guides/glossary/#comparator) (`ratchet/compare.py`); anything else in the answer, such as a free-text `reply`, is ignored.
 
 Tasks come from four places ([ADR 0022](adr/0022-task-registry.md)): the built-in ones below (`ratchet/tasks.py`), a tasks file, the admin API ([API.md](API.md#tasks)), and auto tasks derived from a request's `response_format` json_schema ([Structured outputs](#structured-outputs), [ADR 0042](adr/0042-auto-tasks-from-response-format-schemas.md)). The name `embeddings` is reserved for the `/v1/embeddings` pass-through's request rows and cannot be a task's ([Other OpenAI endpoints](#other-openai-endpoints)). Read in `ratchet/config.py`; used by `ratchet/taskspec.py`, `ratchet/router.py` and `ratchet/gateway.py`:
 

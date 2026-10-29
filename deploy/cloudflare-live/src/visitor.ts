@@ -44,6 +44,7 @@ export function forwardedHeaders(headers: Headers, ip: string | null): Headers {
   const out = new Headers(headers);
   out.delete(EDGE_HEADER);
   out.delete(CLIENT_IP_HEADER);
+  out.delete("cf-turnstile-response"); // the human-check token is spent at the Worker; the gateway never sees it (turnstile.ts)
   if (ip) out.set("x-forwarded-for", ip);
   else out.delete("x-forwarded-for"); // never a visitor's own: the gateway trusts this one
   return out;
@@ -88,10 +89,18 @@ export function hasJudgeCookie(headers: Headers): boolean {
  * and are a `scout`, unless the request carries a judge cookie. Reads (/scout/status, /v1/models, /ratchet/*) never count.
  */
 export function bucketOf(method: string, pathname: string, headers: Headers): Bucket | null {
+  const bucket = paidBucket(method, pathname, headers);
+  return bucket === "scout" && hasJudgeCookie(headers) ? null : bucket;
+}
+
+/**
+ * The same, without the judge-cookie exception: which kind of keyless paid call this is. The human check (turnstile.ts) uses it, because a
+ * cookie is only looked at here, not verified, so it proves nothing about the visitor being a person.
+ */
+export function paidBucket(method: string, pathname: string, headers: Headers): Bucket | null {
   if (method === "POST" && usesDemoKey(pathname, headers)) return "try";
   const run = (method === "GET" && /^\/scout\/stream(\/|$)/.test(pathname)) || (method === "POST" && /^\/scout\/run(\/|$)/.test(pathname));
-  if (run && !hasJudgeCookie(headers)) return "scout";
-  return null;
+  return run ? "scout" : null;
 }
 
 /** The UTC day of a time in milliseconds, as YYYY-MM-DD. */
@@ -138,6 +147,22 @@ export async function takeQuota(store: QuotaStore, limit: number, now: number = 
   await store.put("n", count + 1);
   if ((await store.getAlarm()) === null) await store.setAlarm(nextMidnight(now) + KEEP_AFTER_DAY_MS);
   return { allowed: true, count: count + 1 };
+}
+
+/**
+ * A plain counter for the human check: `peekCount` reads it, `bumpCount` adds one (and sets the same end-of-day alarm). Used for the failed
+ * checks of one visitor and one day.
+ */
+export async function peekCount(store: QuotaStore): Promise<number> {
+  const raw = await store.get("n");
+  return typeof raw === "number" && raw > 0 ? raw : 0;
+}
+
+export async function bumpCount(store: QuotaStore, now: number = Date.now()): Promise<number> {
+  const count = (await peekCount(store)) + 1;
+  await store.put("n", count);
+  if ((await store.getAlarm()) === null) await store.setAlarm(nextMidnight(now) + KEEP_AFTER_DAY_MS);
+  return count;
 }
 
 /** What the Worker needs of the VisitorQuota namespace: a counter by name, with one method. */

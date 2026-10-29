@@ -12,6 +12,7 @@ import StatRow from '../../../components/StatRow.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Escalation sends a request to the teacher whenever the student cannot serve it safely, and audits send a random few of the student's own answers to the teacher as well, so Ratchet always has fresh, unbiased evidence of how often the student agrees with the teacher.</Summary>
 
@@ -59,7 +60,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Follow one request down the thick path; the numbers are the order the checks run in. Each hexagon is a reason the student might not answer, and every way off the thick path ends at the teacher, with a route in the ledger that names the reason (the table below lists them). Only checks 5 and 6 happen after the student has produced something: confidence and `n` choices. If the student does serve, the only thing left is the audit draw, which sends a random few of its answers to the teacher as well.
+**Reading this diagram.** Follow one request down the thick path; the numbers are the order the checks run in. Each hexagon is a reason the <Term t="student">student</Term> might not answer, and every way off the thick path ends at the <Term t="teacher">teacher</Term>, with a route in the ledger that names the reason (the table below lists them). Only checks 5 and 6 happen after the student has produced something: <Term t="confidence">confidence</Term> and `n` choices. If the student does serve, the only thing left is the audit draw, which sends a random few of its answers to the teacher as well.
 
 <ul class="rt-key">
   <li class="gate">A check</li>
@@ -82,7 +83,7 @@ Every teacher box after the version check is an escalation: a version was picked
 | The student's circuit breaker is open | `student_breaker` | No |
 | The release gate disabled the task on this version, or it had no held-out rows | `task_disabled` | No |
 
-The teacher also answers, without an escalation, on a cold start (`cold_start`), while an operator has the student turned off (`student_disabled`), and on the teacher-only paths (`pinned`, `unknown_task`, `tools`, `multimodal`). See the full [routes table](/guides/request-journey/#every-route).
+The teacher also answers, without an escalation, on a <Term t="cold-start">cold start</Term> (`cold_start`), while an operator has the student turned off (`student_disabled`), and on the teacher-only paths (`pinned`, `unknown_task`, `tools`, `multimodal`). See the full [routes table](/guides/request-journey/#every-route).
 
 If the gateway's daily budget is spent under `RATCHET_BUDGET_MODE=student_only`, an escalation is refused with a 429 `gateway_budget_exceeded` before any teacher call; confident student answers still go out.
 
@@ -92,13 +93,13 @@ If the gateway's daily budget is spent under `RATCHET_BUDGET_MODE=student_only`,
 
 1. **It is served.** The client gets the teacher's answer, cleaned: reasoning removed (`<think>` blocks and the like) and, for a structured task, bare JSON. The teacher answers under the serving parameters: the client's temperature, or 0 when it set none (0.7 when the client asked for several choices).
 
-2. **It is checked before it may become training data** (`Ratchet._store_example`). It is stored only when all of these hold: no storage opt-out applies; it is the primary teacher's answer (a fallback teacher's only with `RATCHET_STORE_FALLBACK_TEACHER=1`); it was not written under label-altering client sampling (`logit_bias`, a non-zero penalty, a temperature above 1, a vendor field); its `finish_reason` is `stop` or `tool_calls`; it is not empty once reasoning is stripped; and it is valid under the task's spec (it parses, every required field is present, a label is in its vocabulary). Anything else is still served, but skipped, with a `skip_example` event on the 1st, 10th, 100th and 1000th skip of each reason.
+2. **It is checked before it may become training data** (`Ratchet._store_example`). It is stored only when all of these hold: no storage <Term t="opt-out">opt-out</Term> applies; it is the primary teacher's answer (a fallback teacher's only with `RATCHET_STORE_FALLBACK_TEACHER=1`); it was not written under label-altering client sampling (`logit_bias`, a non-zero penalty, a temperature above 1, a vendor field); its `finish_reason` is `stop` or `tool_calls`; it is not empty once reasoning is stripped; and it is valid under the task's spec (it parses, every required field is present, a label is in its vocabulary). Anything else is still served, but skipped, with a `skip_example` event on the 1st, 10th, 100th and 1000th skip of each reason.
 
 3. **It is redacted, then checked again.** Emails, phone numbers, Luhn-checked card numbers, IBANs, secrets and similar identifiers are replaced with placeholders such as `[EMAIL]` in the messages, the answer and the stored conditions. The teacher saw the original. If a placeholder breaks a structured answer, it is skipped (`invalid after redaction`).
 
-4. **It is stored with its provenance** (`Ledger.add_example`): the teacher's model id, the license that allows training on it and its URL, the number of placeholders, the conditions it was written under (`response_format`, `tools`, `tool_choice`, `stop`), the API client and the end user's hash. Its split, golden or train, is fixed from a hash of the task and messages: about 10% golden (`RATCHET_GOLDEN_FRACTION`). A repeat of the same request bumps its `seen` count instead (a client's retry does not). For `n` choices only choice 0 is stored.
+4. **It is stored with its <Term t="provenance">provenance</Term>** (`Ledger.add_example`): the teacher's model id, the license that allows training on it and its URL, the number of placeholders, the conditions it was written under (`response_format`, `tools`, `tool_choice`, `stop`), the API client and the end user's hash. Its split, golden or train, is fixed from a hash of the task and messages: about 10% golden (`RATCHET_GOLDEN_FRACTION`). A repeat of the same request bumps its `seen` count instead (a client's retry does not). For `n` choices only choice 0 is stored.
 
-5. **It labels the student's own answer.** When the student had a valid answer and the teacher wrote its answer under the audit's conditions (one choice, no client sampling), the row records whether they agreed (`student_agree`). The ledger replay uses it.
+5. **It labels the student's own answer.** When the student had a valid answer and the teacher wrote its answer under the audit's conditions (one choice, no client sampling), the row records whether they agreed (`student_agree`). The ledger <Term t="replay">replay</Term> uses it.
 
 6. **It is the shadow's reference.** If a version is in shadow, its answer for this request is compared with the teacher's.
 
@@ -187,7 +188,7 @@ sequenceDiagram
 
 ### When the teacher or the student is down
 
-Every upstream call goes through a circuit breaker. The student and the teacher each have their own, and the shadow has a third, so a failing candidate cannot close the live student's path.
+Every upstream call goes through a <Term t="circuit-breaker">circuit breaker</Term>. The student and the teacher each have their own, and the shadow has a third, so a failing candidate cannot close the live student's path.
 
 <figure class="rt-diagram">
 
@@ -242,7 +243,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** The three outcomes are chosen by the operator, not by the request. The default is an honest error. A licensed fallback teacher (`RATCHET_TEACHER_FALLBACK_MODEL`) can answer instead and keeps its own license in the provenance. Degraded mode serves the student's answer even though it was below the threshold; it is marked in the response (`ratchet.degraded`, `X-Ratchet-Degraded`) and in the route, and is never stored, audited or shadowed. Audits and arbitrations never use the fallback: they fail open as described below. A fallback teacher's answers are stored only with `RATCHET_STORE_FALLBACK_TEACHER=1`; a mapped error is a 502, 503 or 504, or a 400 or 429 when the cause is the client's.
+**Reading this diagram.** The three outcomes are chosen by the operator, not by the request. The default is an honest error. A licensed fallback teacher (`RATCHET_TEACHER_FALLBACK_MODEL`) can answer instead and keeps its own license in the provenance. <Term t="degraded-mode">Degraded mode</Term> serves the student's answer even though it was below the threshold; it is marked in the response (`ratchet.degraded`, `X-Ratchet-Degraded`) and in the route, and is never stored, audited or shadowed. Audits and arbitrations never use the fallback: they fail open as described below. A fallback teacher's answers are stored only with `RATCHET_STORE_FALLBACK_TEACHER=1`; a mapped error is a 502, 503 or 504, or a 400 or 429 when the cause is the client's.
 
 <ul class="rt-key">
   <li class="teacher">The teacher answers</li>
@@ -316,7 +317,7 @@ These calls are optional: the client already has an answer.
 | The audit answer is cut off or invalid | The student's answer | Priced, not an audit, not stored |
 | The arbitration fails, or is skipped because this request's audit already failed | The live answer | `shadow_agree` NULL: the gate counts it as a disagreement, and the rejection reason says how many |
 
-A failed audit is simply not an audit. Audits are a random sample, so losing one shrinks the sample without biasing it. A failed arbitration is different: arbitration only runs when the shadow disagrees, so dropping those rows would hide exactly the cases where the shadow may be wrong. Counting them against the shadow means a flaky teacher can get a candidate rejected, never promoted.
+A failed audit is simply not an audit. Audits are a random sample, so losing one shrinks the sample without biasing it. A failed <Term t="arbitration">arbitration</Term> is different: arbitration only runs when the shadow disagrees, so dropping those rows would hide exactly the cases where the shadow may be wrong. Counting them against the shadow means a flaky teacher can get a candidate rejected, never promoted.
 
 ### What audits cost
 
@@ -353,7 +354,7 @@ The teacher's list price in `ratchet/config.py` is $1.00 per million input token
 
 The `ReleasePolicy` fields read `RATCHET_<FIELD>` (see the [release policy settings](/reference/configuration/#release-policy-ratchetreleasepy)). The live-run harness expects the planned gate profile `RATCHET_SEQUENTIAL=1` and `RATCHET_CANARY_AUDIT_RATE=0.5`.
 
-Where to look: each row's `audited`, `audit_agree`, `label_p` and `stored` columns (`GET /ratchet/requests/{id}`); `audit_agreement` per day and each task's audits in `GET /ratchet/stats`; the `evidence` of the canary and the live version (counts, e-value, confidence sequence) in the same payload's `versions` list; events `audit_error`, `skip_example`, `rollback`, `alert`, `sidecar_inline` and `sidecar_dropped` in the release log. `Ratchet.health()` holds the in-process counters (`audit_errors`, `shadow_errors`).
+Where to look: each row's `audited`, `audit_agree`, `label_p` and `stored` columns (`GET /ratchet/requests/{id}`); `audit_agreement` per day and each task's audits in `GET /ratchet/stats`; the `evidence` of the canary and the live version (counts, <Term t="e-value">e-value</Term>, confidence sequence) in the same payload's `versions` list; events `audit_error`, `skip_example`, `rollback`, `alert`, `sidecar_inline` and `sidecar_dropped` in the release log. `Ratchet.health()` holds the in-process counters (`audit_errors`, `shadow_errors`).
 
 ## Common questions
 
@@ -383,7 +384,7 @@ No. Under an opt-out the audit still runs (release safety does not depend on sto
 
 ### Has the audit path run against Token Factory?
 
-Not yet. The teacher itself runs on Nebius Token Factory, but no trained student has served on a live ledger, so there has been nothing to audit. As of Oct 29, 2026 the audit path is tested offline (Night School's one run on Nebius, by hand on 28 Oct, graded a student on golden rows and rejected it; nothing was served), including the off-path sidecar, which a test compares row for row with an inline run.
+Not yet. The teacher itself runs on Nebius Token Factory, but no trained student has served on a live ledger, so there has been nothing to audit. As of Oct 29, 2026 the audit path is tested offline (Night School's one run on Nebius, by hand on 28 Oct, graded a student on <Term t="golden-set">golden rows</Term> and rejected it; nothing was served), including the off-path sidecar, which a test compares row for row with an inline run.
 
 ## Related
 

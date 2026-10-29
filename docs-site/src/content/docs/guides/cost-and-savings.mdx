@@ -12,6 +12,7 @@ import StatRow from '../../../components/StatRow.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Ratchet prices every request twice, per token and by the GPU-hours actually paid, works out the traffic at which a self-hosted student endpoint breaks even, and tells you when it does not.</Summary>
 
@@ -36,15 +37,15 @@ On a quiet day that never happens. Then it is cheaper to close the station and l
 
 <Steps>
 
-1. **Every request records what it cost, split in two.** Each model call is priced from its token counts at a price per million tokens (`config.DEFAULT_PRICES`). The **student part** (`student_cost_usd`) covers the student's samples, for the live version and for a shadow candidate. The **teacher part** (`teacher_cost_usd`) covers the escalation, the audit, the shadow arbitration and pinned calls. Their sum is the request's `cost_usd`, which the response also returns as `ratchet.cost_usd`. A failed call adds nothing.
+1. **Every request records what it cost, split in two.** Each model call is priced from its token counts at a price per million tokens (`config.DEFAULT_PRICES`). The **<Term t="student">student</Term> part** (`student_cost_usd`) covers the student's samples, for the live version and for a <Term t="shadow">shadow</Term> candidate. The **teacher part** (`teacher_cost_usd`) covers the escalation, the audit, the shadow <Term t="arbitration">arbitration</Term> and pinned calls. Their sum is the request's `cost_usd`, which the response also returns as `ratchet.cost_usd`. A failed call adds nothing.
 
-2. **Every request also records an all-teacher baseline.** This is what the request would have cost if Nemotron 3 Ultra had answered alone (`ratchet.all_teacher_cost_usd`). When the teacher was called, the baseline is that call's price. When the student served, it is a formula: the teacher's price for the student's prompt tokens, plus the student's output tokens and an assumed 300 reasoning tokens (`RATCHET_TEACHER_REASONING_TOKENS`). Savings are baseline minus cost.
+2. **Every request also records an <Term t="all-teacher-baseline">all-teacher baseline</Term>.** This is what the request would have cost if <Term t="nemotron">Nemotron</Term> 3 Ultra had answered alone (`ratchet.all_teacher_cost_usd`). When the teacher was called, the baseline is that call's price. When the student served, it is a formula: the teacher's price for the student's prompt tokens, plus the student's output tokens and an assumed 300 reasoning tokens (`RATCHET_TEACHER_REASONING_TOKENS`). Savings are baseline minus cost.
 
 3. **The ledger records when GPUs ran.** A self-hosted endpoint bills while it runs, so per-token prices alone flatter the student. The `compute_intervals` table holds three kinds of interval: `student_endpoint`, `training_job` and `eval_job`. Each keeps the rate it was recorded at, so changing a setting never reprices history.
 
 4. **The cost report prices the window two ways.** The per-token view sums `cost_usd`. The GPU-hour view adds teacher spend, the endpoint's hours, the training jobs' hours, and the per-token student spend in hours when no endpoint uptime was recorded. GPU-hour savings can be negative. They are never clamped to zero.
 
-5. **It computes break-even and the hosted crossover.** Break-even is the number of student answers per endpoint hour at which the endpoint's hours cost exactly the teacher spend they avoid. The crossover is the volume above which the endpoint is cheaper per answer than the hosted fallback (Nemotron 3 Nano 30B on Token Factory).
+5. **It computes <Term t="break-even">break-even</Term> and the hosted crossover.** Break-even is the number of student answers per endpoint hour at which the endpoint's hours cost exactly the teacher spend they avoid. The crossover is the volume above which the endpoint is cheaper per answer than the hosted fallback (Nemotron 3 Nano 30B on <Term t="token-factory">Token Factory</Term>).
 
 6. **It recommends one of four things, in plain English.** `self_host`, `hosted_fallback`, `scale_to_zero` or `insufficient_data`, with an explanation that quotes the numbers and the price label ("unverified list prices" until an operator confirms them; the per-token prices were checked on 29 Oct 2026, the GPU-hour rate was not).
 
@@ -132,7 +133,7 @@ Nebius words the billing like this: a stopped endpoint is not billed for compute
 
 ### Break-even, first in one line
 
-Here is the kid version again, with the numbers the docs use. The endpoint costs about $1.35 per GPU-hour (an L40S on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; an estimate until your bill confirms it). At list prices a typical ticket-triage call to Ultra costs about $0.0013 (about 150 input and 380 output tokens), so each such answer the student serves avoids about $0.001 of Ultra spend (an estimate). So:
+Here is the kid version again, with the numbers the docs use. The endpoint costs about $1.35 per GPU-hour (an <Term t="l40s">L40S</Term> on demand, [Nebius pricing](https://docs.nebius.com/compute/resources/pricing), read Oct 22, 2026; an estimate until your bill confirms it). At list prices a typical ticket-triage call to Ultra costs about $0.0013 (about 150 input and 380 output tokens), so each such answer the student serves avoids about $0.001 of Ultra spend (an estimate). So:
 
 ```text
 break-even student answers per endpoint hour = GPU price per hour ÷ teacher spend avoided per student answer
@@ -240,7 +241,7 @@ Plainly: **at low volume, a self-hosted student endpoint loses money.**
 
 - At a few thousand requests a day, a 24/7 endpoint runs at a small fraction of break-even. Per token the same traffic can look like a large saving; by GPU-hours it can be a loss of hundreds of dollars over ten days. Both numbers are true; only the second is what you would pay.
 - Below break-even the honest options are the hosted fallback (pay per token, no GPU running) or an endpoint that runs only while traffic arrives.
-- Above break-even, the levers are more traffic per GPU (several tasks or customers as LoRA adapters on one vLLM endpoint) and fewer idle hours.
+- Above break-even, the levers are more traffic per GPU (several tasks or customers as <Term t="lora">LoRA</Term> adapters on one vLLM endpoint) and fewer idle hours.
 
 Ratchet never promises savings below break-even, and the cost report says so in its own words.
 
@@ -275,7 +276,7 @@ The cost report looks back. Spend limits stop money going out in the first place
 
 ### Savings receipts
 
-The dashboard's savings come from the token formula, which assumes 300 reasoning tokens nobody measured. What would be billed comes from a **savings receipt** instead: one per ledger day for the gateway and one per API client, sealed after the day ends and never changed. The baseline of the answers the student served is calibrated on the audited answers' real teacher bills (a ratio estimator with a confidence bound), and the fee is `RATCHET_TAKE_RATE` (25% by default) of the one-sided 95% lower bound of the savings, never of the formula's estimate. A task with fewer than `RATCHET_RECEIPT_MIN_AUDITS` (30) audits that day is reported but not billed. Each receipt is a Merkle tree over the day's request metadata (no text), signed with the BOM key when one is set, so a client can prove any of its requests is in it and see any later edit. It cannot prove the costs logged at request time: reconcile those with the Token Factory bill. Details in [Evidence](/guides/evidence/).
+The dashboard's savings come from the token formula, which assumes 300 reasoning tokens nobody measured. What would be billed comes from a **savings <Term t="receipt">receipt</Term>** instead: one per ledger day for the gateway and one per API client, sealed after the day ends and never changed. The baseline of the answers the student served is calibrated on the audited answers' real teacher bills (a ratio estimator with a confidence bound), and the fee is `RATCHET_TAKE_RATE` (25% by default) of the one-sided 95% lower bound of the savings, never of the formula's estimate. A task with fewer than `RATCHET_RECEIPT_MIN_AUDITS` (30) audits that day is reported but not billed. Each receipt is a <Term t="merkle-root">Merkle tree</Term> over the day's request metadata (no text), signed with the <Term t="bom">BOM</Term> key when one is set, so a client can prove any of its requests is in it and see any later edit. It cannot prove the costs logged at request time: reconcile those with the Token Factory bill. Details in [Evidence](/guides/evidence/).
 
 ## For engineers
 
@@ -351,7 +352,7 @@ Not yet. The per-token prices were checked on 29 Oct 2026 against the price list
 
 ### Does the baseline overstate savings?
 
-It can. The student-served baseline assumes the teacher would have written 300 reasoning tokens. Audits measure what the teacher really bills, and the savings receipts and the ledger replay correct the baseline with them. The dashboard's figures do not.
+It can. The student-served baseline assumes the teacher would have written 300 reasoning tokens. Audits measure what the teacher really bills, and the savings receipts and the ledger <Term t="replay">replay</Term> correct the baseline with them. The dashboard's figures do not.
 
 ## Related
 

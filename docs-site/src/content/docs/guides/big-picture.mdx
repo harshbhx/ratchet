@@ -15,6 +15,7 @@ import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
 import GradientText from '../../../components/ui/GradientText.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Ratchet is <GradientText text="one small gateway process with one SQLite ledger" tone="owned" />, plus a few Nebius services it calls: Token Factory for the teacher, a GPU endpoint for the student, a nightly training job and a storage bucket that carries data and adapters between them.</Summary>
 
@@ -42,7 +43,7 @@ Three clocks run the place: one ticks for every order, one every few minutes to 
 
 ## How it really works
 
-The design in one picture. It shows the intended flow; the original adapters were trained by hand on a borrowed GPU, the round-2 recipe was retrained once by hand on Nebius AI Cloud, and teacher calls run on Nebius Token Factory.
+The design in one picture. It shows the intended flow; the original <Term t="adapter">adapters</Term> were trained by hand on a borrowed GPU, the round-2 recipe was retrained once by hand on <Term t="nebius-ai-cloud">Nebius AI Cloud</Term>, and teacher calls run on Nebius <Term t="token-factory">Token Factory</Term>.
 
 <figure>
   <picture>
@@ -95,7 +96,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Start at the top. The thick arrows are the request path: your app's call passes Caddy (only in the Nebius VM kit), then the cascade asks the student endpoint for 3 samples, and the teacher on Token Factory when the student is unsure, an audit is drawn or no student may answer (a cold start, a pinned task). Every request writes one row to the SQLite ledger; the release gate reads the audits there and writes version states back. At night, Night School reads the rows, a Serverless Job trains a new adapter into the Object Storage bucket, and the endpoint loads adapters from that bucket at `/data`. Not drawn, to keep it readable: the night also loads the candidate into vLLM, grades it there (the judge scores free-text rows) and hands it to the release gate. The hosted fallback answers student calls only when no endpoint is set.
+**Reading this diagram.** Start at the top. The thick arrows are the request path: your app's call passes Caddy (only in the Nebius VM kit), then the cascade asks the student endpoint for 3 samples, and the teacher on Token Factory when the student is unsure, an audit is drawn or no student may answer (a cold start, a pinned task). Every request writes one row to the SQLite ledger; the release gate reads the audits there and writes version states back. At night, Night School reads the rows, a Serverless Job trains a new adapter into the Object Storage bucket, and the endpoint loads adapters from that bucket at `/data`. Not drawn, to keep it readable: the night also loads the candidate into <Term t="vllm">vLLM</Term>, grades it there (the judge scores free-text rows) and hands it to the release gate. The hosted fallback answers student calls only when no endpoint is set.
 
 <ul class="rt-key">
   <li class="student">The student: Nano plus your adapter</li>
@@ -135,7 +136,7 @@ flowchart TB
 | Scout | A multi-agent research app whose calls go through the cascade | Inside the gateway; Tavily for web search | [`ratchet/scout/`](https://github.com/harshbhx/ratchet/tree/main/ratchet/scout) |
 | Caddy | Automatic HTTPS, security headers, an optional token guard on `/v1/*` and `/ratchet/admin/*` | Next to the gateway in the Nebius VM kit (Docker Compose) | [`deploy/vm/Caddyfile`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/Caddyfile) |
 
-Token Factory listed no fine-tuning or LoRA serving for Nemotron when this design was chosen (research notes, Oct 19, 2026), and Nebius's [post on post-training in Token Factory](https://nebius.com/blog/posts/post-training-in-token-factory) names no Nemotron model to fine-tune (read Oct 26, 2026), so the student is trained and served on Nebius AI Cloud. The gateway itself does no inference, which is why a 2-vCPU machine is enough.
+Token Factory listed no fine-tuning or <Term t="lora">LoRA</Term> serving for Nemotron when this design was chosen (research notes, Oct 19, 2026), and Nebius's [post on post-training in Token Factory](https://nebius.com/blog/posts/post-training-in-token-factory) names no Nemotron model to fine-tune (read Oct 26, 2026), so the student is trained and served on Nebius AI Cloud. The gateway itself does no inference, which is why a 2-vCPU machine is enough.
 
 ### How the pieces connect
 
@@ -143,19 +144,19 @@ Token Factory listed no fine-tuning or LoRA serving for Nemotron when this desig
 
 1. **Your app calls the gateway** at `POST /v1/chat/completions` with an API key and a task name (`X-Ratchet-Task`). The gateway checks the body size, the key, rate limits, the request itself, the task and the quotas before any model is called.
 2. **The cascade calls the student endpoint** over HTTPS with the OpenAI API. The model name it sends is the version's adapter name (`student-vN`), because vLLM serves each LoRA adapter under its own name. Three samples come back in one call.
-3. **When the student is unsure, or for an audit, the cascade calls the teacher** on Token Factory. Each teacher answer that is complete and valid goes into the ledger as a training example, with the teacher's model id and license, after PII redaction.
+3. **When the student is unsure, or for an audit, the cascade calls the teacher** on Token Factory. Each teacher answer that is complete and valid goes into the ledger as a training example, with the teacher's model id and license, after <Term t="pii-redaction">PII redaction</Term>.
 4. **Every request writes one row** to the ledger: who served it, the route, confidence, cost and the all-teacher baseline. No prompt text is kept in that row; text is kept only in training examples, redacted.
 5. **After requests, the release gate ticks**: it reads the audits and shadow verdicts from the ledger and moves versions between states (shadow, canary 10%, 50%, live, rolled back).
 6. **At night, `python -m ratchet.live night` runs Night School**: it writes `night/train.jsonl` locally, uploads it to the bucket with `RATCHET_SYNC_CMD`, starts the training job with `RATCHET_TRAIN_CMD` (default `bash deploy/train_job.sh {version}`) and waits.
 7. **The training job reads the bucket at `/data`** and writes the adapter to `/data/adapters/student-vN/`, with `NOTICE.md` and its training metadata beside the weights.
-8. **The gateway host tells vLLM to load the new adapter** with `POST /v1/load_lora_adapter`, so no endpoint restart is needed. Night School then scores it on the golden set (the judge scores free-text rows), signs its bill of materials and hands the candidate to the gate. Last, the night writes the bill of materials and `NOTICE.md` into the adapter's folder and syncs the bucket again.
+8. **The gateway host tells vLLM to load the new adapter** with `POST /v1/load_lora_adapter`, so no endpoint restart is needed. Night School then scores it on the <Term t="golden-set">golden set</Term> (the judge scores free-text rows), signs its <Term t="bom">bill of materials</Term> and hands the candidate to the gate. Last, the night writes the bill of materials and `NOTICE.md` into the adapter's folder and syncs the bucket again.
 9. **The pages read the same ledger** through `GET /ratchet/stats`, `GET /ratchet/cost` and the other dashboard endpoints. Scout calls `Ratchet.handle` in the same process, once for each of its model calls.
 
 </Steps>
 
 <Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
-- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
-- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot <Term t="l40s">L40S</Term>: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 to 28 Oct 2026:** the student was served from a Nebius <Term t="serverless-endpoint">Serverless Endpoint</Term> for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
 - **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
 </Aside>
 
@@ -191,7 +192,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** The short branch to the cylinder always happens: one request row with the route, cost, confidence and ids, never the prompt or the answer. The API key appears in it by name only, and an end user only as a keyed hash. The chain of checks down the middle decides whether any text is kept; each dashed box is a way out with nothing stored. A teacher answer exists after an escalation, a cold start, an audit or a shadow arbitration; the student's own answers are never stored. Pinned tasks, tool requests and other teacher-only requests are never stored (the one exception is an over-length request on a task that sets `store_ineligible`). Any storage opt-out stops it next: `store: false`, `X-Ratchet-Store: none`, `metadata.ratchet_store`, a key with `store=0`, a no-store task, a no-train end user or zero retention. Then the answer must be complete and valid under the task's spec. Only then are the messages, the stored conditions and the answer redacted and written as a training example with the teacher's model id and license, in the golden or the train split. An erased example's hash is refused from then on.
+**Reading this diagram.** The short branch to the cylinder always happens: one request row with the route, cost, confidence and ids, never the prompt or the answer. The API key appears in it by name only, and an end user only as a keyed hash. The chain of checks down the middle decides whether any text is kept; each dashed box is a way out with nothing stored. A teacher answer exists after an escalation, a cold start, an audit or a shadow <Term t="arbitration">arbitration</Term>; the student's own answers are never stored. Pinned tasks, tool requests and other teacher-only requests are never stored (the one exception is an over-length request on a task that sets `store_ineligible`). Any storage <Term t="opt-out">opt-out</Term> stops it next: `store: false`, `X-Ratchet-Store: none`, `metadata.ratchet_store`, a key with `store=0`, a no-store task, a no-train end user or zero retention. Then the answer must be complete and valid under the task's spec. Only then are the messages, the stored conditions and the answer redacted and written as a training example with the teacher's model id and license, in the golden or the train split. An erased example's hash is refused from then on.
 
 </figcaption>
 </figure>
@@ -333,7 +334,7 @@ At this scale (thousands to tens of thousands of requests a day) one file needs 
 
 ### What happens when the GPU endpoint is stopped?
 
-If `RATCHET_STUDENT_BASE` still points at it, student calls fail, and after 5 failures in a row the student's circuit breaker sends requests straight to the teacher (route `student_breaker`) until a probe succeeds. To keep a student answering while the endpoint is off, leave `RATCHET_STUDENT_BASE` empty: student calls then go to the hosted, untuned Nano 30B on Token Factory, held to the 0.80 default threshold and not covered by the adapter's precision certificate. Nebius's docs say a stopped endpoint is not billed for compute or its own storage; a mounted bucket still is.
+If `RATCHET_STUDENT_BASE` still points at it, student calls fail, and after 5 failures in a row the student's <Term t="circuit-breaker">circuit breaker</Term> sends requests straight to the teacher (route `student_breaker`) until a probe succeeds. To keep a student answering while the endpoint is off, leave `RATCHET_STUDENT_BASE` empty: student calls then go to the hosted, untuned Nano 30B on Token Factory, held to the 0.80 default threshold and not covered by the adapter's precision <Term t="certificate">certificate</Term>. Nebius's docs say a stopped endpoint is not billed for compute or its own storage; a mounted bucket still is.
 
 ### Why not train and serve the student on Token Factory?
 

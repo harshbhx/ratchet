@@ -13,6 +13,7 @@ import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
 import Stepper from '../../../components/ui/Stepper.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>A request enters at `POST /v1/chat/completions`, passes the gateway's admission checks, goes through `Ratchet.handle` (the student first, the teacher when the student is unsure), is logged as one ledger row with a route that says why it was served that way, and comes back as a normal OpenAI response with a `ratchet` block.</Summary>
 
@@ -73,7 +74,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Each hexagon is one check, in the order the code runs it. A refusal at admission costs nothing and calls no model. Teacher-only requests (a pinned task, a tool request, a request the student must not see) skip the student entirely and are not stored. Otherwise the student gets its chance, and each "no" on the way down sends the request to the teacher with a route that names the reason, the labels on the arrows. A confident student serves, and one random draw decides whether the teacher also checks that answer. Both teacher paths meet at the same storage check before anything becomes training data. Every path but a refusal ends in one ledger row; a teacher failure when its answer is needed ends in an error instead ([When something fails](#when-something-fails)).
+**Reading this diagram.** Each hexagon is one check, in the order the code runs it. A refusal at admission costs nothing and calls no model. Teacher-only requests (a pinned task, a tool request, a request the <Term t="student">student</Term> must not see) skip the student entirely and are not stored. Otherwise the student gets its chance, and each "no" on the way down sends the request to the <Term t="teacher">teacher</Term> with a route that names the reason, the labels on the arrows. A confident student serves, and one random draw decides whether the teacher also checks that answer. Both teacher paths meet at the same storage check before anything becomes training data. Every path but a refusal ends in one <Term t="ledger">ledger</Term> row; a teacher failure when its answer is needed ends in an error instead ([When something fails](#when-something-fails)).
 
 <ul class="rt-key">
   <li class="gate">A check</li>
@@ -183,19 +184,19 @@ Step through it one decision at a time, or read every rule in the numbered list 
 
 3. **Pick a version** (`_pick_version`). If an operator turned the student off, none (route `student_disabled`). If a version is in canary, it is picked with probability `traffic_pct / 100` (10% or 50%); otherwise the live version. With neither (cold start) the teacher answers (route `cold_start`), and its answer is stored as usual.
 
-4. **Skip a task the version cannot serve.** If the version's per-task record holds the task back (the release gate disabled it on that version, or there was no held-out row for it), the student is not called at all: the teacher answers (route `task_disabled`).
+4. **Skip a task the version cannot serve.** If the version's per-task record holds the task back (the release gate disabled it on that version, or there was no <Term t="held-out">held-out</Term> row for it), the student is not called at all: the teacher answers (route `task_disabled`).
 
-5. **Sample the student** (`_sample`). One call to the endpoint for `max(3, n)` samples at temperature 0.7 with token logprobs (`confidence.STUDENT_SAMPLING`), with only the client's shaping fields (`max_tokens`, `stop`, `seed`, `response_format`, `logit_bias`, `top_logprobs`), capped at 1,024 output tokens. The model name sent is the adapter's (`student-vN`). The call goes through the student's circuit breaker first. If the breaker is open the teacher answers (route `student_breaker`); if the call fails the teacher answers (route `student_error`), and a vLLM 404 naming the adapter queues an automatic reload.
+5. **Sample the student** (`_sample`). One call to the endpoint for `max(3, n)` samples at temperature 0.7 with token logprobs (`confidence.STUDENT_SAMPLING`), with only the client's shaping fields (`max_tokens`, `stop`, `seed`, `response_format`, `logit_bias`, `top_logprobs`), capped at 1,024 output tokens. The model name sent is the adapter's (`student-vN`). The call goes through the student's <Term t="circuit-breaker">circuit breaker</Term> first. If the breaker is open the teacher answers (route `student_breaker`); if the call fails the teacher answers (route `student_error`), and a <Term t="vllm">vLLM</Term> 404 naming the adapter queues an automatic reload.
 
-6. **Score confidence** (`confidence.score`) on the first 3 samples, exactly as at calibration. A sample that is empty, cut off, unparseable or invalid under the task's spec gets no vote. Agreement is counted on the task's fields (for `ticket-triage`: `category` and `priority`). Confidence is `0.4 × p + 0.6 × agreement`, where `p` is the best agreeing sample's mean token probability; without logprobs it is agreement alone. See [Confidence](/guides/confidence/).
+6. **Score confidence** (`confidence.score`) on the first 3 samples, exactly as at <Term t="calibration">calibration</Term>. A sample that is empty, cut off, unparseable or invalid under the task's spec gets no vote. Agreement is counted on the task's fields (for `ticket-triage`: `category` and `priority`). Confidence is `0.4 × p + 0.6 × agreement`, where `p` is the best agreeing sample's mean token probability; without logprobs it is agreement alone. See [Confidence](/guides/confidence/).
 
-7. **Compare with the threshold** (`Ratchet.threshold`). Each version carries its own threshold per task, calibrated on half of its golden set. The hosted fallback model gets `RATCHET_CONFIDENCE_THRESHOLD` (0.80); a task whose spec changed since the version was scored gets 1.01, which nothing reaches. The student serves when at least one sample is valid, confidence is at or above the threshold, and, for `n` choices, at least `n` samples agree (route `student`). A confident student without `n` agreeing samples escalates (route `n_choices`); an unsure one escalates (route `confidence`). A task's `escalate_when` rules can still send a confident answer to the teacher (route `rule:<i>`, for the rule that held).
+7. **Compare with the threshold** (`Ratchet.threshold`). Each version carries its own threshold per task, calibrated on half of its <Term t="golden-set">golden set</Term>. The hosted fallback model gets `RATCHET_CONFIDENCE_THRESHOLD` (0.80); a task whose spec changed since the version was scored gets 1.01, which nothing reaches. The student serves when at least one sample is valid, confidence is at or above the threshold, and, for `n` choices, at least `n` samples agree (route `student`). A confident student without `n` agreeing samples escalates (route `n_choices`); an unsure one escalates (route `confidence`). A task's `escalate_when` rules can still send a confident answer to the teacher (route `rule:<i>`, for the rule that held).
 
 8. **Maybe audit.** When the student serves, one random draw decides an audit: probability `RATCHET_AUDIT_RATE` (0.05; at least 0.10 in mock mode), or `RATCHET_CANARY_AUDIT_RATE` for a canary when set, or an operator's runtime rate. If drawn, the teacher answers the same request at temperature 0 and its answer is compared with the student's. The student's answer is served either way.
 
 9. **Escalate otherwise** (`_call_teacher`). The teacher answers under the serving parameters: the client's temperature or 0, and 0.7 for `n` choices when the client set none, capped at 8,192 output tokens. The answer is cleaned (reasoning removed), served, and stored as a training example only when it is complete and valid. If the teacher fails, see [When something fails](#when-something-fails) below.
 
-10. **Run the shadow.** If a version is in shadow, it is sampled and scored the same way, silently. Its verdict (would it serve, and does it agree with the best reference) goes into the row; a disagreement with the live student's answer is settled by the teacher (arbitration). A request answered by a stand-in runs no shadow.
+10. **Run the shadow.** If a version is in shadow, it is sampled and scored the same way, silently. Its verdict (would it serve, and does it agree with the best reference) goes into the row; a disagreement with the live student's answer is settled by the teacher (<Term t="arbitration">arbitration</Term>). A request answered by a stand-in runs no shadow.
 
 11. **Log one row** (`Ledger.log_request`): task, who served, version, confidence, whether it escalated or was audited, the shadow's verdict, latency and `wall_ms`, `cost_usd` with its student and teacher parts, the all-teacher baseline, `stored`, `route`, the threshold used, `label_p` (the audit rate the answer was drawn at) and the request's ids. The row holds metadata only, never the prompt or the answer.
 
@@ -228,7 +229,7 @@ Every row gets a `route` (`router.ROUTES`). `/ratchet/stats` counts them per tas
 | `ineligible:<reason>` | teacher | The student must not see the request: a content part only the teacher reads (`content_type`, `RATCHET_TEACHER_MODALITIES`) or too much input (`input_tokens`) | Only an over-length request on a task with `store_ineligible` |
 | `multimodal` | teacher | Set by a caller of `Ratchet.teacher_only` for a part only the teacher reads; the chat route uses `ineligible:content_type` | Never |
 
-"If valid" also means no storage opt-out applies. Rows written before v0.5 have no route and are counted as `unrecorded`.
+"If valid" also means no storage <Term t="opt-out">opt-out</Term> applies. Rows written before v0.5 have no route and are counted as `unrecorded`.
 
 ### The response
 
@@ -328,7 +329,7 @@ A shadow has its own breaker, so a bad staging adapter cannot open the one live 
 | 503 | `teacher_circuit_open` | The teacher's breaker is open after 5 failed calls in a row; answered at once with `Retry-After` |
 | 504 | `teacher_timeout` | The teacher did not answer in time |
 
-Two opt-in stand-ins answer instead of an error. A **fallback teacher** (`RATCHET_TEACHER_FALLBACK_MODEL`, licensed at startup like any teacher) answers, when the primary is unavailable, any request whose teacher answer will be served (route `fallback_teacher`); audits and arbitrations never use it. **Degraded mode** (`RATCHET_ON_TEACHER_FAILURE=serve_student`) serves the student's own valid, below-threshold answer to an escalation, marked `ratchet.degraded` and `X-Ratchet-Degraded` (route `degraded`). Neither covers a 400 about the request. A stand-in's answer is never audited or shadowed, and a degraded answer is never stored, so neither can move a release.
+Two opt-in stand-ins answer instead of an error. A **fallback teacher** (`RATCHET_TEACHER_FALLBACK_MODEL`, licensed at startup like any teacher) answers, when the primary is unavailable, any request whose teacher answer will be served (route `fallback_teacher`); audits and arbitrations never use it. **<Term t="degraded-mode">Degraded mode</Term>** (`RATCHET_ON_TEACHER_FAILURE=serve_student`) serves the student's own valid, below-threshold answer to an escalation, marked `ratchet.degraded` and `X-Ratchet-Degraded` (route `degraded`). Neither covers a 400 about the request. A stand-in's answer is never audited or shadowed, and a degraded answer is never stored, so neither can move a release.
 
 ## For engineers
 
@@ -383,7 +384,7 @@ Small models are poorly calibrated, so one token probability does not tell right
 
 ### Is my prompt stored?
 
-The request row holds metadata only. Prompt and answer text is stored only as a training example from a teacher answer, after PII redaction (emails, phone and card numbers and similar; names and street addresses are not caught yet), and not at all under a storage opt-out. Pinned, tool and multimodal requests are never stored. See [Security](/guides/security/).
+The request row holds metadata only. Prompt and answer text is stored only as a training example from a teacher answer, after <Term t="pii-redaction">PII redaction</Term> (emails, phone and card numbers and similar; names and street addresses are not caught yet), and not at all under a storage opt-out. Pinned, tool and multimodal requests are never stored. See [Security](/guides/security/).
 
 ### What does a request cost me?
 

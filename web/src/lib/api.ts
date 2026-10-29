@@ -5,6 +5,9 @@
 
 import type { DemoInfo, Links, Upstream } from "./surface-model";
 import { gatewayFetch } from "./waking-store";
+import { streamScoutWith } from "./scout-stream";
+import { getToken } from "./turnstile";
+import { tokenHeaders } from "./turnstile-model";
 
 export type { DemoInfo, Links, Upstream, UpstreamCall } from "./surface-model";
 
@@ -560,65 +563,27 @@ export const api = {
   judgeUnlock: (code: string) => judgeCall("POST", JSON.stringify({ code })),
   /** End the judge session (clears the cookie). Resolves to the HTTP status. */
   judgeSignOut: () => judgeCall("DELETE"),
-  scoutRun: (question: string) =>
-    json<{ events: ScoutEvent[] }>("/scout/run", { method: "POST", body: JSON.stringify({ question }) }),
+  /** `token` is a human-check token for this one call; left out, a fresh one is asked for (never reuse one: it works once). */
+  scoutRun: async (question: string, token?: string | null) =>
+    json<{ events: ScoutEvent[] }>("/scout/run", {
+      method: "POST",
+      body: JSON.stringify({ question }),
+      headers: tokenHeaders(token === undefined ? await getToken() : token),
+    }),
 };
+
 
 /**
  * Stream a Scout run over Server-Sent Events. Falls back to POST /scout/run (replayed with
  * short gaps) when EventSource is unavailable or fails before the first event.
+ * Every attempt carries its own fresh human-check token and an error never lets the browser reconnect (src/lib/scout-stream.ts).
  * Returns a cancel function.
  */
 export function streamScout(question: string, onEvent: (e: ScoutEvent) => void): () => void {
-  let closed = false;
-  let started = false;
-  let es: EventSource | null = null;
-
-  const finish = () => {
-    closed = true;
-    es?.close();
-  };
-
-  const fallback = async () => {
-    try {
-      const { events } = await api.scoutRun(question);
-      for (const ev of events) {
-        if (closed) return;
-        onEvent(ev);
-        await new Promise((r) => setTimeout(r, ev.type === "step" ? 90 : 0));
-      }
-    } catch (e) {
-      if (!closed) onEvent({ type: "error", message: e instanceof Error ? e.message : "Scout failed." });
-    } finally {
-      finish();
-    }
-  };
-
-  if (typeof EventSource === "undefined") {
-    void fallback();
-    return finish;
-  }
-  es = new EventSource(`/scout/stream?q=${encodeURIComponent(question)}`);
-  es.onmessage = (m) => {
-    if (closed) return;
-    let ev: ScoutEvent;
-    try {
-      ev = JSON.parse(m.data);
-    } catch {
-      return;
-    }
-    started = true;
-    onEvent(ev);
-    if (ev.type === "done" || ev.type === "error") finish();
-  };
-  es.onerror = () => {
-    if (closed) return;
-    es?.close();
-    if (!started) void fallback();
-    else {
-      onEvent({ type: "error", message: "The connection to Scout was lost." });
-      finish();
-    }
-  };
-  return finish;
+  return streamScoutWith(question, onEvent, {
+    token: getToken,
+    makeSource: typeof EventSource === "undefined" ? undefined : (url) => new EventSource(url),
+    run: (q, token) => api.scoutRun(q, token),
+    pause: (ms) => new Promise((r) => setTimeout(r, ms)),
+  });
 }

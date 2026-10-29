@@ -76,6 +76,45 @@ without waking the container, with `retry-after` set to the seconds until 00:00 
 (the gateway's own shape) for Scout. If the Durable Object fails the call goes through (the site key's limits and the budgets still hold) and the Worker logs
 `quota_error` with no address.
 
+**The human check (Cloudflare Turnstile), optional.** The buttons that spend Token Factory money in a browser (Try a real request, Scout) can be made to pass a
+"verify you are human" check first. It is **off until you set the secret**, so this code can be deployed before the widget exists.
+
+| Name | Kind | Where | What it does |
+|---|---|---|---|
+| `TURNSTILE_SECRET_KEY` | secret | the `ratchet-live` Worker | Turns the check on. Without it nothing below happens. |
+| `TURNSTILE_SITE_KEY` | variable (public) | the `ratchet-live` Worker | The widget's site key. The web app reads it from `GET /ratchet/turnstile` (answered by the Worker), so setting or changing it needs no rebuild of the site. Without it no widget is drawn. |
+| `EDGE_TURNSTILE_MAX_FAILS` | variable | the `ratchet-live` Worker | Invalid tokens per visitor per UTC day before a block until 00:00 UTC. Default 5, `0` is off. |
+| `EDGE_DAILY_CURL_TOTAL` | variable | the `ratchet-live` Worker | Keyless calls **without** a token (curl), all visitors together, per UTC day. Default 100, `0` is off. |
+
+Set up: in the Cloudflare dashboard, Turnstile, add a widget (mode **Managed**) for the hostnames `ratchet.dualmindlab.tech` (the site, whose requests the Pages proxy
+forwards) and `live.ratchet.dualmindlab.tech` (the live host serves the same pages directly). Then `npx wrangler secret put TURNSTILE_SECRET_KEY --name ratchet-live`
+(the widget's secret key, never in the repo) and add the variable `TURNSTILE_SITE_KEY` (the widget's site key) in the dashboard (Workers & Pages, ratchet-live, Settings,
+Variables and Secrets). No deploy is needed. The pages' browser calls are same-origin (the Worker sends no CORS headers), so no other hostname is involved.
+
+How it works. The page asks the Worker for the site key, draws the widget (managed, quiet: it passes without a click unless Cloudflare wants one) and sends a fresh token
+with each paid call, in the header `cf-turnstile-response` (for Scout's EventSource, which cannot set headers, in the query parameter of the same name). The Worker verifies it
+with Cloudflare's siteverify (secret, token and the visitor's address) **before** the call reaches the container or Token Factory, once per request, and removes it before forwarding.
+A token works once and lives 300 seconds, so the page resets the widget for every call.
+
+- **Good token**: the call goes on to the per-visitor daily limit above, as before.
+- **Invalid token** (siteverify says `invalid-input-response`: forged or malformed): 403 and the words "Human check failed. Refresh the page and try again." (an OpenAI-shaped
+  error with the code `human_check_failed` for `/v1`, `{"detail": ...}` for Scout), and one failure is counted for that visitor and day (a Durable Object, the same
+  `VisitorQuota` class, named by day and the hash of the address). After `EDGE_TURNSTILE_MAX_FAILS` failures that visitor gets 429 (`human_check_blocked`, with `retry-after`)
+  on every keyless paid call, with or without a token, until 00:00 UTC.
+- **Expired or already-used token** (`timeout-or-duplicate`, what a retry or a reconnect with an old token produces): the same 403 and words, but **not counted**, so a real
+  person who retries is never blocked. A missing token on a Scout call is a plain 403 (`Human check required`), also not counted.
+- **Siteverify unreachable or erroring** (network failure, 5xx, a wrong secret on our side): the call fails open to the per-visitor limit, nothing is counted against the
+  visitor and the Worker logs `turnstile_unavailable`. A Cloudflare outage never locks a judge out.
+- **No token on `POST /v1/*` (curl)**: still allowed, 3 a day per visitor, and now also counted in one shared allowance (`EDGE_DAILY_CURL_TOTAL`, a Durable Object named by
+  day) so that rotating addresses cannot drain the budget kept for verified people. When it is used up: 429 (`curl_allowance_used`) saying so and pointing to the browser. A
+  browser whose widget is blocked (an ad blocker) falls into this case too.
+- **Scout** is browser-only while the check is on: a Scout run needs a valid token, even with a judge cookie (the Worker only sees that the cookie exists).
+- **Calls with an `Authorization` header** (a real API key) never pass through the check: the gateway checks the key.
+
+Retries and reconnects. A token is checked once per request. The web app never reuses one: a Scout stream that errors is closed by the page (no browser auto-reconnect with
+the same address) and the fallback `POST /scout/run` asks for a new token first; the "Try a real request" box sends once and a new send gets a new token. The Worker's own
+loops that hold a request while the container wakes re-send it without checking the token again. The Pages proxy never retries `/v1/*` or Scout runs.
+
 **Running totals that survive restarts.** The gateway's ledger is on the container's own disk, so a restart or a redeploy empties `/ratchet/stats`. The Worker therefore
 keeps aggregate totals itself, in one more SQLite-backed Durable Object (`LiveCounters`, binding `LIVE_COUNTERS`, migration `v3`): after every paid call, when the totals
 are read while the container is up, and when the container's idle timeout expires, it reads `GET /ratchet/counters` from the container and adds the difference since

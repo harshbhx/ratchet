@@ -12,6 +12,7 @@ import StatRow from '../../../components/StatRow.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>The Python API is the cascade the gateway runs, `Ratchet.handle`, called from your own Python code, so a batch job, a test or an agent in the same process can use the student and the teacher without an HTTP hop.</Summary>
 
@@ -27,17 +28,17 @@ What you give up is the counter's checks. Nobody checks your card, because you a
 
 ## How it really works
 
-The gateway in [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) is a thin layer around a few Python objects. `Runtime.reset()` builds them once at startup, and every chat request ends in one call: `Ratchet.handle(messages, task, client=..., params=..., meta=..., n=...)`. Embedding Ratchet means building the same objects yourself and calling the same method. Scout's agents already do this inside the gateway process: each agent call is `Ratchet.handle(messages, task)`, with no HTTP in between.
+The gateway in [`ratchet/gateway.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/gateway.py) is a thin layer around a few Python objects. `Runtime.reset()` builds them once at startup, and every chat request ends in one call: `Ratchet.handle(messages, task, client=..., params=..., meta=..., n=...)`. Embedding Ratchet means building the same objects yourself and calling the same method. <Term t="scout">Scout</Term>'s agents already do this inside the gateway process: each agent call is `Ratchet.handle(messages, task)`, with no HTTP in between.
 
 <Steps>
 
 1. **Build `Settings`.** `Settings()` in [`ratchet/config.py`](https://github.com/harshbhx/ratchet/blob/main/ratchet/config.py) reads every `RATCHET_*` variable (and `NEBIUS_API_KEY`) from the environment; keyword arguments override them, for example `Settings(mode="live")`. `Settings()` itself does not validate. `config.load()` returns the settings plus a list of variables that did not parse, and `config.check(settings)` lists every problem the gateway's startup would find, errors first. Run the check before you spend money.
 
-2. **Open the ledger.** For live use, open it the way the gateway and `python -m ratchet.live` do: `Ledger(s.db_path, s.golden_fraction, auto_day=True, sync=s.ledger_sync())`. `auto_day=True` numbers days from the first logged request on the wall clock; without it the caller sets `ledger.day`, as the mock example below does. Then load the task registry with `taskspec.install(ledger, s.tasks_file)`: the built-in tasks, then `RATCHET_TASKS_FILE`'s, then the API and auto tasks stored in the ledger.
+2. **Open the <Term t="ledger">ledger</Term>.** For live use, open it the way the gateway and `python -m ratchet.live` do: `Ledger(s.db_path, s.golden_fraction, auto_day=True, sync=s.ledger_sync())`. `auto_day=True` numbers days from the first logged request on the wall clock; without it the caller sets `ledger.day`, as the mock example below does. Then load the task registry with `taskspec.install(ledger, s.tasks_file)`: the built-in tasks, then `RATCHET_TASKS_FILE`'s, then the API and auto tasks stored in the ledger.
 
-3. **Make the providers.** The teacher is an `OpenAICompatProvider` on Token Factory with the teacher's timeouts and retries (`s.teacher_timeout()`, `s.teacher_retry()`). The student is an `OpenAICompatProvider` on your vLLM endpoint with the student's timeouts and **no retry**: on the request path the teacher is the student's retry.
+3. **Make the providers.** The <Term t="teacher">teacher</Term> is an `OpenAICompatProvider` on <Term t="token-factory">Token Factory</Term> with the teacher's timeouts and retries (`s.teacher_timeout()`, `s.teacher_retry()`). The <Term t="student">student</Term> is an `OpenAICompatProvider` on your <Term t="vllm">vLLM</Term> endpoint with the student's timeouts and **no retry**: on the request path the teacher is the student's retry.
 
-4. **Build `Ratchet` with a resolver for the student.** `Ratchet(s, ledger, teacher, resolver)`. The resolver is a function from a version (`ledger.Version`) to `(provider, model name)`. For vLLM with runtime LoRA the model name is the adapter's name, `v.adapter_uri`, so `lambda v: (student, v.adapter_uri)` is enough. The constructor installs the license registry, refuses a teacher that is not distillable (`licenses.require_distillable`), checks every setting it reads, and builds the off-path worker pool (`SideCar`) from `Settings.sidecar()`. A bad value raises here, before any request.
+4. **Build `Ratchet` with a resolver for the student.** `Ratchet(s, ledger, teacher, resolver)`. The resolver is a function from a version (`ledger.Version`) to `(provider, model name)`. For vLLM with runtime <Term t="lora">LoRA</Term> the model name is the adapter's name, `v.adapter_uri`, so `lambda v: (student, v.adapter_uri)` is enough. The constructor installs the license registry, refuses a teacher that is not distillable (`licenses.require_distillable`), checks every setting it reads, and builds the off-path worker pool (`SideCar`) from `Settings.sidecar()`. A bad value raises here, before any request.
 
 5. **Call `handle`.** `result = r.handle(messages, "ticket-triage")` runs the full cascade: task resolution, version pick (canary or live), three student samples, confidence against the threshold, escalation to the teacher, the random audit, the shadow, storage of valid teacher answers, and one ledger row. It returns a `Result`. On a teacher failure with nothing to stand in, it raises.
 
@@ -134,7 +135,7 @@ sequenceDiagram
 The [request journey](/guides/request-journey/) walks through the same cascade from the HTTP side, and [escalation and audits](/guides/escalation-and-audits/) covers what happens on each branch.
 
 <Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
-- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot <Term t="l40s">L40S</Term>: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
 - **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
 - **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
 </Aside>
@@ -208,7 +209,7 @@ fallback = OpenAICompatProvider(s.teacher_base, s.teacher_api_key, timeout=s.stu
 r = Ratchet(s, ledger, teacher, lambda v: (fallback, s.fallback_student_model))  # RATCHET_FALLBACK_STUDENT
 ```
 
-`Ratchet.threshold` gives that model `RATCHET_CONFIDENCE_THRESHOLD` (0.80 by default) instead of a version's calibrated threshold, because the fallback was never trained or tested on your golden set.
+`Ratchet.threshold` gives that model `RATCHET_CONFIDENCE_THRESHOLD` (0.80 by default) instead of a version's calibrated threshold, because the fallback was never trained or tested on your <Term t="golden-set">golden set</Term>.
 
 ### A runnable example in mock mode
 
@@ -350,7 +351,7 @@ Storage rules apply to every caller whether or not you pass a `RequestMeta`: `RA
 | `spend.BudgetExceeded` | With `RequestMeta(student_only=True)`, a request that needs the teacher |
 | `ValueError`, `licenses.LicenseError` | From the constructor: a bad setting, or a teacher that is not distillable |
 
-A student failure never raises: it is counted, and the teacher answers instead (routes `student_error` or `student_breaker`). A failed audit, shadow sample or arbitration never fails the request either. The gateway maps `UpstreamError` to its HTTP error codes; see [errors](/reference/api/#errors) in the HTTP guide.
+A student failure never raises: it is counted, and the teacher answers instead (routes `student_error` or `student_breaker`). A failed audit, shadow sample or <Term t="arbitration">arbitration</Term> never fails the request either. The gateway maps `UpstreamError` to its HTTP error codes; see [errors](/reference/api/#errors) in the HTTP guide.
 
 ### Tasks
 
@@ -462,11 +463,11 @@ In live mode, run `python -m ratchet.live night` (see [command line](/api/cli/))
 
 ### Does the embedded path cost anything extra?
 
-No. The model calls are the same as over HTTP, and `cost_usd` prices them with the prices in `ratchet/config.py`, which are unverified until `scripts/day1_check.py` passes with a real key. With off-path checks, the audit and shadow cost lands in the ledger row after `handle` returns, not in that `Result`. Whether self-hosting the student pays at all depends on volume; see [cost and savings](/guides/cost-and-savings/).
+No. The model calls are the same as over HTTP, and `cost_usd` prices them with the prices in `ratchet/config.py`, which are unverified until `scripts/day1_check.py` passes with a real key. With <Term t="off-path-checks">off-path checks</Term>, the audit and shadow cost lands in the ledger row after `handle` returns, not in that `Result`. Whether self-hosting the student pays at all depends on volume; see [cost and savings](/guides/cost-and-savings/).
 
 ### What if the student is confidently wrong?
 
-The same as over HTTP: the answer is served. A random audit (5% of student answers by default, `RATCHET_AUDIT_RATE`) may catch it, and audits drive canary promotion and rollback, but only if something calls `gate.tick()`. Precision means agreement with Nemotron 3 Ultra on held-out rows, not ground truth. See [confidence](/guides/confidence/).
+The same as over HTTP: the answer is served. A random audit (5% of student answers by default, `RATCHET_AUDIT_RATE`) may catch it, and audits drive canary promotion and rollback, but only if something calls `gate.tick()`. Precision means agreement with Nemotron 3 Ultra on <Term t="held-out">held-out rows</Term>, not ground truth. See [confidence](/guides/confidence/).
 
 ## Related
 

@@ -5,7 +5,7 @@ How to operate Ratchet in live mode: what to check every day, what the events me
 ## Daily checks (5 minutes)
 
 1. **Dashboard** (`/dashboard`) or `GET /ratchet/stats`. In live mode the dashboard API needs an admin or dashboard key unless `RATCHET_PUBLIC_DASHBOARD=1` (`curl -H "Authorization: Bearer $DASHBOARD_KEY" .../ratchet/stats`); the page sends no key yet ([API.md](API.md#access-levels)):
-   - **Answered by your adapter** should be stable or rising. A sudden drop means drift (new kinds of requests) or a student problem.
+   - **Answered by your adapter** should be stable or rising. A sudden drop means [drift](https://docs.ratchet.dualmindlab.tech/guides/glossary/#drift) (new kinds of requests) or a student problem.
    - **Cost reduction** should track student share. If share is high but savings are low, audits or shadow are costing more than expected.
    - **Release log**: read every event since yesterday (meanings below).
 2. **Night School log** (`/var/log/ratchet-night.log`): exactly one of `trained` or `skip` per night.
@@ -230,7 +230,7 @@ Never keep two versions in `live`; the admin API cannot make two, and `promote -
 
 ### Reading the last-call strip
 
-The landing page's strip and the dashboard header show "Last Token Factory call: 3 min ago · model id · 4.2 s" and the same for Tavily, from `/ratchet/stats` `upstream`. It is the newest real call per role, never content. An old age means no traffic since, or no watchdog probe. "failed 3 min ago (timeout)" or "(HTTP 429)" is the last call's outcome, followed by "last success 40 min ago" when there was one: see [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) and [Rate limited](#rate-limited). "No Token Factory call since the gateway started" is normal on a fresh start. The record resets on a restart and covers the gateway process only.
+The landing page's strip and the dashboard header show "Last Token Factory call: 3 min ago · model id · 4.2 s" and the same for [Tavily](https://docs.ratchet.dualmindlab.tech/guides/glossary/#tavily), from `/ratchet/stats` `upstream`. It is the newest real call per role, never content. An old age means no traffic since, or no watchdog probe. "failed 3 min ago (timeout)" or "(HTTP 429)" is the last call's outcome, followed by "last success 40 min ago" when there was one: see [Teacher API down](#teacher-api-down-token-factory-errors-or-timeouts) and [Rate limited](#rate-limited). "No Token Factory call since the gateway started" is normal on a fresh start. The record resets on a restart and covers the gateway process only.
 
 ### Teacher API down (Token Factory errors or timeouts)
 
@@ -238,7 +238,7 @@ The landing page's strip and the dashboard header show "Last Token Factory call:
 
 **What the gateway already does** ([ADR 0014](adr/0014-upstream-failure-semantics.md), [ADR 0019](adr/0019-teacher-breaker-degraded-mode-and-fallback-teacher.md)): each teacher call is retried up to `RATCHET_TEACHER_RETRIES` (2) times within `RATCHET_TEACHER_DEADLINE_S` (180 s), with backoff, on connection failures and 408/409/429/5xx; a read timeout (`RATCHET_TEACHER_TIMEOUT_S`, 120 s) is retried once. So a short blip costs latency, not errors. OpenAI SDKs retry the 502 and 504 twice more on their own. When Token Factory asked for a wait longer than 8 s (`Retry-After` on a 503, say), the gateway does not hold the request for it: it answers at once and passes the wait on as `Retry-After` (clamped to 1 to 60 s), which the SDKs honour. After `RATCHET_TEACHER_BREAKER_FAILURES` (5) failed calls in a row the teacher's breaker opens: for `RATCHET_TEACHER_BREAKER_COOLDOWN_S` (30 s) no request waits on the teacher (a 503 with `Retry-After`, which the SDKs honour up to 60 s), then one request probes it; each failed probe doubles the wait up to 300 s, and a successful one closes the breaker (`teacher: half_open->closed`). So a long outage no longer ties up a worker thread per request for the whole deadline.
 
-**Impact:** requests the student serves with confidence still succeed (INV-15): when the audit or the shadow's arbitration fails, the student's answer is served and the failure is counted. Until the breaker opens, each failed audit waits for the teacher first (up to the 180 s deadline when the teacher hangs), so audited requests are slow; once it is open, audits and arbitrations are skipped at once (not counted as more errors). A failed or skipped audit is not counted as an audit, so canary promotion and rollback pause until the teacher is back. A shadow's disagreements go unarbitrated and count against it, so a shadow running through a long outage will likely be rejected; the reason says how many were unarbitrated, and the next night trains a new candidate.
+**Impact:** requests the student serves with confidence still succeed (INV-15): when the audit or the shadow's [arbitration](https://docs.ratchet.dualmindlab.tech/guides/glossary/#arbitration) fails, the student's answer is served and the failure is counted. Until the breaker opens, each failed audit waits for the teacher first (up to the 180 s deadline when the teacher hangs), so audited requests are slow; once it is open, audits and arbitrations are skipped at once (not counted as more errors). A failed or skipped audit is not counted as an audit, so canary promotion and rollback pause until the teacher is back. A shadow's disagreements go unarbitrated and count against it, so a shadow running through a long outage will likely be rejected; the reason says how many were unarbitrated, and the next night trains a new candidate.
 
 **Degraded options** (opt-in, restart to change; [CONFIGURATION.md](CONFIGURATION.md#when-the-teacher-is-down)):
 
@@ -267,7 +267,7 @@ The landing page's strip and the dashboard header show "Last Token Factory call:
 
 1. Daily quota: raise `RATCHET_API_KEY_DAILY_REQUESTS` (or the key's `daily_requests` in `RATCHET_KEY_LIMITS`) and restart, give the client its own key, or wait for midnight UTC. A refused request was not logged and used no quota. A restart keeps today's counts: the gateway reads them from the ledger.
 2. Rate or concurrency: raise the key's `rpm` or `concurrency` in `RATCHET_KEY_LIMITS` and restart, or ask the client to spread its requests (SDKs already wait for `Retry-After`). For `overloaded`, raise `RATCHET_MAX_INFLIGHT` only together with the worker thread pool (40 by default): past it, requests queue for a thread instead of getting the 503.
-3. Token Factory rate limit: check the account's limits in the Token Factory console. Fewer escalations mean fewer teacher calls: look at the escalation rate (drift, or a broken student) and the audit rate. Lower `RATCHET_AUDIT_RATE` (not to 0 while a canary is in flight) and avoid running Night School's judge during peak traffic.
+3. Token Factory rate limit: check the account's limits in the Token Factory console. Fewer escalations mean fewer teacher calls: look at the escalation rate ([drift](https://docs.ratchet.dualmindlab.tech/guides/glossary/#drift), or a broken student) and the audit rate. Lower `RATCHET_AUDIT_RATE` (not to 0 while a canary is in flight) and avoid running Night School's judge during peak traffic.
 4. Repeated `audit_error` events with `UpstreamError 429` mean audits are being rate-limited: the student's answers are still served, but canary promotion slows down.
 
 ### Student endpoint down or adapters lost
@@ -275,7 +275,7 @@ The landing page's strip and the dashboard header show "Last Token Factory call:
 **Symptoms:** escalation rate jumps towards 100% and cost goes back to the all-teacher baseline. Requests still succeed: student failures fall back to the teacher (INV-7). In the release log:
 
 - **Endpoint down or hanging:** `student_error` events (on the 1st, 10th, 100th and 1000th failure) naming a timeout, a connection error or a 5xx, then `circuit` `student: closed->open after 5 failures (...)`. From then on requests skip the student and go straight to the teacher (route `student_breaker` in `/ratchet/stats` → `tasks[].routes`), so they no longer wait out the student's timeouts. Every 30 s, doubling to 300 s while it stays down, one request probes the endpoint (`open->half_open`, then `half_open->open ...` or `half_open->closed`; at 300 s only the 1st, 10th, 100th and 1000th probe are logged). A probe on a hanging endpoint is never replaced while its call can still be running (the student's connect, write, read and pool timeouts plus 5 s, 37 s by default), and a probe that outlives even that still reopens the breaker when it fails, so the wait doubles however slow the endpoint is.
-- **Endpoint restarted:** vLLM forgets every adapter loaded at runtime and answers 404 ``The model `student-vN` does not exist.`` The `student_error` detail says `AdapterMissing 404 adapter_missing`. The breaker stays closed (the endpoint answers), and the gateway reloads the adapter by itself: one `adapter_reloaded` event per version within seconds, at most one try per adapter per minute. Shadow and canary adapters are reloaded the same way when their traffic hits the 404.
+- **Endpoint restarted:** [vLLM](https://docs.ratchet.dualmindlab.tech/guides/glossary/#vllm) forgets every adapter loaded at runtime and answers 404 ``The model `student-vN` does not exist.`` The `student_error` detail says `AdapterMissing 404 adapter_missing`. The breaker stays closed (the endpoint answers), and the gateway reloads the adapter by itself: one `adapter_reloaded` event per version within seconds, at most one try per adapter per minute. Shadow and canary adapters are reloaded the same way when their traffic hits the 404.
 
 **What the gateway already does** ([ADR 0015](adr/0015-student-circuit-breaker-and-adapter-reload.md)): opens the student breaker after `RATCHET_STUDENT_BREAKER_FAILURES` (5) endpoint failures in a row, probes again after `RATCHET_STUDENT_BREAKER_COOLDOWN_S` (30 s), and reloads lost adapters. A breaker that closes again and `adapter_reloaded` events need no action.
 
@@ -296,7 +296,7 @@ The landing page's strip and the dashboard header show "Last Token Factory call:
 
 ### Precision alert on live
 
-**Symptoms:** `alert` events saying "live vN: S/N audits agree; e-value E >= 100 (anytime-valid, alpha 1%); 95% CS [lo, hi]" (the default rule; [Reading an e-value event](#reading-an-e-value-event)), or with `RATCHET_ALERT_EPROCESS=0` "live vN audited precision X% (n=…) below floor".
+**Symptoms:** `alert` events saying "live vN: S/N audits agree; [e-value](https://docs.ratchet.dualmindlab.tech/guides/glossary/#e-value) E >= 100 ([anytime-valid](https://docs.ratchet.dualmindlab.tech/guides/glossary/#anytime-valid), alpha 1%); 95% CS [lo, hi]" (the default rule; [Reading an e-value event](#reading-an-e-value-event)), or with `RATCHET_ALERT_EPROCESS=0` "live vN audited precision X% (n=…) below floor".
 
 **Steps:**
 
@@ -321,7 +321,7 @@ v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 (anytime-valid, alpha 5%); 
 
 - `3/7 audits agree`: the counts. For a rollback they cover every audit of the canary's life; for an alert, the audits since the version went live; for a promotion (`canary`, `live`) and `inconclusive`, the current stage.
 - `e-value 64.9 >= 20`: how strongly the audits contradict "precision is at least the floor" (for a promotion: "at most the floor"). 1 means no evidence either way; the threshold is 1/alpha (`RATCHET_ALPHA_ROLLBACK` 0.05 → 20, `RATCHET_ALPHA_ALERT` 0.01 → 100, `RATCHET_ALPHA_PROMOTE` 0.05 → 20). The chance that a version whose precision stays at or above the floor ever reaches it is at most alpha, however often the gate runs. Small counts can be decisive: 0 agreeing out of 2 gives 29.8.
-- `95% CS [0.041, 0.908]`: an anytime-valid 95% confidence sequence for the version's precision (computed on a 0.001 grid). Its upper end below the floor means the version is worse; a range that straddles the floor after hundreds of audits is what `inconclusive` means.
+- `95% CS [0.041, 0.908]`: an anytime-valid 95% [confidence sequence](https://docs.ratchet.dualmindlab.tech/guides/glossary/#confidence-sequence) for the version's precision (computed on a 0.001 grid). Its upper end below the floor means the version is worse; a range that straddles the floor after hundreds of audits is what `inconclusive` means.
 - Re-check any of these from the counts: `python -c "from ratchet import stats; print(stats.e_bernoulli(3, 7, 0.92, 'below'), stats.confidence_sequence(3, 7))"`, or read `versions[].evidence` in `GET /ratchet/stats` for the canary and the live version.
 
 ### Precision alert on one task
@@ -330,19 +330,19 @@ v3 rolled back: 3/7 audits agree; e-value 64.9 >= 20 (anytime-valid, alpha 5%); 
 
 **Steps:**
 
-1. Check `GET /ratchet/stats` → the task's entry in `tasks`: `audit_agreement`, `threshold`, and the held-out `precision` and `coverage` the version was admitted with. A held-out precision far above the audited one means live traffic for the task differs from its golden rows (drift, or a new kind of request).
-2. Keep the task on the teacher at once: set `"pinned": true` in its spec (tasks file or admin API). That is an operator decision, so the gate never makes it; a pinned task's stored examples leave training and the golden eval from the next night on, and unpinning brings them back.
+1. Check `GET /ratchet/stats` → the task's entry in `tasks`: `audit_agreement`, `threshold`, and the [held-out](https://docs.ratchet.dualmindlab.tech/guides/glossary/#held-out) `precision` and `coverage` the version was admitted with. A [held-out](https://docs.ratchet.dualmindlab.tech/guides/glossary/#held-out) precision far above the audited one means live traffic for the task differs from its [golden rows](https://docs.ratchet.dualmindlab.tech/guides/glossary/#golden-set) (drift, or a new kind of request).
+2. Keep the task on the teacher at once: set `"pinned": true` in its spec (tasks file or admin API). That is an operator decision, so the gate never makes it; a pinned task's stored examples leave training and the [golden eval](https://docs.ratchet.dualmindlab.tech/guides/glossary/#golden-set) from the next night on, and unpinning brings them back.
 3. If several tasks are affected, or the version-level alert also fired, take the version out instead (see [Precision alert on live](#precision-alert-on-live)).
 4. Look at the task's spec: a field that is too strict or too loose shows up here first ([CONFIGURATION.md](CONFIGURATION.md#tasks)).
 
 ### Bad deploy / rollback
 
-**Symptoms:** a `rollback` event. The system has already moved traffic back. The event names the evidence: the Wilson bound and `n` by default, or the counts, e-value and confidence sequence under `RATCHET_SEQUENTIAL=1` ([Reading an e-value event](#reading-an-e-value-event)). The answers the version served before it was rolled back are its requests with `served_by='student'` (`Ledger.served_counts()`).
+**Symptoms:** a `rollback` event. The system has already moved traffic back. The event names the evidence: the [Wilson bound](https://docs.ratchet.dualmindlab.tech/guides/glossary/#wilson-bound) and `n` by default, or the counts, [e-value](https://docs.ratchet.dualmindlab.tech/guides/glossary/#e-value) and confidence sequence under `RATCHET_SEQUENTIAL=1` ([Reading an e-value event](#reading-an-e-value-event)). The answers the version served before it was rolled back are its requests with `served_by='student'` (`Ledger.served_counts()`).
 
 **Steps:**
 
 1. Confirm the right adapter was loaded: the adapter folder's `ratchet_manifest.json` should show the expected example count.
-2. Compare the version's golden `precision` with its audited precision. A big gap means a training or serving mismatch, such as the wrong checkpoint, a tokenizer or chat-template change, or a vLLM version change.
+2. Compare the version's golden `precision` with its audited precision. A big gap means a training or serving mismatch, such as the wrong [checkpoint](https://docs.ratchet.dualmindlab.tech/guides/glossary/#checkpoint), a tokenizer or chat-template change, or a [vLLM](https://docs.ratchet.dualmindlab.tech/guides/glossary/#vllm) version change.
 3. Don't delete the rolled-back adapter until you understand why it failed.
 
 ### Persistent rejections

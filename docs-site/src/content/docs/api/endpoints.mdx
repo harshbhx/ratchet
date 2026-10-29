@@ -7,6 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>The gateway serves 85 routes; this page groups them by purpose, says which key each one needs, and shows the three calls most people make first.</Summary>
 
@@ -48,7 +49,7 @@ flowchart LR
 
 <figcaption>
 
-**Reading this diagram.** Read it from the left, from who calls to what they call. Your application only needs the first group, Serve: the OpenAI-shaped routes and the three Ratchet routes for feedback, no-train registrations and erasing its own examples. Prove holds the signed evidence: bills of materials, certificates, proofs and savings receipts. Observe is what the dashboard and your monitors read. Operate is for the person running the gateway: versions, switches, task pins and the task registry. Pages are the web pages and the Scout routes.
+**Reading this diagram.** Read it from the left, from who calls to what they call. Your application only needs the first group, Serve: the OpenAI-shaped routes and the three Ratchet routes for feedback, no-train registrations and erasing its own examples. Prove holds the signed evidence: bills of materials, <Term t="certificate">certificates</Term>, proofs and savings receipts. Observe is what the dashboard and your monitors read. Operate is for the person running the gateway: versions, switches, task pins and the task registry. Pages are the web pages and the <Term t="scout">Scout</Term> routes.
 
 </figcaption>
 </figure>
@@ -74,13 +75,13 @@ flowchart LR
 
 <figcaption>
 
-**Reading this diagram.** Each row is one access level, on the left, and who may call a route at that level, on the right. Public routes never ask for a key. API routes ask for a key only when `RATCHET_API_KEYS` is set. The read-only management routes (dashboard, bill of materials, metrics) are open on a public dashboard, which is the default in mock mode; in live mode they need an admin or dashboard key, and a gateway with neither configured refuses them. Admin routes always need an admin key in live mode. A route nobody has classified counts as dashboard level, so a new route starts private. On a public dashboard, a reader without a key still gets an answer, with client names replaced by pseudonyms. A missing or wrong key is a 401 or 403; on `/v1/*` a missing API key is a 401 `invalid_api_key`.
+**Reading this diagram.** Each row is one access level, on the left, and who may call a route at that level, on the right. Public routes never ask for a key. API routes ask for a key only when `RATCHET_API_KEYS` is set. The read-only management routes (dashboard, <Term t="bom">bill of materials</Term>, metrics) are open on a public dashboard, which is the default in <Term t="mock-mode">mock mode</Term>; in live mode they need an admin or dashboard key, and a gateway with neither configured refuses them. Admin routes always need an admin key in live mode. A route nobody has classified counts as dashboard level, so a new route starts private. On a public dashboard, a reader without a key still gets an answer, with client names replaced by pseudonyms. A missing or wrong key is a 401 or 403; on `/v1/*` a missing API key is a 401 `invalid_api_key`.
 
 </figcaption>
 </figure>
 
 <Aside type="note">
-The bill of materials routes also open to anyone with `RATCHET_PUBLIC_BOM=1`, so auditors can read provenance from a private gateway. The metrics route also accepts `RATCHET_METRICS_TOKEN`, so a scraper needs no dashboard key. Savings receipts are API-level: a key reads its own, an admin key reads all.
+The bill of materials routes also open to anyone with `RATCHET_PUBLIC_BOM=1`, so auditors can read <Term t="provenance">provenance</Term> from a private gateway. The metrics route also accepts `RATCHET_METRICS_TOKEN`, so a scraper needs no dashboard key. Savings receipts are API-level: a key reads its own, an admin key reads all.
 </Aside>
 
 ## Every route
@@ -266,7 +267,7 @@ print(resp.choices[0].message.content)
 
 ### 2. Read `ratchet.request_id` and send feedback
 
-Every chat response carries a `ratchet` block next to the usual fields. `request_id` names the request; `served_by` says whether the student or the teacher answered. A verdict on a request goes back with that id. An `incorrect` verdict may also carry the right answer, which then becomes a human-labelled training example (when the task and your opt-outs allow it).
+Every chat response carries a `ratchet` block next to the usual fields. `request_id` names the request; `served_by` says whether the <Term t="student">student</Term> or the teacher answered. A verdict on a request goes back with that id. An `incorrect` verdict may also carry the right answer, which then becomes a human-labelled <Term t="training-example">training example</Term> (when the task and your opt-outs allow it).
 
 ```python
 import httpx
@@ -348,14 +349,14 @@ sequenceDiagram
 
 <figcaption>
 
-**Reading this diagram.** A request is checked first, and a broken rule is a 400 in OpenAI's envelope before anything is spent. Otherwise the student answers when it is sure, and the teacher answers and has its answer stored when it is not. Either way the response names the request in `ratchet.request_id`. Feedback comes later, as a separate call to `/v1/ratchet/feedback` that quotes that id. The verdict is recorded in the ledger. It never promotes or rolls back a version; it is reported as human precision.
+**Reading this diagram.** A request is checked first, and a broken rule is a 400 in OpenAI's envelope before anything is spent. Otherwise the student answers when it is sure, and the teacher answers and has its answer stored when it is not. Either way the response names the request in `ratchet.request_id`. Feedback comes later, as a separate call to `/v1/ratchet/feedback` that quotes that id. The verdict is recorded in the <Term t="ledger">ledger</Term>. It never promotes or rolls back a version; it is reported as human precision.
 
 </figcaption>
 </figure>
 
 ## Where the reference pages come from
 
-The generated pages are not typed by hand, so they cannot drift from the code.
+The generated pages are not typed by hand, so they cannot <Term t="drift">drift</Term> from the code.
 
 <figure class="rt-diagram">
 

@@ -14,6 +14,7 @@ import FlowStep from '../../../components/FlowStep.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
 import FadeContent from '../../../components/ui/FadeContent.astro';
+import Term from '../../../components/Term.astro';
 
 <Summary>Scout is a small multi-agent research app built on Ratchet: five agents answer a question from the web, the many short triage and reading calls move to the student, and the open-ended planning and writing stay pinned to the teacher.</Summary>
 
@@ -35,9 +36,9 @@ The head chef's planning and plating notes are never copied into the recipe book
 
 <Steps>
 
-1. **A question arrives.** The browser opens `GET /scout/stream?q=...` (or a client calls `POST /scout/run`). The gateway checks it: not empty, at most 300 characters, and a Tavily key. Then the budget guard decides whether the run may start (`Guard.admit`).
+1. **A question arrives.** The browser opens `GET /scout/stream?q=...` (or a client calls `POST /scout/run`). The gateway checks it: not empty, at most 300 characters, and a <Term t="tavily">Tavily</Term> key. Then the budget guard decides whether the run may start (`Guard.admit`).
 
-2. **The planner writes three search queries.** One call with the task `research-plan`. The task is pinned, so Nemotron 3 Ultra answers it directly, with no student sample. Its JSON answer is `{"queries": [...]}`.
+2. **The planner writes three search queries.** One call with the task `research-plan`. The task is pinned, so <Term t="nemotron">Nemotron</Term> 3 Ultra answers it directly, with no <Term t="student">student</Term> sample. Its JSON answer is `{"queries": [...]}`.
 
 3. **The searcher runs the queries.** It is a tool, not a model. It calls the [Tavily Search API](https://docs.tavily.com) at basic depth (1 credit a search), up to `RATCHET_SCOUT_MAX_RESULTS` (4) results per query. Duplicate URLs are skipped, and at most 12 results go on.
 
@@ -83,10 +84,10 @@ sequenceDiagram
 
 <figcaption>
 
-**Reading this diagram.** The run is a pipeline with two fan-out stages. The budget guard is asked once at the start and told once at the end, and in between the gateway never calls a model without going through the cascade. Notice who answers: the planner and writer calls go straight to Ultra, while triage and reader calls try the student first, and the reader escalates the same way triage does. The page gets a `step` event as soon as each call finishes, which is why triage steps appear out of order.
+**Reading this diagram.** The run is a pipeline with two fan-out stages. The budget guard is asked once at the start and told once at the end, and in between the gateway never calls a model without going through the <Term t="cascade">cascade</Term>. Notice who answers: the planner and writer calls go straight to Ultra, while triage and reader calls try the student first, and the reader <Term t="escalation">escalates</Term> the same way triage does. The page gets a `step` event as soon as each call finishes, which is why triage steps appear out of order.
 
 <ul class="rt-key">
-  <li class="teacher">Ultra, the teacher</li>
+  <li class="teacher">Ultra, the <Term t="teacher">teacher</Term></li>
   <li class="student">Nano, the student</li>
 </ul>
 
@@ -113,7 +114,7 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** Orange calls are pinned to the teacher: never stored, never trained on. Blue calls are distilled: the student first, the teacher when it is unsure. The dashed box is a tool, not a model. Most calls are blue: up to 18 of up to 20 in a run. Each arrow is also a size: three queries become up to twelve results, then up to six facts, then one answer. Because only the planner and the writer are pinned, the savings a run shows are honest about the part that cannot move.
+**Reading this diagram.** Orange calls are pinned to the teacher: never stored, never trained on. Blue calls are <Term t="distillation">distilled</Term>: the student first, the teacher when it is unsure. The dashed box is a tool, not a model. Most calls are blue: up to 18 of up to 20 in a run. Each arrow is also a size: three queries become up to twelve results, then up to six facts, then one answer. Because only the planner and the writer are pinned, the savings a run shows are honest about the part that cannot move.
 
 <ul class="rt-key">
   <li class="teacher">Pinned to the teacher</li>
@@ -157,12 +158,12 @@ flowchart TB
 
 <figcaption>
 
-**Reading this diagram.** The first question decides everything: is the task pinned? A pinned call never touches the student and never reaches the training data. A distilled call is the normal cascade. Both lower branches end with Ultra involved: either because the student was unsure, or because an audit checks it afterwards (the dotted arrow). That is how the student's quality stays measured.
+**Reading this diagram.** The first question decides everything: is the task pinned? A pinned call never touches the student and never reaches the training data. A distilled call is the normal cascade. Both lower branches end with Ultra involved: either because the student was unsure, or because an <Term t="audit">audit</Term> checks it afterwards (the dotted arrow). That is how the student's quality stays measured.
 
 </figcaption>
 </figure>
 
-**Pinned** (`research-plan`, `research-write`): planning queries and writing an answer are open-ended. There are no label fields to compare, so the student and the teacher would almost never "agree", calibration would end up serving nothing, and every call would still pay for student samples. Training a 4B model on long free text would also dilute what it learns for the labelled tasks. So a pinned task goes straight to the teacher, with no student sample, audit or shadow. It is logged in the ledger like any other call, so the cost and the all-teacher baseline stay complete, but it is **never stored as a training example**, a rule the code and its tests enforce. Only an operator's task spec can pin a task, never a request header.
+**Pinned** (`research-plan`, `research-write`): planning queries and writing an answer are open-ended. There are no label fields to compare, so the student and the teacher would almost never "agree", <Term t="calibration">calibration</Term> would end up serving nothing, and every call would still pay for student samples. Training a 4B model on long free text would also dilute what it learns for the labelled tasks. So a pinned task goes straight to the teacher, with no student sample, audit or shadow. It is logged in the ledger like any other call, so the cost and the all-teacher baseline stay complete, but it is **never stored as a training example**, a rule the code and its tests enforce. Only an operator's task spec can pin a task, never a request header.
 
 **Distilled** (`source-triage`, `page-read`): one short labelling call per search result and one per relevant page. Each run makes up to 18 of them, they repeat in shape from question to question, and their label fields can be compared exactly. That is where the student takes over. Before a trained student is live (the cold start), these calls go to the teacher too, and its answers become the training data.
 
@@ -194,7 +195,7 @@ The stream always answers HTTP 200, because a browser's `EventSource` cannot rea
 
 ### Who answered each call
 
-The page puts a badge on every step. A student step from a Night School adapter (`student-vN`) is <Who as="student" />. A teacher step is <Who as="teacher" />. When the GPU endpoint is off in live mode, student calls go to the untuned Nemotron 3 Nano 30B on Token Factory, and those steps say <Who as="fallback" />, held to the default confidence threshold and not covered by the adapter's precision certificate. Only the step's `model` tells the two student cases apart, so the page compares it with `fallback_student` from `GET /scout/status`.
+The page puts a badge on every step. A student step from a Night School adapter (`student-vN`) is <Who as="student" />. A teacher step is <Who as="teacher" />. When the GPU endpoint is off in live mode, student calls go to the untuned Nemotron 3 Nano 30B on Token Factory, and those steps say <Who as="fallback" />, held to the default confidence threshold and not covered by the adapter's precision <Term t="certificate">certificate</Term>. Only the step's `model` tells the two student cases apart, so the page compares it with `fallback_student` from `GET /scout/status`.
 
 ### The budget guard
 
@@ -205,7 +206,7 @@ Scout is a public path that spends money on every run, so live mode guards it, a
 - **A per-IP hourly limit**: `RATCHET_SCOUT_RUNS_PER_HOUR` (6) per client address, in memory only, so no IP is stored.
 - **Kept across restarts**: each admitted run writes a `scout_run` row to the ledger's `spend` table, updated after every model call and closed with its outcome. At startup `Guard.restore()` rebuilds today's counters from those rows, so an update or a crash does not reset the caps while the ledger file survives. (The live gateway keeps its ledger on the container's own disk, so a container restart starts with empty counters; its low caps are set for that reason.) The rows hold no IP, question, URL, error message or code, and their `usd` stays 0 because the model calls are already counted in `requests`.
 - **A judges' reserve**: `RATCHET_SCOUT_JUDGE_RUNS_PER_DAY` (and an optional `RATCHET_SCOUT_JUDGE_BUDGET_USD`) holds part of each day back. With the day's total T, the reserve J, public use P and judge use U, a public run starts only while P + max(0, U − J) is below T − J (for spend, the largest finished run today is added to the left side as a margin, so public runs in flight cannot spill into the reserve), and a judge run while P + U is below T. Judges get at least their reserve and can use public room that is left.
-- **An access code**: a judge sends `RATCHET_SCOUT_JUDGE_CODE` once, in the body of `POST /scout/judge`, never in a URL or header (access logs record both). The gateway keeps only its SHA-256 digest and a derived key, allows 10 attempts per IP per hour, and answers with a signed `ratchet_judge` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` in live mode, 7 days by default). Rotating the code ends every session. No refusal message hints that a code exists. The code goes in the submission's testing instructions only.
+- **An access code**: a judge sends `RATCHET_SCOUT_JUDGE_CODE` once, in the body of `POST /scout/judge`, never in a URL or header (access logs record both). The gateway keeps only its <Term t="sha-256">SHA-256</Term> digest and a derived key, allows 10 attempts per IP per hour, and answers with a signed `ratchet_judge` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` in live mode, 7 days by default). Rotating the code ends every session. No refusal message hints that a code exists. The code goes in the submission's testing instructions only.
 - **Paced Tavily credits**: with `RATCHET_TAVILY_MONTHLY_CREDITS` set, every search reserves its credits first and settles them after the call. The public's allowance is spread evenly per UTC day until `RATCHET_TAVILY_PACE_UNTIL`, with a share held for judges. After Tavily answers 432 or 433 (plan or pay-as-you-go limit), searching pauses for an hour.
 
 <figure class="rt-diagram">
@@ -269,7 +270,7 @@ A search that fails (any HTTP or transport error, such as a revoked key's 401 or
 ### What is measured
 
 <Aside type="caution" title="No measured live Scout figures yet">
-Scout uses Tavily and the real cascade, with the teacher on Nebius Token Factory. The live gateway has no student endpoint yet, so student calls go to the hosted, untuned Nano 30B only through the random split, and carry its badge (its own calibration did not clear the bar, `evidence/hosted-nano`); today every call is answered by the teacher (`evidence/scout`: 57 of 57 calls). As of Oct 29, 2026 no measured live Scout savings figures are published.
+Scout uses Tavily and the real cascade, with the teacher on Nebius Token Factory. The live gateway has no student endpoint yet, so student calls go to the hosted, untuned Nano 30B only through the <Term t="random-split">random split</Term>, and carry its badge (its own calibration did not clear the bar, `evidence/hosted-nano`); today every call is answered by the teacher (`evidence/scout`: 57 of 57 calls). As of Oct 29, 2026 no measured live Scout savings figures are published.
 </Aside>
 
 ## For engineers
