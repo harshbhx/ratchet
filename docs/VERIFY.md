@@ -141,7 +141,7 @@ Not costed: the GPU runs that answered exam 2, small teacher re-runs on exam 1, 
 
 - The exams are synthetic text-to-SQL, not your data. A strict one-reference exam also marks a correct query wrong when it returns extra columns; the teacher's own score shows that.
 - Agreement is with the teacher's answers, not with ground truth.
-- The adapters were trained on a borrowed GPU with the standalone scripts in `scripts/text2sql/`; Night School's Nebius job is scripted and ready to run, and these results do not test it.
+- The adapters were trained on a borrowed GPU with the standalone scripts in `scripts/text2sql/`; Night School's Nebius job ran once by hand on 28 Oct 2026 ([`evidence/nightschool-nebius`](../evidence/nightschool-nebius)), and these exam results do not test it.
 - The hard tool-calling exam was written by one model (Claude Sonnet 5.5), so it may favour that model's style; the BFCL exam is a sample of a public benchmark, which models may have seen.
 - On the BFCL exam the adapter's gain over the untrained model is not significant (sign test p = 0.0784), and its gain comes from the `irrelevance` category only. See [Tool-calling round 3](#tool-calling-round-3).
 - Scores come from one run of each model at one setting. The 95% ranges say how much a different sample of questions could move them; they do not cover a different training run.

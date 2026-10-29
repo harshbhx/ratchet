@@ -292,14 +292,20 @@ From [THREAT_MODEL.md](/reference/threat-model/), which says plainly what exists
 | PII in training data (T4) | Pattern redaction, opt-outs, erasure with tombstones, logs without text | Name and address detection, Token Factory zero-data-retention settings |
 | Key leakage (T5) | Keys from the environment only; `.env` git-ignored | A secrets manager, separate keys, spend alerts |
 | Training on a teacher whose terms forbid it (T6) | Closed teachers refused in code; teacher and license recorded per example and signed into each adapter's BOM | A license registry kept current with model cards, legal review per teacher |
-| Token Factory terms §5(f) (T7) | Written clarification requested Oct 19, 2026 | Act on Nebius's answer |
+| Token Factory terms §5(f) (T7) | Written clarification requested Oct 19, 2026; no answer received as of 29 Oct 2026 | Act on Nebius's answer |
 | Unauthorised adapter loading on the endpoint (T9) | The endpoint token only | An allow-list of adapter paths, a separate admin path |
 | Denial of wallet (T11, T17) | Body, message and output caps; spend and rate limits; the Scout guard | Escalation-rate alerts, per-user quotas behind a login |
 | Prompt injection from search results (T15) | Results are data in a user message, never a system prompt; the writer is pinned to the teacher; no agent runs tools or code from model output | Stricter delimiting, shorter excerpts |
 | Stolen BOM signing key (T21) | Read from the environment only; only the public half is served | A secrets manager, signing on a separate machine |
 
-<Aside type="caution" title="What runs where today">
-As of Oct 28, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are tested offline and ran once by hand on 28 Oct 2026 (Night School, rejected by the golden gate), with the one-command host ready to run with `make nebius-up`; the live gateway answers every request with a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
+<Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+- **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
+</Aside>
+
+<Aside type="caution" title="What is still unchecked or not run">
+As of Oct 29, 2026, the teacher runs on Nebius Token Factory, and the student endpoint and the training job are tested offline and ran once by hand on 28 Oct 2026 (Night School, rejected by the golden gate), with the one-command host ready to run with `make nebius-up`; the live gateway answers every request with a real Token Factory call. Items marked "verify on day 1" in the VM guide, such as `caddy validate` with the log filter, have not been checked on a real VM.
 </Aside>
 
 ### The safety rules the loop never breaks

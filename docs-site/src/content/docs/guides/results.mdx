@@ -259,7 +259,7 @@ flowchart TB
 - **Base model against adapter** is the point of the work. Both answer the same questions with the same prompt and the same limits. The gap is what the adapter added.
 - **The split by difficulty and by industry** shows where the adapter helps. Each cell has few questions, so read the ranges before the bars. "Industry never seen in training" is the fairest test of whether it learned SQL or memorised.
 - **Coverage and precision when it answers** describe the confidence gate. Coverage is the share of questions the student answers on its own. Precision is how often those answers match the teacher. A higher threshold raises precision and lowers coverage.
-- **The estimated cost** is an estimate: token counts are measured, the prices are inputs (Nemotron 3 Ultra at $1 and $3 per million tokens in and out, and a student price you set), and no student endpoint was run, so no GPU-hour bill is in it. See [Cost and savings](/guides/cost-and-savings/).
+- **The estimated cost** is an estimate: token counts are measured, the prices are inputs (Nemotron 3 Ultra at $1 and $3 per million tokens in and out, and a student price you set), and the exams were scored without a student endpoint (the Nebius endpoint of 27 to 28 Oct 2026 ran only for speed tests, on other prompts), so no GPU-hour bill is in it. See [Cost and savings](/guides/cost-and-savings/).
 - **The data is synthetic.** The teacher wrote the databases and the questions. These numbers say how well the adapter copies the teacher on queries that run, not how well it serves your real users.
 
 <Aside type="caution" title="What this page cannot tell you">

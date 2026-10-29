@@ -34,10 +34,10 @@ Ratchet is license-clean distillation on open models: an OpenAI-compatible gatew
 
 | Doc | What it covers |
 |---|---|
-| [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md) | Where every part runs today (laptop, Cloudflare, Token Factory) and where it is designed to run on Nebius, and the one command that hosts it all there (scripted and tested offline, ready to run) |
+| [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md) | Where every part runs today (laptop, Cloudflare, Token Factory) and where it is designed to run on Nebius, and the one command that hosts it all there (the VM, job and endpoint each ran once by hand; the one-command kit is scripted and tested offline) |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Local mock mode and live mode on Nebius step by step, cost estimates, keeping the live gateway up |
 | [LIVE_MODE.md](LIVE_MODE.md) | Running against real Token Factory, the student endpoint and nightly jobs, measuring a live run |
-| [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | An alternative host: the Nebius CPU VM kit (scripted and tested offline). Setup, mock to live, costs, monitoring, backups, security, teardown |
+| [DEPLOY_NEBIUS_VM.md](DEPLOY_NEBIUS_VM.md) | An alternative host: the Nebius CPU VM kit (ran once by hand for the 28 Oct Night School; the one-command kit is tested offline). Setup, mock to live, costs, monitoring, backups, security, teardown |
 | [RUNBOOK.md](RUNBOOK.md) | Daily checks, event meanings, manual rollback and promotion, incident playbooks, backups |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Security and privacy: assets, trust boundaries, threats, mitigations present vs planned |
 

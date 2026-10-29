@@ -1,13 +1,13 @@
 # Recorded live Scout runs
 
-Three real Scout runs. Two were recorded on 23 Oct 2026 (UTC, 23:13 and 23:14) through a gateway in live mode on one laptop; the third on 24 Oct 2026 (11:56 UTC) through the deployed live demo at `live.ratchet.dualmindlab.tech`, which shows the demo's own Tavily and Token Factory keys work. The
+Three real Scout runs. Two were recorded on 23 Oct 2026 (UTC, 23:13 and 23:14) through a gateway in live mode on one laptop; the third on 24 Oct 2026 (11:56 UTC) through the deployed live gateway at `live.ratchet.dualmindlab.tech`, which shows the live gateway's own Tavily and Token Factory keys work. The
 gateway no longer serves them (the `/scout/recorded` routes were removed); they stay here as evidence. See [ADR 0140](../../docs/adr/0140-recorded-scout-run.md).
 
 | Question | Time | Model calls | Cost | Searches | Recorded through |
 |---|---|---|---|---|---|
 | What is LoRA fine-tuning and why is it cheaper than full fine-tuning? | 16.2 s | 20 | $0.0277 | 3 (Tavily) | a gateway on one laptop |
 | What is model distillation and when does it fail? | 13.2 s | 18 | $0.0223 | 3 (Tavily) | a gateway on one laptop |
-| What is retrieval-augmented generation and when does it help? | 14.8 s | 19 | $0.0225 | 3 (Tavily) | the deployed live demo |
+| What is retrieval-augmented generation and when does it help? | 14.8 s | 19 | $0.0225 | 3 (Tavily) | the deployed live gateway |
 
 ## What is real, and what is not
 

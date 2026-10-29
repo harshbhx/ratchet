@@ -38,7 +38,13 @@ Think of the whole restaurant as a set of rented rooms.
 
 </Eli10>
 
-<Aside type="caution" title="The GPU side is scripted and ready to run">
+<Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+- **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
+</Aside>
+
+<Aside type="caution" title="Still not done: the one-command host, the nightly schedule, the live connection">
 As of Oct 29, 2026, the teacher runs on Nebius Token Factory and the live gateway calls it for real. The text-to-SQL recipe was retrained once on Nebius AI Cloud, by hand (27 Oct 2026, a spot L40S Serverless Job; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)). The student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), and the endpoint was deleted. Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it (81.8% precision against the 95% target), so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)). The live site is not connected to a student endpoint, the teacher answers every live request, and the nightly loop has not run on live traffic. The one-command host (`make nebius-plan`, `make nebius-up`) is ready to run but has not run; the nightly schedule is still scripted only. The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline against a fake `nebius` command. Run every script with `DRY_RUN=1` first (the one-command script above does that by default).
 </Aside>
 
@@ -72,10 +78,11 @@ flowchart TB
     teacher["Ultra: teacher<br/>Super: judge<br/>Nano 30B: fallback"]
   end
   tavily["Tavily<br/>live Scout search"]
-  subgraph gpu["Nebius AI Cloud · L40S · ready to run"]
+  subgraph gpu["Nebius AI Cloud · L40S · ran by hand 27 to 28 Oct"]
     direction TB
     ep["Serverless Endpoint<br/>vLLM, only while on"] --- bucket[("Object Storage<br/>bucket at /data")]
     job["Serverless Job<br/>LoRA training"] --> bucket
+    nightly["Nightly schedule and<br/>live connection: not run"]
   end
   vm ==> tf
   tf ~~~ tavily
@@ -86,18 +93,19 @@ flowchart TB
   class user,dns,caddy,live neutral
   class pages,teacher ok
   class tavily outline
-  class ep,job,bucket pending
-  class gpu pendingZone
+  class ep,job,bucket ok
+  class nightly pending
+  class gpu okZone
   class tf okZone
 ```
 
 <figcaption>
 
-**Reading this diagram.** Green is in use today: Cloudflare Pages serves the static site and these docs (the live gateway runs on Cloudflare Workers with Containers; the Nebius VM in this guide is scripted and tested offline, ready to run), and the teacher runs on Nebius Token Factory, paid per token. Amber and dashed is the GPU side, scripted and tested offline and ready to run with `make nebius-up` (the original adapters were trained on a borrowed GPU; one hand-run Serverless Job on 27 Oct retrained the round-2 recipe). Plain boxes are the CPU VM this guide sets up: Caddy in front, the live gateway with its SQLite ledger. The thick arrow is the paid path every live request can take; the dotted ones are optional: Tavily only for live Scout runs, the endpoint only while you run it, and the training job only once the Night School cron is turned on.
+**Reading this diagram.** Green is in use today: Cloudflare Pages serves the static site and these docs (the live gateway runs on Cloudflare Workers with Containers; the Nebius VM in this guide ran once by hand, for the 28 Oct Night School; its one-command kit is tested offline), and the teacher runs on Nebius Token Factory, paid per token. The Nebius GPU side is green because each part ran once by hand: the round-2 retraining (27 Oct), the endpoint speed tests (27 to 28 Oct) and the Night School job and endpoint (28 Oct); the original adapters were trained on a borrowed GPU. The one amber box is what has not run: the nightly schedule and the live gateway's connection to an endpoint (the one-command script, `make nebius-up`, is tested offline). Plain boxes are the CPU VM this guide sets up: Caddy in front, the live gateway with its SQLite ledger. The thick arrow is the paid path every live request can take; the dotted ones are optional: Tavily only for live Scout runs, the endpoint only while you run it, and the training job only once the Night School cron is turned on.
 
 <ul class="rt-key">
   <li class="ok">In use</li>
-  <li class="pending">Scripted, ready to run</li>
+  <li class="pending">Not run</li>
   <li class="outline">Optional</li>
   <li class="neutral">Set up by this guide</li>
 </ul>

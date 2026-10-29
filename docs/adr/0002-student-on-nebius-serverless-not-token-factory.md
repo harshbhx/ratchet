@@ -14,7 +14,7 @@ The hackathon requires running on Nebius Token Factory or Nebius AI Cloud with a
 
 ## Decision
 
-Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are written and offline-tested, ready to run with `make nebius-plan`. The adapters behind the measured numbers in [evidence/](../../evidence/) were trained on a borrowed GPU. The teacher and the judge do run on Nebius Token Factory. Simulation numbers are labelled Simulation.
+Status: the Nebius Serverless Job and Endpoint scripts in `deploy/` are offline-tested and each ran once by hand (the retrain on 27 Oct 2026, the endpoint speed tests on 27 to 28 Oct, Night School on 28 Oct: [`evidence/nightschool-nebius`](../../evidence/nightschool-nebius)); the one-command kit (`make nebius-plan`) has not run as one. The adapters behind the measured numbers in [evidence/](../../evidence/) were trained on a borrowed GPU. The teacher and the judge do run on Nebius Token Factory. Numbers from mock models are labelled as mock.
 
 - **Student:** `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` with LoRA (rank 16).
 - **Training:** a Nebius **Serverless Job** (`deploy/train_job.sh`, image from `deploy/Dockerfile.train`, `gpu-l40s-a`) running `ratchet.nightschool.train` (TRL with PEFT; see ADR 0145).

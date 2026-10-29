@@ -18,7 +18,13 @@ import GradientText from '../../../components/ui/GradientText.astro';
 
 <Summary>The student endpoint only answers requests; training happens somewhere else: the gateway stores the teacher's answers to your traffic, and every night a Nebius Serverless Job trains <GradientText text="a new LoRA adapter you own" tone="owned" />, which the endpoint then loads from your bucket.</Summary>
 
-<Aside type="caution" title="The GPU path is scripted and ready to run">
+<Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+- **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
+</Aside>
+
+<Aside type="caution" title="Still not done: the live results and the one-command host">
 As of Oct 29, 2026, the teacher runs on Nebius Token Factory and the live gateway calls it for real. The text-to-SQL recipe was retrained once on Nebius AI Cloud, by hand (27 Oct 2026, a spot L40S Serverless Job; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)). The student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), and the endpoint was deleted. Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it (81.8% precision against the 95% target), so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)). The live site is not connected to a student endpoint, the teacher answers every live request, and the nightly loop has not run on live traffic. The three published adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU. Everything on this page is also tested offline, and the one-command host (`make nebius-plan`, `make nebius-up`) is ready to run but has not run. The `nebius ai` commands follow the Nebius CLI reference (pages auto generated on Oct 19, 2026, read Oct 21, 2026). Run both deploy scripts with `DRY_RUN=1` first, and run the first-run checks on Token Factory (`scripts/day1_check.py`) before relying on any of it. So this path has no live results yet.
 </Aside>
 
@@ -91,29 +97,32 @@ flowchart TB
   subgraph TF["Token Factory, per token"]
     TEA["Teacher: Ultra<br/>Judge: Super"]
   end
-  subgraph Neb["Nebius AI Cloud, ready to run"]
+  subgraph Neb["Nebius AI Cloud, ran by hand 27 to 28 Oct"]
     direction TB
     JOB["Serverless Job<br/>LoRA on one L40S"] -->|"adapter"| BK[("Bucket<br/>at /data")]
     BK -->|"loads"| EP["Serverless Endpoint<br/>vLLM"]
+    NIGHT["Nightly schedule and<br/>live connection: not run"]
   end
   Host ==>|"escalations, audits,<br/>judge"| TF
   Host ==>|"rows, job, student calls"| Neb
 
   class DB,BK store
   class TEA teacher
-  class JOB,EP pending
+  class JOB,EP ok
+  class NIGHT pending
   class TF teacherZone
-  class Neb pendingZone
+  class Neb okZone
 ```
 
 <figcaption>
 
-**Reading this diagram.** Three boxes, three jobs. Your host decides and remembers: it holds the gateway, the ledger and the night script. Nebius does the heavy lifting: a job trains, an endpoint serves, and one bucket is shared by both, which is how weights get from one to the other without a copy step. Token Factory is rented per token and holds the teacher and the judge. From the host, the night uploads the rows to the bucket, submits the job and tells the endpoint to load the adapter, and the gateway sends student calls to the endpoint. Nothing on Nebius ever writes to the ledger; only the host does. The Nebius GPU parts are drawn amber and dashed because they are scripted and ready to run, with no live results yet.
+**Reading this diagram.** Three boxes, three jobs. Your host decides and remembers: it holds the gateway, the ledger and the night script. Nebius does the heavy lifting: a job trains, an endpoint serves, and one bucket is shared by both, which is how weights get from one to the other without a copy step. Token Factory is rented per token and holds the teacher and the judge. From the host, the night uploads the rows to the bucket, submits the job and tells the endpoint to load the adapter, and the gateway sends student calls to the endpoint. Nothing on Nebius ever writes to the ledger; only the host does. The job, the bucket and the endpoint are drawn green because each ran once by hand on Nebius (27 to 28 Oct 2026); the amber box is what has not run: the nightly schedule, and the live gateway's connection to an endpoint. There are no live results yet.
 
 <ul class="rt-key">
   <li class="teacher">Rented per token</li>
   <li class="store">Keeps data</li>
-  <li class="pending">Scripted, ready to run</li>
+  <li class="ok">Ran by hand</li>
+  <li class="pending">Not run</li>
 </ul>
 
 </figcaption>
@@ -404,7 +413,7 @@ The export checks the stored BOM against its own SHA-256 and signature first, co
 
 Ready to run, or still to check:
 
-| Part | Status (Oct 26, 2026) |
+| Part | Status (29 Oct 2026) |
 |---|---|
 | The training image | Not built yet; pins are candidates |
 | A real training job, vLLM serving Nano 4B with LoRA, runtime loading, LoRA on the Mamba projections | Ran once by hand on 28 Oct 2026 (spot L40S job, endpoint, hot-load), and the golden gate rejected the result; the one-command host is scripted and tested offline. The three published adapters were trained on a borrowed GPU, outside this path |

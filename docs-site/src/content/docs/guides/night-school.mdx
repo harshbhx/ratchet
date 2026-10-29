@@ -275,7 +275,13 @@ stateDiagram-v2
 </figcaption>
 </figure>
 
-<Aside type="caution" title="Scripted and tested offline">
+<Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
+- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot L40S: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+- **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
+</Aside>
+
+<Aside type="caution" title="Ran once on Nebius, not nightly on live traffic">
 Live Night School is tested offline (`tests/test_live.py`, against fake endpoints and a fake `nebius` CLI), and it ran end to end once on Nebius, by hand, on 28 Oct 2026; the golden gate rejected that student, so it was never made live (see [It ran on Nebius](#it-ran-on-nebius)). It has not run nightly on live traffic. The three original adapters (two text-to-SQL, one tool-calling) were trained on a borrowed GPU, outside Night School. On 27 Oct 2026 the round-2 recipe was retrained once, by hand, as a Nebius Serverless Job on one preemptible L40S; the nightly loop did not start it. The day-1 checks (`scripts/day1_check.py`) come first.
 </Aside>
 

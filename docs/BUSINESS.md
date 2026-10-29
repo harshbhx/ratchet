@@ -75,7 +75,7 @@ Natural acquirers for Ratchet: Nebius (fills its continuous-optimization roadmap
 |---|---|
 | Crowded field, funded rivals | License-clean wedge, release safety, Nebius/NVIDIA alignment |
 | Frontier cheap tiers shrink savings | Sell quality on the task, latency, ownership, compliance |
-| Platform terms (Token Factory ToS 5(f)) | Written clarification requested Oct 19, 2026; build for Token Factory and say plainly that the teacher calls run on Token Factory and the measured adapters were trained on a borrowed GPU |
+| Platform terms (Token Factory ToS 5(f)) | Written clarification requested Oct 19, 2026, no answer received as of 29 Oct 2026; build for Token Factory and say plainly that the teacher calls run on Token Factory and the measured adapters were trained on a borrowed GPU |
 | Self-hosting does not pay at low volume | Report savings by GPU-hours actually paid, not only per token; recommend the hosted fallback or scale-to-zero below break-even (see §10) |
 | Single founder bandwidth | Open-source contributors; co-founder search after hackathon |
 
