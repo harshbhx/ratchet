@@ -74,11 +74,11 @@ test("a float sum does not drift into digits nobody measured", async () => {
   assert.equal((await c.readView(s)).totals.cost_usd, 0.005);
 });
 
-test("parseSnapshot keeps only the nine counters and rejects anything else", () => {
+test("parseSnapshot keeps only the eleven counters and rejects anything else", () => {
   const ok = c.parseSnapshot({ ...json("0123456789abcdef"), mode: "live", started: 1, prompt: "hello", ip: "203.0.113.7" });
   assert.deepEqual(Object.keys(ok).sort(), ["instance", "values"]);
   assert.deepEqual(Object.keys(ok.values).sort(), [...c.FIELDS].sort());
-  assert.equal(c.FIELDS.length, 9);
+  assert.equal(c.FIELDS.length, 11);
   assert.equal(c.parseSnapshot({ ...json("0123456789abcdef"), requests: -1 }), null);
   assert.equal(c.parseSnapshot({ ...json("0123456789abcdef"), requests: "5" }), null);
   assert.equal(c.parseSnapshot({ ...json("not hex!") }), null);
@@ -105,6 +105,29 @@ test("a damaged stored state is read as empty, not as a crash or as numbers", as
   const v = await c.readView(s);
   assert.equal(v.recorded, false);
   assert.equal(v.totals.requests, 0);
+});
+
+test("server_errors is a new key: the old errors total is kept, and the new key starts at zero beside it", async () => {
+  const s = memory();
+  // The state a Worker stored before the key existed: 28 refused-key failures in `errors`, nothing in `server_errors`.
+  await s.put("state", { since: "2026-10-29", updated: DAY, instances: 1, totals: { requests: 19, errors: 28 }, last: null });
+  const v = await c.readView(s);
+  assert.equal(v.totals.errors, 28);
+  assert.equal(v.totals.server_errors, 0);
+  const after = await c.recordSnapshot(s, snap("0123456789abcdef", { requests: 3, errors: 2, server_errors: 1 }), DAY + 5);
+  assert.equal(after.totals.errors, 30);
+  assert.equal(after.totals.server_errors, 1);
+});
+
+test("a container from before server_errors still counts: the field reads as none", () => {
+  const { server_errors, baseline_usd, ...old } = json("0123456789abcdef", { requests: 4 });
+  assert.equal(server_errors, 0);
+  assert.equal(baseline_usd, 0);
+  const parsed = c.parseSnapshot(old);
+  assert.equal(parsed.values.server_errors, 0);
+  assert.equal(parsed.values.baseline_usd, 0);
+  assert.equal(parsed.values.requests, 4);
+  assert.equal(c.parseSnapshot({ ...old, server_errors: -1 }), null);
 });
 
 test("claimPull lets one pull through per gap", async () => {

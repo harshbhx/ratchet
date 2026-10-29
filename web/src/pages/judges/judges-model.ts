@@ -92,6 +92,14 @@ export function shortHash(h: string | null | undefined, head = 10, tail = 6): st
 }
 
 /** The newest receipt period the gateway sealed for the whole gateway (`global`), or null. */
+/**
+ * Receipts are private: `/ratchet/receipts` answers 401 without a reader key, and a 401 is a red console error on every
+ * visit. The public page holds no reader key, so it never asks; with one, the path is returned as it is.
+ */
+export function receiptsPath(path: string, readerKey: string | null = null): string | null {
+  return readerKey ? path : null;
+}
+
 export function latestGlobalPeriod(list: { receipts?: { period: number; global?: boolean }[] } | null | undefined): number | null {
   const ps = (list?.receipts ?? []).filter((r) => r.global).map((r) => r.period);
   return ps.length ? Math.max(...ps) : null;

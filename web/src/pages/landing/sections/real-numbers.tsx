@@ -4,8 +4,10 @@ import type { Stats } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { RealBadge } from "@/components/ui/real-badge";
 import costsText from "@/data/real-costs.json?raw";
-import { callRatio, demoSavings, labellingTotal, parseCosts } from "@/lib/real-story-model";
-import { fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
+import { callRatio, labellingTotal, parseCosts, splitTile } from "@/lib/real-story-model";
+import { usePersistent } from "@/components/measured/measured";
+import { fmtDay } from "@/lib/measured-model";
+import { fmtInt, fmtUsd } from "@/lib/utils";
 import { fmtSmallUsd } from "../bill-model";
 
 /** The labelling costs, the list prices per call and the precision-bar fact, parsed once; `tests/test_story_real_numbers.py` holds the file to `evidence/`. */
@@ -36,7 +38,8 @@ function Tile({ value, label, note, badge }: { value: ReactNode; label: string; 
  */
 export function RealCostTiles({ stats, className }: { stats: Stats | null; className?: string }) {
   const c = COSTS;
-  const live = demoSavings(stats);
+  const persistent = usePersistent();
+  const tile = splitTile(stats, persistent ?? null, c);
   return (
     <ul className={`grid grid-cols-1 gap-3 min-[560px]:grid-cols-2 lg:grid-cols-4 ${className ?? ""}`}>
       <Tile
@@ -63,21 +66,12 @@ export function RealCostTiles({ stats, className }: { stats: Stats | null; class
         label="one Scout triage call: Ultra vs the hosted Nano"
         note={`List prices. The Nano is about ${callRatio(c, "triage")} times cheaper per triage call; a reader call is ${fmtSmallUsd(c.per_call.ultra_reader)} vs ${fmtSmallUsd(c.per_call.nano_reader)}.`}
       />
-      {live ? (
-        <Tile
-          badge={<LiveBadge />}
-          value={fmtUsd(live.savedUsd, live.savedUsd < 1 ? 4 : 2)}
-          label={`saved by the random split${live.savingsPct != null ? `, ${fmtPct(live.savingsPct)} below all-Ultra` : ""}`}
-          note={`${fmtInt(live.requests)} requests answered by the hosted Nano, picked at random: ${fmtUsd(live.costUsd, 4)} paid against ${fmtUsd(live.baselineUsd, 4)} all-Ultra.`}
-        />
-      ) : (
-        <Tile
-          badge={<LiveBadge>Live</LiveBadge>}
-          value="–"
-          label="saved by the random split"
-          note="Not available right now: the gateway's stats did not load, or the split has served nothing yet. No number is shown."
-        />
-      )}
+      <Tile
+        badge={tile.badge === "Live" ? <LiveBadge>{tile.kind === "since" && persistent?.since ? `Live since ${fmtDay(persistent.since)}` : "Live"}</LiveBadge> : <RealBadge status="measured" />}
+        value={tile.value}
+        label={tile.label}
+        note={tile.note}
+      />
     </ul>
   );
 }

@@ -6,6 +6,7 @@
  */
 import type { DemoSplitStats, Stats } from "./api";
 import type { ExamId, ExamsData, ModelId } from "./exams-model";
+import { fmtDay, type Persistent } from "./measured-model";
 
 export interface RealCosts {
   labelling: {
@@ -48,6 +49,58 @@ export function demoSavings(stats: Stats | null | undefined): DemoSavings | null
   const s: DemoSplitStats | undefined = stats?.demo_split;
   if (!s || !s.enabled || !(s.requests > 0)) return null;
   return { requests: s.requests, costUsd: s.cost_usd, baselineUsd: s.baseline_usd, savedUsd: s.saved_usd, savingsPct: s.savings_pct };
+}
+
+export interface SplitTile {
+  /** `process`: this process's own counter; `since`: the Worker's totals kept across restarts; `listed`: list prices, as a last resort. */
+  kind: "process" | "since" | "listed";
+  value: string;
+  label: string;
+  note: string;
+  /** The badge wording: "Live" for the first two, "Measured" for list prices. */
+  badge: "Live" | "Measured";
+}
+
+/**
+ * The "random split" tile, never a bare dash. First the Worker's cumulative totals (`/ratchet/stats/persistent`: how many requests the
+ * hosted Nano answered since the first record, and the cost of all calls; no saving is shown from them, the baseline is for all
+ * requests, not the split's). Only when those are unreachable, this process's own counter (`/ratchet/stats`); else the per-call list
+ * prices. A process's numbers since its last restart are never the headline when the totals exist.
+ */
+export function splitTile(stats: Stats | null | undefined, persistent: Persistent | null | undefined, costs: RealCosts): SplitTile {
+  const fmt = (v: number, digits: number) => `$${v.toFixed(digits)}`;
+  const live = demoSavings(stats);
+  if (persistent && persistent.totals.requests_split > 0) {
+    const t = persistent.totals;
+    const n = t.requests_split;
+    return {
+      kind: "since",
+      value: String(n),
+      label: `${n === 1 ? "request" : "requests"} answered by the hosted Nano 30B since ${fmtDay(persistent.since ?? "")}`,
+      note: `Picked at random, not by confidence. All calls on the live site cost ${fmt(t.cost_usd, 4)} on Token Factory in that time. Kept across restarts; no saving is computed from these totals.`,
+      badge: "Live",
+    };
+  }
+  if (live && !persistent) {
+    return {
+      kind: "process",
+      value: fmt(live.savedUsd, live.savedUsd < 1 ? 4 : 2),
+      label: `saved by the random split${live.savingsPct != null ? `, ${Math.round(live.savingsPct * 100)}% below all-Ultra` : ""}`,
+      note: `${live.requests} requests answered by the hosted Nano, picked at random: ${fmt(live.costUsd, 4)} paid against ${fmt(live.baselineUsd, 4)} all-Ultra.`,
+      badge: "Live",
+    };
+  }
+  const ratio = callRatio(costs, "triage");
+  return {
+    kind: "listed",
+    value: `${ratio}x`,
+    label: "cheaper per triage call: the hosted Nano against Ultra",
+    note:
+      persistent && persistent.totals.requests > 0
+        ? `List prices per call. Ultra answered ${persistent.totals.requests_teacher >= persistent.totals.requests ? "all" : String(persistent.totals.requests_teacher)} of the ${persistent.totals.requests} live requests since ${fmtDay(persistent.since ?? "")}; the random split has not sent one to the hosted Nano yet.`
+        : "List prices per call. The count of requests the random split sent to the hosted Nano appears here once the live totals are available.",
+    badge: "Measured",
+  };
 }
 
 export const LEARN_STAGES: { id: ModelId; label: string; short: string }[] = [

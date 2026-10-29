@@ -119,7 +119,7 @@ function ColdStart({ mock }: { mock: boolean }) {
           {mock
             ? "Send requests to /v1/chat/completions with an X-Ratchet-Task header."
             : "Its own ledger lives on the container's disk, so a restart empties it. The totals kept across restarts are above when there are any; below, what was measured on real runs, each with its date and the evidence it was read from."}{" "}
-          {MEASURED ? nightSchoolWording(MEASURED).pipeline : ""} The teacher answers every request here.
+          {MEASURED ? nightSchoolWording(MEASURED).pipeline : ""} Ultra teaches here, and a random 40% of eligible requests are answered by the hosted Nano 30B.
         </p>
       </div>
     </div>
@@ -192,9 +192,10 @@ function Header({
                   <dd className="font-medium text-ink-2 tabular">{stats.day}</dd>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <dt className="sr-only">Total requests</dt>
+                  <dt className="sr-only">Requests this server instance has answered</dt>
+                  <span>this server instance:</span>
                   <dd className="font-medium text-ink-2 tabular">{fmtInt(stats.totals.requests)}</dd>
-                  <span>requests since it started</span>
+                  <span>since its last start; all traffic is in the totals below</span>
                 </div>
               </>
             )}

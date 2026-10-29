@@ -478,7 +478,7 @@ function DailyTip(p: TooltipContentProps) {
           <span className="text-muted">by GPU-hours{d.savings_pct_gpu_hours != null && ` (${fmtSignedPct(d.savings_pct_gpu_hours)})`}</span>
         </div>
         <div className="border-t border-line pt-1.5 text-muted">
-          {fmtInt(d.student_served)} student answers · endpoint {fmtHours(d.endpoint_hours)} ({fmtMoney(d.endpoint_usd)})
+          {fmtInt(d.student_served)} student answers · {d.endpoint_hours > 0 || d.endpoint_usd > 0 ? `endpoint ${fmtHours(d.endpoint_hours)} (${fmtMoney(d.endpoint_usd)})` : "no endpoint uptime recorded"}
           {d.training_usd > 0 && <> · training {fmtMoney(d.training_usd)}</>}
         </div>
       </div>
@@ -670,7 +670,10 @@ function Full({ report, mock, stale }: { report: CostReport; mock: boolean; stal
               <Rows
                 rows={[
                   report.teacher_usd != null && ["Teacher calls", fmtMoney(report.teacher_usd)],
-                  report.endpoint_usd != null && [`Endpoint, ${fmtHours(hours)}`, fmtMoney(report.endpoint_usd)],
+                  report.endpoint_usd != null &&
+                    (hours > 0 || report.endpoint_usd > 0
+                      ? [`Endpoint, ${fmtHours(hours)}`, fmtMoney(report.endpoint_usd)]
+                      : ["Endpoint", "no uptime recorded"]),
                   report.training_usd != null &&
                     (report.training_usd > 0 || (report.training_hours ?? 0) > 0) && [
                       `Training and evals, ${fmtHours(report.training_hours ?? 0)}`,

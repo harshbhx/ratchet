@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="wir-t wir-d" font-family="'Inter', system-ui, sans-serif">
   <title id="wir-t">Where everything runs</title>
-  <desc id="wir-d">Where each part of Ratchet runs. Real on Nebius: Token Factory, which answers every model call on the live site (the teacher Nemotron 3 Ultra, the hosted Nano used for the random split, and the judge); an AI Cloud Serverless Job (the round-2 retraining on 27 Oct 2026 and the Night School training job on 28 Oct 2026, both by hand); an AI Cloud Serverless Endpoint (the student, served for measured speed tests on 27 and 28 Oct 2026 and the Night School adapter on 28 Oct 2026, deleted afterwards); and an Object Storage bucket. Real elsewhere: the original adapters were trained on a borrowed GPU; Cloudflare runs the website, the docs and the live gateway, which has no student endpoint connected, so the teacher answers every call; development and tests run on the owner's laptop in mock mode. Run once by hand on Nebius on 28 Oct 2026: Night School, end to end, with the gateway on a Nebius CPU VM, a spot L40S training job and the adapter served from the Serverless Endpoint; the golden gate rejected the new student (81.8% precision against the 95% target), so it was never made live. Built and tested, not run live: the nightly loop on live traffic and the one-command CPU VM kit as a hosting option.</desc>
+  <desc id="wir-d">Where each part of Ratchet runs. Real on Nebius: Token Factory, which answers every model call on the live site (the teacher Nemotron 3 Ultra, the hosted Nano used for the random split, and the judge); an AI Cloud Serverless Job (the round-2 retraining on 27 Oct 2026 and the Night School training job on 28 Oct 2026, both by hand); an AI Cloud Serverless Endpoint (the student, served for measured speed tests on 27 and 28 Oct 2026 and the Night School adapter on 28 Oct 2026, deleted afterwards); and an Object Storage bucket. Real elsewhere: the original adapters were trained on a borrowed GPU; Cloudflare runs the website, the docs and the live gateway, which is not connected to Ratchet's own adapter (every model call runs on Token Factory: Ultra teaches and a random 40% of eligible requests go to the hosted Nano 30B); development and tests run on the owner's laptop in mock mode. Run once by hand on Nebius on 28 Oct 2026: Night School, end to end, with the gateway on a Nebius CPU VM, a spot L40S training job and the adapter served from the Serverless Endpoint; the golden gate rejected the new student (81.8% precision against the 95% target), so it was never made live. Built and tested, not run live: the nightly loop on live traffic and the one-command CPU VM kit as a hosting option.</desc>
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mk" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" class="mkg" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -126,10 +126,10 @@
   <rect class="pill" x="696" y="238" width="64" height="28" rx="14"/>
   <text x="728.0" y="257" class="pillT mo" font-size="14" text-anchor="middle" letter-spacing="1.5" fill="#fff">CPU</text>
   <text x="464" y="286" class="mo bi" font-size="15">live.ratchet.dualmindlab.tech</text>
-  <text x="464" y="312" class="t2" font-size="16">Workers + Containers.</text>
-  <text x="464" y="334" class="t2" font-size="16">Gateway, dashboard, Scout.</text>
-  <text x="464" y="356" class="t2" font-size="16">No student endpoint: the</text>
-  <text x="464" y="378" class="t2" font-size="16">teacher answers every call.</text>
+  <text x="464" y="312" class="t2" font-size="16">Workers + Containers, no GPU.</text>
+  <text x="464" y="334" class="t2" font-size="16">Own adapter: not connected.</text>
+  <text x="464" y="356" class="t2" font-size="16">Ultra teaches; a random 40%</text>
+  <text x="464" y="378" class="t2" font-size="16">go to the hosted Nano 30B.</text>
   <rect class="card" x="444" y="412" width="332" height="124" rx="16"/>
   <text x="464" y="446" class="t h" font-size="21">Website and docs</text>
   <text x="464" y="474" class="mo bi" font-size="15">docs.ratchet.dualmindlab.tech</text>
@@ -207,5 +207,5 @@
   <rect class="pillG" x="700" y="956" width="50" height="24" rx="12"/>
   <text x="725" y="973" class="pillT mo" font-size="13" text-anchor="middle" letter-spacing="1" fill="#fff">GPU</text>
   <text x="762" y="974" class="t2" font-size="16">= training and the student endpoint. All else is CPU.</text>
-  <text x="64" y="1014" class="m" font-size="16">The live site calls Token Factory for every model and has no student endpoint. Night School ran once by hand on 28 Oct; it has not run nightly on live traffic.</text>
+  <text x="64" y="1014" class="m" font-size="16">The live site calls Token Factory for every model call; its own adapter is not connected. Night School ran once by hand on 28 Oct; it has not run nightly on live traffic.</text>
 </svg>

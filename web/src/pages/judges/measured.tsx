@@ -14,7 +14,7 @@ export function MeasuredChapter() {
       lead={
         <p>
           Everything here was run for real and saved: the number is read from the saved files at build time, never typed. A recorded run is a replay of a real run's
-          saved events. The student endpoint was served by hand for speed tests and serves no live traffic; the live gateway's teacher answers every request.
+          saved events. The student endpoint was served by hand for speed tests and serves no live traffic; on the live gateway, Ultra teaches and a random 40% of eligible requests are answered by the hosted Nano 30B.
         </p>
       }
     >

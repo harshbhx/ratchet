@@ -58,7 +58,7 @@ export function banterLines(f: Facts): Banter[] {
     { id: "gate2", lines: [N("Can I serve yet?", "happy"), U("The gate says not yet. The gate is strict. That's its job.")] },
     { id: "lineage", lines: [N("My training data comes with a signed record.", "proud"), U("Receipts. We like receipts here.")] },
     { id: "license", lines: [U("Closed models are refused as teachers."), N("And you're open. Lucky for you.", "happy")] },
-    { id: "live", lines: [N("Right now Ultra answers every live request.", "sad"), U("Yes. You're still in training. It suits you.")] },
+    { id: "live", lines: [N("Right now Ultra teaches, and a random share goes to the hosted Nano.", "sad"), U("Yes. You're still in training. It suits you.")] },
     { id: "nightschool", lines: [N("Night School turns Ultra's answers into lessons.", "happy"), U("Ran once on Nebius, by hand. The gate said no. Not run nightly yet.")] },
     { id: "oneline", lines: [N("One line changes: base_url.", "determined"), U("Even you could not get that wrong.")] },
     { id: "try", lines: [U("Three real tries a day on the live page."), N("No key, no account. Go on, poke the gateway!", "happy")] },

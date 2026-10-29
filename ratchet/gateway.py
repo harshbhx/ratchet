@@ -3344,7 +3344,9 @@ def _stats_payload() -> dict[str, Any]:
 def counters() -> dict[str, Any]:
     """Cumulative aggregates of this gateway process, for something outside the container to keep running totals of (the live
     Worker does, so they survive a restart): requests in all and by route group, the student calls' tokens, what Token
-    Factory calls cost (requests and failures), Scout runs and errors. `instance` names this process and `started` is when
+    Factory calls cost (requests and failures), what the same requests would cost all-Ultra
+    (`baseline_usd`), Scout runs, errors (every failures row, a refused key included) and server errors (failed model
+    calls and the gateway's own 5xx only). `instance` names this process and `started` is when
     it began: every number grows while the instance is the same and a new instance starts again from its own ledger, so a
     reader adds the difference between two snapshots of one instance and the first snapshot of a new one. Counts and dollars
     only, never text, an address or a client. Read like /ratchet/stats."""

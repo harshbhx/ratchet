@@ -348,7 +348,12 @@ export interface Persistent {
     student_tokens_in: number;
     student_tokens_out: number;
     cost_usd: number;
+    /** Every failures row, a refused key included. Kept for compatibility; the pages show `server_errors`. */
     errors: number;
+    /** Failed model calls and the gateway's own 5xx only. Absent from a Worker that has not started counting it. */
+    server_errors?: number;
+    /** What the same requests would have cost all-Ultra, cumulative. Absent from a Worker that has not started counting it. */
+    baseline_usd?: number;
     scout_runs: number;
   };
 }
@@ -362,6 +367,12 @@ export function parsePersistent(raw: unknown): Persistent | null {
   if (r.recorded !== true || typeof r.since !== "string" || typeof r.totals !== "object" || r.totals === null) return null;
   const t = r.totals as Record<string, unknown>;
   const totals = {} as Persistent["totals"];
+  for (const k of ["server_errors", "baseline_usd"] as const) {
+    if (t[k] === undefined) continue;
+    const v = t[k];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
+    totals[k] = v;
+  }
   for (const k of TOTAL_KEYS) {
     const v = t[k];
     if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
@@ -375,9 +386,40 @@ export function hasLiveTraffic(p: Persistent | null): p is Persistent {
   return p !== null && (p.totals.requests > 0 || p.totals.scout_runs > 0);
 }
 
+export interface AllToDate {
+  requests: number;
+  usd: number;
+  /** One sentence that says exactly what is added up. */
+  line: string;
+}
+
+/**
+ * "All real traffic to date": the Worker's cumulative totals plus the dated runs that happened before it began to count (the live
+ * smoke run and the recorded Scout runs), each named in the sentence so the sum can be checked by eye. Null without totals.
+ */
+export function allToDate(p: Persistent | null, d: MeasuredData | null): AllToDate | null {
+  if (!hasLiveTraffic(p)) return null;
+  const parts = [`${fmtInt(p.totals.requests)} live requests since ${fmtDay(p.since ?? "")}`];
+  let requests = p.totals.requests;
+  let usd = p.totals.cost_usd;
+  if (d && d.smoke.requests > 0) {
+    parts.push(`${fmtInt(d.smoke.requests)} in the ${fmtDay(d.smoke.date)} live smoke run`);
+    requests += d.smoke.requests;
+    usd += d.smoke.total_usd;
+  }
+  const runs = d?.scout.runs ?? [];
+  if (d && runs.length > 0) {
+    const calls = runs.reduce((n, r) => n + r.llm_calls, 0);
+    parts.push(`${fmtInt(calls)} model calls in ${runs.length} recorded Scout runs (${fmtRange(d.scout.date, d.scout.date_end)})`);
+    requests += calls;
+    usd += runs.reduce((n, r) => n + r.cost_usd, 0);
+  }
+  return { requests, usd, line: `All real traffic to date: ${fmtInt(requests)} model requests and ${fmtUsd(usd)} on Token Factory = ${parts.join(" + ")}.` };
+}
+
 export interface LiveLine {
   headline: string;
-  items: { label: string; value: string }[];
+  items: { label: string; value: string; hint?: string }[];
   note: string | null;
 }
 
@@ -387,12 +429,15 @@ export function liveLine(p: Persistent): LiveLine {
   const items = [
     { label: "Requests", value: fmtInt(t.requests) },
     { label: "Teacher", value: fmtInt(t.requests_teacher) },
-    { label: "Random split", value: fmtInt(t.requests_split) },
-    { label: "Student", value: fmtInt(t.requests_student) },
+    t.requests_split > 0 ? { label: "Random split", value: fmtInt(t.requests_split), hint: "sent to the hosted Nano 30B" } : { label: "Random split", value: "none so far", hint: "no requests sent to the hosted Nano 30B yet" },
+    t.requests_student > 0 ? { label: "Student", value: fmtInt(t.requests_student) } : { label: "Student", value: "none", hint: "Ratchet's own adapter is not connected to the live site" },
     { label: "Token Factory cost", value: fmtUsd(t.cost_usd) },
-    { label: "Scout runs", value: fmtInt(t.scout_runs) },
-    { label: "Errors", value: fmtInt(t.errors) },
+    t.scout_runs > 0 ? { label: "Scout runs", value: fmtInt(t.scout_runs) } : { label: "Scout runs", value: "none so far" },
   ];
+  // Server errors: failed model calls and gateway 5xx. A refused key or a limit is not one, so `errors` is never shown.
+  if (t.server_errors !== undefined) {
+    items.push(t.server_errors === 0 ? { label: "Server errors", value: "none", hint: "no failed model calls" } : { label: "Server errors", value: fmtInt(t.server_errors), hint: "failed model calls" });
+  }
   const tokens = t.student_tokens_in + t.student_tokens_out;
   if (tokens > 0) items.splice(5, 0, { label: "Student tokens", value: fmtInt(tokens) });
   return {
@@ -408,12 +453,12 @@ export function nightSchoolWording(d: MeasuredData): { versions: string; pipelin
   if (d.nightschool.present && v) {
     const ran = `Night School ran end to end once on Nebius, by hand (${fmtDay(d.nightschool.date ?? "")}). The golden gate rejected ${v}, so it was never made live. The loop has not run nightly on live traffic.`;
     return {
-      versions: `No version has served on this live gateway, and the teacher answers every request. ${ran}`,
+      versions: `No version of Ratchet's own adapter has served on this live gateway; Ultra teaches, and a random 40% of eligible requests are answered by the hosted Nano 30B. ${ran}`,
       pipeline: ran,
     };
   }
   return {
-    versions: "No version on this live gateway: the nightly loop is built and tested but has not run on live traffic, so the teacher answers every request.",
+    versions: "No version on this live gateway: the nightly loop is built and tested but has not run on live traffic. Ratchet's own adapter is not connected to it; a random 40% of eligible requests are answered by the hosted Nano 30B.",
     pipeline: "The nightly loop is built and tested but has not run on live traffic.",
   };
 }

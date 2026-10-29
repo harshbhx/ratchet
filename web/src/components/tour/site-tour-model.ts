@@ -1,6 +1,6 @@
 // The 60-second tour's steps and what an avatar says, as data and pure functions (no DOM, no JSX): `tests/site-tour-model.test.mjs`.
 // The numbers in the exam step come from exams.json through the caller; nothing is typed here. Wording is held to the site's own:
-// the teacher answers the live gateway's requests, no trained student is served yet, and training on live traffic has not run.
+// Ratchet's own adapter is not connected to the live gateway (a random 40% of eligible requests go to the hosted Nano 30B), and training on live traffic has not run.
 import type { Expression } from "@/components/avatar/avatar-model";
 
 export type StepPath = "/" | "/live" | "any";

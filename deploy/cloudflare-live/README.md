@@ -142,7 +142,7 @@ keeps aggregate totals itself, in one more SQLite-backed Durable Object (`LiveCo
 are read while the container is up, and when the container's idle timeout expires, it reads `GET /ratchet/counters` from the container and adds the difference since
 its last reading of the same instance (a new random `instance` id means a restart, so that reading counts in full). `GET /ratchet/stats/persistent` answers from the
 Durable Object without waking the container: `{"recorded", "since", "updated", "instances", "totals"}` with requests by route group, student tokens, Token Factory
-cost, Scout runs and errors since the first record (`recorded: false` while nothing is stored, and the pages then show their measured snapshot instead). Counts and
+cost, Scout runs, errors and server errors, and the all-Ultra baseline cost (`baseline_usd`, also a new key), since the first record (`errors` counts every refused key too and is kept for compatibility; `server_errors`, a new key that starts at zero, counts failed model calls and the gateway's own 5xx, and is the one the pages show) (`recorded: false` while nothing is stored, and the pages then show their measured snapshot instead). Counts and
 dollars only: no address, prompt, client or key. What can be missed is what a container counted after the Worker's last reading of it, if it is killed straight after.
 No secret and no setting; **the migration is applied by `wrangler deploy`** (the deploy workflow), so there is nothing else to run. `curl -s https://live.ratchet.dualmindlab.tech/ratchet/stats/persistent`
 checks it after the deploy.

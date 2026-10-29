@@ -9,7 +9,8 @@ import type { Stats } from "@/lib/api";
 import { rise } from "@/lib/motion";
 import { fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { fmtAge, lastCall, lastCallLine } from "@/lib/surface-model";
-import { emptyItems, provenanceLabel, type Provenance } from "@/lib/live-strip-model";
+import { cumulativeItems, emptyItems, provenanceLabel, type Provenance } from "@/lib/live-strip-model";
+import { allToDate } from "@/lib/measured-model";
 import { MEASURED, MeasuredChip, usePersistent } from "@/components/measured/measured";
 import { studentShareCopy } from "@/lib/who-model";
 
@@ -37,8 +38,12 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   const since = stats.upstream?.since;
 
   const release = { live: live ? `v${live.id}` : null, flight: canary ? `v${canary.id} in canary at ${canary.traffic_pct}%` : shadow ? `v${shadow.id} in shadow` : null };
-  // A restart empties this process's ledger: show the Worker's running totals, else dated measured values, never a bare zero.
-  const fallback = empty ? emptyItems({ measured: MEASURED, persistent: persistent ?? null, release }) : null;
+  // Judges see all the numbers: the Worker's cumulative totals are the headline, never this process's own since its last restart.
+  // Only when those are unreachable are the dated measured cards shown. Mock mode has no Worker, so it shows its own ledger.
+  const cumulative = !mock ? cumulativeItems(persistent ?? null) : null;
+  const fallback = cumulative ?? (mock ? (empty ? emptyItems({ measured: MEASURED, persistent: null, release }) : null) : emptyItems({ measured: MEASURED, persistent: null, release }));
+  if (!mock && !fallback) return null;
+  const toDate = cumulative ? allToDate(persistent ?? null, MEASURED) : null;
   const items: { label: string; value: ReactNode; sub: string; from?: Provenance | null }[] =
     fallback ??
     [
@@ -72,7 +77,7 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line px-4 py-3 sm:px-5">
             <div className="flex flex-wrap items-center gap-2.5">
               <h2 id="live-title" className="text-[13px] font-semibold text-ink">
-                This gateway, right now
+                {cumulative ? "The live gateway, all traffic to date" : "This gateway, right now"}
               </h2>
               {mock ? (
                 <Badge tone="outline">
@@ -119,10 +124,11 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
               </div>
             ))}
           </dl>
-          {fallback && (
+          {toDate && <p className="border-t border-line px-4 py-3 text-[12.5px] leading-snug text-muted sm:px-5">{toDate.line}</p>}
+          {fallback && !cumulative && (
             <p className="border-t border-line px-4 py-3 text-[12.5px] leading-snug text-muted sm:px-5">
-              This gateway has not answered a request since it last started, and its own ledger starts empty after every restart. What is shown is from saved, dated runs, each
-              linked to its evidence. Send a request at <Link to="/live" className="font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink">/live</Link> to start this ledger.
+              The live totals are not available right now, so what is shown is from saved, dated runs, each linked to its evidence. Send a request at{" "}
+              <Link to="/live" className="font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink">/live</Link> to try the gateway.
             </p>
           )}
           {!mock && stats.upstream?.recording && (

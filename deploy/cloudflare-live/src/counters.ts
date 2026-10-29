@@ -12,7 +12,9 @@
 // PRIVACY: only the nine numbers below are ever read from a snapshot or stored: counts and dollars, never text, an address, a client or a
 // key. The instance id is a random hex string of the process, kept only to tell snapshots apart.
 
-/** The counters, in the order the page shows them. `requests` is the sum of the three route groups. */
+/** The counters, in the order the page shows them. `requests` is the sum of the three route groups. `errors` counts every failures row,
+ * a refused key included, and is kept only for compatibility; `server_errors` is the new key the pages show: failed model calls and
+ * the gateway's own 5xx, never an auth, rate, quota or budget refusal. */
 export const FIELDS = [
   "requests",
   "requests_teacher",
@@ -22,10 +24,15 @@ export const FIELDS = [
   "student_tokens_out",
   "cost_usd",
   "errors",
+  "server_errors",
+  "baseline_usd",
   "scout_runs",
 ] as const;
 
 export type Field = (typeof FIELDS)[number];
+
+/** Fields added after the first Workers shipped: a container from before them is still counted, with none of these. */
+const NEW_FIELDS: ReadonlySet<string> = new Set(["server_errors", "baseline_usd"]);
 export type Totals = Record<Field, number>;
 
 /** One reading of the container: its instance and the counters since that instance began. */
@@ -59,7 +66,7 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
   if (typeof r.instance !== "string" || !INSTANCE.test(r.instance)) return null;
   const values = emptyTotals();
   for (const f of FIELDS) {
-    const v = r[f];
+    const v = NEW_FIELDS.has(f) && r[f] === undefined ? 0 : r[f]; // a container from before a newer field counts none of it
     if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
     values[f] = v;
   }
@@ -67,7 +74,7 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
 }
 
 /** Dollars to the millionth, so a long sum of small floats does not drift into digits nobody measured. */
-const round = (f: Field, v: number): number => (f === "cost_usd" ? Math.round(v * 1e6) / 1e6 : Math.round(v));
+const round = (f: Field, v: number): number => (f === "cost_usd" || f === "baseline_usd" ? Math.round(v * 1e6) / 1e6 : Math.round(v));
 
 /** The UTC day of a time in milliseconds, as YYYY-MM-DD. */
 export const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);

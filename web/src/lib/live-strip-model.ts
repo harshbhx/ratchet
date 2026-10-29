@@ -106,6 +106,48 @@ export function emptyItems({ measured: d, persistent: p, release }: EmptyOptions
   return items.length > 1 ? items : null;
 }
 
+/** A share as a whole percent, never "0%": the caller says it in words when nothing of that kind happened. */
+const pct = (v: number): string => `${Math.round(v * 100)}%`;
+
+/**
+ * The strip's four cards from the Worker's cumulative totals (`/ratchet/stats/persistent`), the numbers every visitor sees: requests,
+ * who answered, savings or cost, server errors. Null when there are no totals to show. Never the numbers of one process since its last
+ * restart, and never "0%" or "$0.00" for something that has not happened: those become a sentence.
+ *  - Savings vs all-Ultra only from the cumulative `baseline_usd`, and only when it is a real saving; else the Token Factory cost.
+ *  - The hosted Nano 30B's share is `requests_split / requests`; with none, "Ultra answered all N requests so far".
+ *  - Server errors: "none" with "no failed model calls", else the count; a Worker without the field shows Scout runs instead.
+ */
+export function cumulativeItems(p: Persistent | null): StripItem[] | null {
+  if (!hasLiveTraffic(p)) return null;
+  const t = p.totals;
+  const from: Provenance = { tag: "Live", date: p.since ?? "", source: null };
+  const n = t.requests;
+  const nano = "Answered by the hosted Nano 30B (random split)";
+  const items: StripItem[] = [
+    { id: "requests", label: `Requests since ${fmtDay(p.since ?? "")}`, value: fmtInt(n), sub: `${fmtUsd(t.cost_usd)} on Token Factory, kept across restarts`, from },
+  ];
+  if (n > 0 && t.requests_split > 0) {
+    items.push({ id: "nano", label: nano, value: pct(t.requests_split / n), sub: `${fmtInt(t.requests_split)} of ${fmtInt(n)}, picked at random`, from });
+  } else {
+    const ultra = t.requests_teacher;
+    const sub = ultra >= n ? `Ultra answered all ${fmtInt(n)} requests so far` : `Ultra answered ${fmtInt(ultra)} of ${fmtInt(n)} requests so far`;
+    items.push({ id: "nano", label: nano, value: "none yet", sub, from });
+  }
+  const base = t.baseline_usd ?? 0;
+  if (base > 0 && t.cost_usd < base && Math.round((1 - t.cost_usd / base) * 100) >= 1) {
+    items.push({ id: "savings", label: "Saved vs all-Ultra", value: pct(1 - t.cost_usd / base), sub: `${fmtUsd(base - t.cost_usd)} so far, from the cumulative all-Ultra cost`, from });
+  } else {
+    items.push({ id: "cost", label: "Token Factory cost", value: fmtUsd(t.cost_usd), sub: "every teacher, hosted Nano and Scout call", from });
+  }
+  if (t.server_errors !== undefined) {
+    const none = t.server_errors === 0;
+    items.push({ id: "errors", label: "Server errors", value: none ? "none" : fmtInt(t.server_errors), sub: none ? "no failed model calls" : "failed model calls", from });
+  } else {
+    items.push({ id: "scout", label: "Scout runs", value: t.scout_runs > 0 ? fmtInt(t.scout_runs) : "none yet", sub: "research runs through the gateway", from });
+  }
+  return items;
+}
+
 /** "Measured · 27 to 28 Oct 2026" / "Recorded run · 23 to 24 Oct 2026" / "Live since 29 Oct 2026". */
 export function provenanceLabel(f: Provenance): string {
   return f.tag === "Live" ? `Live since ${fmtDay(f.date)}` : `${f.tag} · ${fmtRange(f.date, f.dateEnd)}`;

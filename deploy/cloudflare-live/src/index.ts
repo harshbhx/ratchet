@@ -34,7 +34,7 @@
 // keeps the gateway's aggregate counters itself. After each paid call, when someone reads the totals while the container is up, and when the
 // container's idle timeout expires, it reads GET /ratchet/counters from the container and adds the difference to what it holds (counters.ts
 // says how a restart is told apart and why nothing is counted twice). GET /ratchet/stats/persistent answers from the Durable Object without
-// waking the container: totals since the first record, requests by route group, student tokens, Token Factory cost, Scout runs, errors.
+// waking the container: totals since the first record, requests by route group, student tokens, Token Factory cost, Scout runs, errors and server errors.
 // Counts and dollars only, never an address, a prompt or a client. Nothing to configure and no secret: the binding is in wrangler.json.
 //
 // THE VISITOR'S ADDRESS: a request that came through the site's Pages proxy (web/public/_worker.js) reaches this Worker from Cloudflare, so its

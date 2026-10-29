@@ -506,7 +506,7 @@
   ],
   "notYet": [
     "The nightly loop on live traffic",
-    "The live site connected to a student endpoint: the teacher answers every request",
+    "Ratchet's own adapter on the live site (today a random 40% of eligible requests go to the hosted Nano 30B, a quarter re-checked by Ultra)",
     "Measured savings",
     "The GPU-hour rate used in estimates is unverified; the Nebius bill decides"
   ],

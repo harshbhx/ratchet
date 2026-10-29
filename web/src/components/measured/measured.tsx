@@ -6,6 +6,7 @@ import measuredText from "@/data/measured.json?raw";
 import {
   hasLiveTraffic,
   liveLine,
+  allToDate,
   measuredLabel,
   measuredTiles,
   nightSchoolTile,
@@ -163,6 +164,7 @@ export function LiveSince({ className }: { className?: string }) {
   if (p === undefined) return <div className={cn("h-[72px] rounded-2xl border border-line bg-surface/60", className)} aria-hidden />;
   if (hasLiveTraffic(p)) {
     const l = liveLine(p);
+    const all = allToDate(p, MEASURED);
     return (
       <section aria-label="Live totals since the first record" className={cn("rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5", className)}>
         <div className="flex flex-wrap items-center gap-2">
@@ -177,10 +179,12 @@ export function LiveSince({ className }: { className?: string }) {
             <div key={i.label} className="min-w-0 rounded-xl border border-line bg-surface px-3 py-2">
               <dt className="text-[11.5px] leading-snug text-muted">{i.label}</dt>
               <dd className="mt-0.5 text-[15px] font-semibold tabular-nums text-ink">{i.value}</dd>
+              {i.hint && <p className="text-[11.5px] leading-snug text-muted">{i.hint}</p>}
             </div>
           ))}
         </dl>
-        {p.totals.requests < THIN_LIVE_REQUESTS && MEASURED && <RecordedLine className="mt-3" />}
+        {all && <p className="mt-3 text-[13px] leading-snug text-ink-2">{all.line}</p>}
+        {!all && p.totals.requests < THIN_LIVE_REQUESTS && MEASURED && <RecordedLine className="mt-3" />}
         <p className="mt-2 text-[12px] leading-snug text-muted">
           Counts and dollars only, kept outside the container so a restart does not reset them. Counted since the first record. No trained adapter serves live traffic yet.
         </p>

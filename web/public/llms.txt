@@ -2,7 +2,7 @@
 
 > An OpenAI-compatible gateway for license-clean distillation on open models: a small NVIDIA Nemotron student answers first, a teacher whose license allows distillation (Nemotron 3 Ultra on Nebius Token Factory) answers when the student is unsure, and every teacher answer is logged with its provenance. Apache-2.0. Built for the Nebius x NVIDIA Global AI Hackathon.
 
-What is real, in one paragraph: every model call on the live site runs on Nebius Token Factory (the teacher answers every live request). The text-to-SQL adapter was trained on a borrowed GPU and retrained on Nebius AI Cloud (27 Oct 2026); the student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026, then deleted); Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it, so it was never made live. The live site is not connected to a student endpoint, the nightly loop has not run on live traffic, and no savings are claimed.
+What is real, in one paragraph: every model call on the live site runs on Nebius Token Factory (Ultra teaches, and a random 40% of eligible requests are answered by the hosted Nemotron 3 Nano 30B, a quarter of those re-checked by Ultra). The text-to-SQL adapter was trained on a borrowed GPU and retrained on Nebius AI Cloud (27 Oct 2026); the student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026, then deleted); Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it, so it was never made live. The live site is not connected to a student endpoint, the nightly loop has not run on live traffic, and no savings are claimed.
 
 ## The full documentation as plain text
 
