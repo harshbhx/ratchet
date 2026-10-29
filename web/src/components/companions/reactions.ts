@@ -112,7 +112,7 @@ export function sectionReactions(f: Facts): Record<string, SectionReaction> {
     learn: {
       lines: [
         { who: "nano", text: "Night School. Homework!", expr: "happy" },
-        { who: "ultra", text: "Built and tested. Not yet run on live traffic." },
+        { who: "ultra", text: "Ran once by hand on Nebius; the gate rejected it. Not run nightly on live traffic." },
       ],
       nano: { ...face("happy"), held: "book", pose: "carry" },
       ultra: { held: "papers", pose: "carry" },

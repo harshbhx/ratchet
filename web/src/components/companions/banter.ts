@@ -59,7 +59,7 @@ export function banterLines(f: Facts): Banter[] {
     { id: "lineage", lines: [N("My training data comes with a signed record.", "proud"), U("Receipts. We like receipts here.")] },
     { id: "license", lines: [U("Closed models are refused as teachers."), N("And you're open. Lucky for you.", "happy")] },
     { id: "live", lines: [N("Right now Ultra answers every live request.", "sad"), U("Yes. You're still in training. It suits you.")] },
-    { id: "nightschool", lines: [N("Night School turns Ultra's answers into lessons.", "happy"), U("Built and tested on mock models. Not run on live traffic yet.")] },
+    { id: "nightschool", lines: [N("Night School turns Ultra's answers into lessons.", "happy"), U("Ran once on Nebius, by hand. The gate said no. Not run nightly yet.")] },
     { id: "oneline", lines: [N("One line changes: base_url.", "determined"), U("Even you could not get that wrong.")] },
     { id: "try", lines: [U("Three real tries a day on the live page."), N("No key, no account. Go on, poke the gateway!", "happy")] },
     { id: "stored", lines: [N("Your text in the Try box isn't stored.", "idle"), U("Which keeps our notes very short.")] },
@@ -85,7 +85,7 @@ export function banterLines(f: Facts): Banter[] {
     { id: "night-red", when: "night", lines: [U("Red pen is out. Nobody panic."), N("Panicking a little.", "surprised")] },
     { id: "night-sleep", when: "night", lines: [N("Is it bedtime yet?", "sleepy"), U("It's study time. Bedtime is a reward.")] },
     { id: "day-bright", when: "day", lines: [N("So bright out! I need shades.", "surprised"), U("Dark mode has a pair for you.")] },
-    { id: "day-nap", when: "day", lines: [N("Daytime is for traffic. Night is for homework.", "thinking"), U("That's the design. Built and tested, not live yet.")] },
+    { id: "day-nap", when: "day", lines: [N("Daytime is for traffic. Night is for homework.", "thinking"), U("That's the design. Ran once by hand; not nightly yet.")] },
   ];
 }
 

@@ -112,7 +112,7 @@ At the L40S list rate this repo uses for its own cost report ($1.55 an hour), ab
 - `data/adapter_hash_bom.txt`: the adapter's sha256 and bill of materials.
 - `data/final_inventory.txt`: what was left in the cloud at the end.
 - `fixes/train_job_vm_local_fixes.diff`: the change to `deploy/train_job.sh` made on the VM.
-- `scripts/reuse_night.py`: the one-off driver for the re-run (it has no addresses or keys in it).
+- `scripts/reuse_night.py`: the one-off driver for the re-run (it has no addresses or keys in it; only the import layout was reformatted by the repository's formatter, the code is as it ran).
 - `MANIFEST.json`: the sha256 of every file here. `tests/test_nightschool_nebius_evidence.py` checks the hashes, the numbers in this page against the data files, and that no address, id or key is in the folder.
 
 Not here: the adapter weights (not in git; the hash identifies them) and the raw, unsanitised logs.
