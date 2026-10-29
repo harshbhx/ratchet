@@ -201,13 +201,13 @@ function Page() {
         <PackHero video={JUDGES_VIDEO ?? "https://video.ratchet.dualmindlab.tech/?from=judges"}>
           <GatewayLine />
           <LiveSince />
+          <JudgeMode mode={stats?.mode ?? null} />
         </PackHero>
       </div>
 
       <SectionBar current={current} top={headerH} onTour={startTour} />
 
       <Container className="pb-24">
-        <JudgeMode mode={stats?.mode ?? null} />
         <ProofSection />
         <LinksSection />
         <ChecklistSection />
