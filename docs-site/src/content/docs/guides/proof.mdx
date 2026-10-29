@@ -83,7 +83,7 @@ flowchart TB
 ## What exists today, and what has run for real
 
 <Aside type="caution" title="Read this before quoting a number">
-Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline with mock models. None of it has run on real production traffic.
+Only the text-to-SQL and tool-calling adapters have been run on real models, and only their exams and check scripts (`python scripts/text2sql/exam_numbers.py --check`, `python scripts/toolcall_results.py --check`). Every other link on this page is code in the repository, tested offline with mock models. Night School itself ran once on Nebius on 28 Oct 2026 (dataset import, training job, hot-load, golden eval; [evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)), but its bill of materials was unsigned (no signing key was set), so no signed BOM, proof or receipt has come from a real run. None of it has run on real production traffic.
 </Aside>
 
 | Link | In the repository | Checked by | Run on a real model |

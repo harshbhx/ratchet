@@ -99,7 +99,7 @@ Every call here is a real model call and costs cents, and the gateway needs your
 <PathCard title="API" href="/api/http/" icon="code" eyebrow="Reference" tone="neutral" description="Every HTTP route, generated from the gateway's OpenAPI schema, plus the endpoint map." />
 <PathCard title="Reference" href="/reference/configuration/" icon="file" eyebrow="Reference" tone="neutral" description="Configuration, environment variables, the command line, the Python API and the architecture." />
 <PathCard title="Evidence and results" href="/guides/results/" icon="chart" eyebrow="Measured" description="The exam on databases the adapter never trained on, and how to check each claim yourself." />
-<PathCard title="Run it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="Scripted" tone="neutral" description="One command prints every step to run Ratchet on Nebius, then runs them. Tested offline." />
+<PathCard title="Run it on Nebius" href="/guides/host-on-nebius/" icon="server" eyebrow="Scripted" tone="neutral" description="One command prints every step to run Ratchet on Nebius, then runs them. Tested offline; the VM, job and endpoint each ran once by hand." />
 <PathCard title="Security" href="/guides/security/" icon="shield" eyebrow="Safety" description="Who may call what, how spend is capped, what is logged and stored, and the threat model." />
 <PathCard title="FAQ" href="/guides/faq/" icon="spark" eyebrow="Help" tone="neutral" description="Short answers to the questions that come up most, with links to the full pages." />
 <PathCard title="For judges" href="/guides/for-judges/" icon="check" eyebrow="Hackathon" tone="neutral" description="Where the live gateway is, what to try in five minutes, and what each result rests on." />
@@ -109,12 +109,14 @@ Every call here is a real model call and costs cents, and the gateway needs your
 
 <Band id="today" tint eyebrow="Honest status" title="What is real today" lead="What ran, what was measured, and where each claim is checked.">
 <RealStrip
-asOf="Status as of Oct 26, 2026, with the retrain of Oct 27. The For judges guide keeps the full list."
+asOf="Status as of 29 Oct 2026. The For judges guide keeps the full list."
 items={[
 { badge: 'Live', variant: 'success', title: 'Every model call runs on Nebius Token Factory', text: 'NVIDIA Nemotron 3 Ultra answers every request on the live gateway and built the training data.', href: '/guides/for-judges/' },
 { badge: 'Measured', variant: 'note', title: 'Exam scores on unseen databases', text: 'The text-to-SQL adapter is scored on databases it never trained on. The tool-calling result is a second, smaller one.', href: '/guides/results/' },
 { badge: 'Done', variant: 'success', title: 'Retrained on Nebius AI Cloud', text: 'The round-2 text-to-SQL recipe was retrained by hand on 27 Oct 2026 on one preemptible L40S. The original adapters were trained on a borrowed GPU.', href: '/guides/host-on-nebius/' },
-{ badge: 'Speed test', variant: 'caution', title: 'Student endpoint speed tests', text: 'The student was served by hand on a Nebius Serverless Endpoint for speed tests, then deleted. The live gateway is not connected to it.', href: 'https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius' },
+{ badge: 'Done', variant: 'success', title: 'Student endpoint speed tests', text: 'On 27 to 28 Oct 2026 the student was served by hand on a Nebius Serverless Endpoint for speed tests (cold start about 7.2 minutes; 16 users p50 1.6 s SQL, 1.2 s tool calling), then deleted. The live gateway is not connected to it.', href: 'https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius' },
+{ badge: 'Done', variant: 'success', title: 'Night School ran once on Nebius', text: 'On 28 Oct 2026 it ran end to end by hand: a Nebius CPU VM, a spot L40S job and an endpoint. The golden gate rejected the student, so it was never made live.', href: 'https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius' },
+{ badge: 'Not yet', variant: 'caution', title: 'The nightly loop on live traffic', text: 'The live site is not connected to a student endpoint, there is no measured saving, and the hosted Nano did not clear its own bar (it answers only through the random split).', href: '/guides/for-judges/' },
 ]}
 />
 </Band>
