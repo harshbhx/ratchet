@@ -250,6 +250,13 @@ def readme_numbers(text: str) -> dict:
         "target": r"\|\s*Target\s*\|\s*([\d.]+%)",
         "training_rows": r"\|\s*Training rows\s*\|\s*([\d,]+)",
         "golden_rows": r"\|\s*Golden rows\s*\|\s*([\d,]+)",
+        "rows_imported": r"\|\s*Rows imported\s*\|\s*([\d,]+)",
+        "steps": r"\|\s*Training\s*\|[^|\n]*?([\d,]+) steps",
+        "loss_start": r"\|\s*Loss\s*\|\s*about ([\d.]+) at the start",
+        "loss_end": r"\|\s*Loss\s*\|[^|\n]*?about ([\d.]+) at the end",
+        "gate_right": r"\(([\d,]+) of [\d,]+ right\)",
+        "gate_answered": r"would answer ([\d,]+) of [\d,]+ test questions",
+        "gate_questions": r"would answer [\d,]+ of ([\d,]+) test questions",
     }
     out = {}
     for key, pat in wanted.items():

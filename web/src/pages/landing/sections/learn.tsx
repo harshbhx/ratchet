@@ -1,7 +1,6 @@
 import { Container } from "@/components/ui/section";
 import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
 import { RealCurve } from "./real-curve";
-import { MeasuredOnNebius } from "./measured-on-nebius";
 
 export function Learn() {
   return (
@@ -18,9 +17,6 @@ export function Learn() {
         />
         <Reveal className="mt-12">
           <RealCurve />
-        </Reveal>
-        <Reveal className="mt-8">
-          <MeasuredOnNebius />
         </Reveal>
       </Container>
     </Chapter>
