@@ -6,7 +6,6 @@
 import type { DemoInfo, Links, Upstream } from "./surface-model";
 import { gatewayFetch } from "./waking-store";
 import { streamScoutWith } from "./scout-stream";
-import { getToken } from "./turnstile";
 import { tokenHeaders } from "./turnstile-model";
 
 export type { DemoInfo, Links, Upstream, UpstreamCall } from "./surface-model";
@@ -563,25 +562,28 @@ export const api = {
   judgeUnlock: (code: string) => judgeCall("POST", JSON.stringify({ code })),
   /** End the judge session (clears the cookie). Resolves to the HTTP status. */
   judgeSignOut: () => judgeCall("DELETE"),
-  /** `token` is a human-check token for this one call; left out, a fresh one is asked for (never reuse one: it works once). */
-  scoutRun: async (question: string, token?: string | null) =>
-    json<{ events: ScoutEvent[] }>("/scout/run", {
-      method: "POST",
-      body: JSON.stringify({ question }),
-      headers: tokenHeaders(token === undefined ? await getToken() : token),
-    }),
+  /** `token`: a human-check token for this one call, or none when the visit's cookie covers it (never reuse a token: it works once). */
+  scoutRun: (question: string, token: string | null = null) =>
+    json<{ events: ScoutEvent[] }>("/scout/run", { method: "POST", body: JSON.stringify({ question }), headers: tokenHeaders(token) }),
 };
 
+/** How a Scout run gets its human-check tokens: `first` for the opening attempt (already obtained by the inline check), `next` for any later one. */
+export interface ScoutTokens {
+  first: string | null;
+  next: () => Promise<string | null>;
+}
 
 /**
  * Stream a Scout run over Server-Sent Events. Falls back to POST /scout/run (replayed with
  * short gaps) when EventSource is unavailable or fails before the first event.
- * Every attempt carries its own fresh human-check token and an error never lets the browser reconnect (src/lib/scout-stream.ts).
+ * Once the visit is verified the Worker's cookie rides along on its own (the stream is same-origin) and no token is needed. Otherwise every attempt
+ * carries its own fresh token, and an error never lets the browser reconnect with the spent one (src/lib/scout-stream.ts).
  * Returns a cancel function.
  */
-export function streamScout(question: string, onEvent: (e: ScoutEvent) => void): () => void {
+export function streamScout(question: string, onEvent: (e: ScoutEvent) => void, tokens?: ScoutTokens): () => void {
   return streamScoutWith(question, onEvent, {
-    token: getToken,
+    token: tokens?.next ?? (async () => null),
+    ...(tokens ? { first: tokens.first } : {}),
     makeSource: typeof EventSource === "undefined" ? undefined : (url) => new EventSource(url),
     run: (q, token) => api.scoutRun(q, token),
     pause: (ms) => new Promise((r) => setTimeout(r, ms)),

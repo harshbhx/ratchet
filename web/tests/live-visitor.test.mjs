@@ -265,7 +265,7 @@ test("the limits come from EDGE_DAILY_TRIES and EDGE_DAILY_SCOUT: default 3, 0 i
 test("the Worker is wired to the quota and the stripping; wrangler.json declares the Durable Object; the limits stay out of the container", () => {
   const index = readFileSync(new URL("../../deploy/cloudflare-live/src/index.ts", import.meta.url), "utf8");
   // The daily limit is applied inside guardPaidCall (turnstile.ts), which calls overQuota with the same arguments.
-  assert.match(index, /guardPaidCall\(\{ quotas, limits: dailyLimits\(env\), settings, method: request\.method, url, headers: request\.headers, ip \}\)/);
+  assert.match(index, /guardPaidCall\(\{ quotas, limits: dailyLimits\(env\), settings, method: request\.method, url, headers: request\.headers, ip, out \}\)/);
   assert.match(readFileSync(new URL("../../deploy/cloudflare-live/src/turnstile.ts", import.meta.url), "utf8"), /overQuota\(a\.quotas, a\.limits, a\.method, a\.url\.pathname, a\.headers, a\.ip, now\)/);
   assert.match(index, /forwardedHeaders\(request\.headers, ip\)/);
   assert.match(index, /export class VisitorQuota extends DurableObject/);

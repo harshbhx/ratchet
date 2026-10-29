@@ -9,7 +9,9 @@ import { WhoBadge } from "@/components/ui/who";
 import { cn } from "@/lib/utils";
 import { gatewayFetch, useWaking } from "@/lib/waking-store";
 import { RUN_WAKING, isWaking } from "@/lib/waking-model";
-import { getToken } from "@/lib/turnstile";
+import { HumanRow } from "@/components/human-row";
+import { failureOf } from "@/lib/human-model";
+import { useHuman } from "@/lib/use-human";
 import { tokenHeaders } from "@/lib/turnstile-model";
 import {
   DAILY_LIMIT_TEXT,
@@ -46,22 +48,35 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
   const live = mode === "live";
   const limited = state.kind === "limit";
 
-  const send = async (e: FormEvent) => {
-    e.preventDefault();
-    if (sending || waking || limited || !mode || !prompt.trim()) return;
+  // The human check, drawn inline under the button. Once per visit: after one pass the Worker's cookie covers every later send and the row stays closed.
+  const human = useHuman(false);
+  const checking = human.state.phase === "checking" || human.state.phase === "interactive";
+
+  const send = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (sending || checking || waking || limited || !mode || !prompt.trim()) return;
+    // First the check (nothing happens here when it is off or already passed); the send then goes on by itself, the visitor does not click again.
+    // A token is single-use and a send is never repeated, so a token is never reused; Try again asks for a new one.
+    const gate = await human.gate();
+    if (!gate.go) return;
     setState({ kind: "sending" });
     signal({ type: "live", phase: "sent" });
     try {
-      // A fresh human-check token for this one call (null while the check is off); a send is never repeated, so a token is never reused.
-      const token = await getToken();
       const r = await gatewayFetch("/v1/chat/completions", {
         method: "POST",
-        headers: { "content-type": "application/json", ...tokenHeaders(token) },
+        headers: { "content-type": "application/json", ...tokenHeaders(gate.token) },
         body: JSON.stringify(buildBody(prompt)),
       });
       if (!r.ok) {
         // The body is read once. Only the edge's own daily-limit code is the daily limit; any other 429 keeps the generic message.
-        const body = r.status === 429 ? await r.json().catch(() => null) : null;
+        const body = r.status === 429 || r.status === 403 ? await r.json().catch(() => null) : null;
+        const refused = failureOf(r.status, (body as { error?: { code?: unknown } } | null)?.error?.code);
+        if (refused) {
+          // The Worker refused the check itself: the row under the button says so, with Try again.
+          human.report(refused);
+          setState({ kind: "idle" });
+          return;
+        }
         if (isDailyLimit(r.status, body)) {
           setState({ kind: "limit" });
           signal({ type: "live", phase: "limit" });
@@ -71,6 +86,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
         }
         return;
       }
+      human.report(null);
       const answer = parseAnswer(await r.json());
       setState(answer && answer.text ? { kind: "done", answer } : { kind: "error", message: EMPTY_TEXT });
       signal({ type: "live", phase: answer && answer.text ? "answer" : "error" });
@@ -111,7 +127,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
           spellCheck={false}
           className="h-11 w-full min-w-0 shrink-0 rounded-xl border border-line-strong bg-bg px-3.5 text-[16px] text-ink outline-none focus-visible:border-owned focus-visible:shadow-[0_0_0_4px_var(--owned-soft)] sm:w-auto sm:flex-1 sm:text-[15px]"
         />
-        <Button type="submit" size="md" className="h-11 sm:px-5" disabled={sending || waking || limited || !mode || !prompt.trim()}>
+        <Button type="submit" size="md" className="h-11 sm:px-5" disabled={sending || checking || waking || limited || !mode || !prompt.trim()}>
           {waking ? (
             RUN_WAKING
           ) : sending ? (
@@ -125,6 +141,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
           )}
         </Button>
       </form>
+      <HumanRow human={human} onRetry={() => void send()} />
       {live && !limited && <p className="mt-2 text-[12.5px] text-muted">{DAILY_NOTE}</p>}
       <div role="status" aria-live="polite" className="mt-4 min-h-[3.25rem]">
         {sending && (

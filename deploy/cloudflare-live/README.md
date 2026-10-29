@@ -95,7 +95,21 @@ Variables and Secrets). No deploy is needed. The pages' browser calls are same-o
 How it works. The page asks the Worker for the site key, draws the widget (managed, quiet: it passes without a click unless Cloudflare wants one) and sends a fresh token
 with each paid call, in the header `cf-turnstile-response` (for Scout's EventSource, which cannot set headers, in the query parameter of the same name). The Worker verifies it
 with Cloudflare's siteverify (secret, token and the visitor's address) **before** the call reaches the container or Token Factory, once per request, and removes it before forwarding.
-A token works once and lives 300 seconds, so the page resets the widget for every call.
+A token works once and lives 300 seconds, so every check draws a new widget.
+
+**Verify once per visit.** The widget is drawn inline, right under the button that asked (the "Try a real request" send button on the landing page, `/live` and the judges
+page; the Ask button on Scout), never in a floating box. When a token passes siteverify (success, and a hostname on the allowlist) the Worker answers with a session cookie,
+`rt_human`: `HttpOnly; Secure; SameSite=Lax; Path=/`, valid for **12 hours** from the check (not tied to midnight; the daily limits are counted per UTC day by address, on their own).
+Its value is `v1.<expiry>.<first 32 hex of the SHA-256 of the visitor's address>.<signature>`, signed with HMAC-SHA256 under a key derived from the Turnstile secret
+(`HMAC(TURNSTILE_SECRET_KEY, "rt_human_v1")`), so there is no new secret and rotating the Turnstile secret signs everyone out. It is bound to the visitor's address: one solved
+check cannot be shared with a farm of machines, and a visitor whose address changes just checks again. A paid keyless call that carries a valid cookie needs no token (a token sent
+along is not spent); it is still under the per-visitor daily limits and every dollar cap. A cookie that is missing, tampered with, expired or for another address counts as absent:
+no failure is counted and nothing is refused for that reason, the token flow below simply applies. The signature is checked in constant time. A blocked visitor stays blocked even
+with a cookie. Only a token Cloudflare accepted earns the cookie, never a fail-open call. The cookie is for the Worker only: it is removed before a request reaches the gateway.
+`GET /ratchet/human` answers `{"verified": true|false, "expires": <ISO time>|null}` from the Worker (no container), so the page knows whether to show the check at all.
+The cookie reaches the browser on the main site through the Pages proxy (`web/public/_worker.js` forwards the `Cookie` header to this Worker and returns `Set-Cookie` untouched,
+with no `Domain`, so it belongs to `ratchet.dualmindlab.tech`), and Scout's EventSource, being same-origin, sends it by itself; the query-parameter token is only needed for the
+first call.
 
 - **Good token**: the call goes on to the per-visitor daily limit above, as before.
 - **Invalid token** (siteverify says `invalid-input-response`: forged or malformed): 403 and the words "Human check failed. Refresh the page and try again." (an OpenAI-shaped
@@ -111,6 +125,12 @@ A token works once and lives 300 seconds, so the page resets the widget for ever
   browser whose widget is blocked (an ad blocker) falls into this case too.
 - **Scout** is browser-only while the check is on: a Scout run needs a valid token, even with a judge cookie (the Worker only sees that the cookie exists).
 - **Calls with an `Authorization` header** (a real API key) never pass through the check: the gateway checks the key.
+
+What the visitor sees. On the first click with no verified visit, a slim row opens under the button ("Checking you're human · Cloudflare"). It usually passes without a click
+(`interaction-only`); if Cloudflare needs one, the widget appears in that same spot with "One quick check, then you're set for this visit." (size `flexible`, the site's current
+theme). On success it settles into "Verified for this visit" and the request goes on by itself. Later clicks show nothing. A failure is "Couldn't confirm you're human. Try again."
+with a Try again button; a block is "Too many failed checks from your network today. It resets at 00:00 UTC."; a widget that did not load (an ad blocker) says so, and `/v1` still
+goes as a plain keyless call (a few a day) while Scout says it needs the check.
 
 Retries and reconnects. A token is checked once per request. The web app never reuses one: a Scout stream that errors is closed by the page (no browser auto-reconnect with
 the same address) and the fallback `POST /scout/run` asks for a new token first; the "Try a real request" box sends once and a new send gets a new token. The Worker's own
