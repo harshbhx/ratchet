@@ -857,7 +857,20 @@ def test_dashboard_admin_key_stays_in_memory():
     users = sorted(p.relative_to(src).as_posix() for p in src.rglob("*.ts*") if storage.search(p.read_text(encoding="utf-8")))
     # The theme toggle, Nano and Ultra's hide flag and this visit's lessons (components/companions/companion-storage.ts),
     # and the tour's place (components/tour/site-tour-storage.ts): no keys, no personal data.
-    assert users == ["components/companions/companion-storage.ts", "components/tour/site-tour-storage.ts", "lib/hooks.ts"], users
+    # And a judge's own API client key (lib/judge-key-model.ts, lib/use-judge-key.ts): sessionStorage, or localStorage only when
+    # the judge ticks "Remember on this device"; it is not an admin key, and no file that holds the admin key touches it.
+    assert users == [
+        "components/companions/companion-storage.ts",
+        "components/tour/site-tour-storage.ts",
+        "lib/hooks.ts",
+        "lib/judge-key-model.ts",
+        "lib/use-judge-key.ts",
+    ], users
+    assert not [
+        p
+        for p in src.rglob("*.ts*")
+        if "adminKey" in p.read_text(encoding="utf-8") and "judge-key" in p.read_text(encoding="utf-8")
+    ]
     hooks = (src / "lib" / "hooks.ts").read_text(encoding="utf-8")
     assert re.findall(r"localStorage\.setItem\(([^,]+),", hooks) == ['"ratchet-theme"']
     companions = (src / "components" / "companions" / "companion-storage.ts").read_text(encoding="utf-8")
