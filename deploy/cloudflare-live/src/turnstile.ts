@@ -23,6 +23,7 @@
 // EVERYTHING IS OFF UNLESS THE SECRET TURNSTILE_SECRET_KEY IS SET on the Worker: no check, no failure count, no shared curl total. The widget in the
 // web app appears only when the Worker also answers GET /ratchet/turnstile with a site key (the public TURNSTILE_SITE_KEY variable), so the code can
 // be deployed before the widget exists. An address is only ever kept as a SHA-256 hash, as in visitor.ts.
+import { issueCookie, verifyCookie } from "./human";
 import { overQuota, paidBucket, secondsToMidnight, sha256Hex, utcDay, type Bucket, type DailyLimits } from "./visitor";
 
 /** The header the page sends the token in, and the query parameter Scout's EventSource uses instead. Both are removed before forwarding. */
@@ -206,6 +207,8 @@ export interface GuardInput {
   now?: number;
   /** Replaces fetch for siteverify (tests). */
   send?: (url: string, init: RequestInit) => Promise<Response>;
+  /** Filled with `cookie` (a Set-Cookie value) when a token passed: the Worker adds it to whatever answer it sends, a refusal included. */
+  out?: { cookie?: string };
 }
 
 /**
@@ -233,9 +236,11 @@ export async function guardPaidCall(a: GuardInput): Promise<Response | null> {
     }
   }
 
+  // A valid session cookie (human.ts) is the visit's one solved check: no token needed, none spent, and the call goes on to the daily limit below.
+  // An invalid or expired cookie is simply absent: no failure, no error, the token flow applies.
   const token = tokenOf(a.headers, a.url);
-  let verified = false;
-  if (token) {
+  let verified = (await verifyCookie(a.headers.get("cookie"), secret, a.ip, now)) !== null;
+  if (!verified && token) {
     const verdict = await verifyToken(secret, token, a.ip, a.send, a.settings.hostnames);
     if (verdict === "invalid" || verdict === "spent") {
       try {
@@ -247,7 +252,12 @@ export async function guardPaidCall(a: GuardInput): Promise<Response | null> {
     }
     if (verdict === "error") console.log(JSON.stringify({ event: "turnstile_unavailable" }));
     verified = true; // valid, or no answer from Cloudflare: failing open means the visitor's own daily limit is the only gate
-  } else if (bucket === "scout") {
+    // Only a token Cloudflare really accepted earns the cookie; a fail-open call does not.
+    if (verdict === "valid" && a.out) {
+      const cookie = await issueCookie(secret, a.ip, now);
+      if (cookie) a.out.cookie = cookie.header;
+    }
+  } else if (!verified && bucket === "scout") {
     return humanCheckRequired(bucket); // a plain 403, never counted
   }
 

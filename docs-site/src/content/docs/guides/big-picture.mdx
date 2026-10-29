@@ -154,14 +154,20 @@ Token Factory listed no fine-tuning or <Term t="lora">LoRA</Term> serving for Ne
 
 </Steps>
 
-<Aside type="tip" title="What ran on Nebius, 27 to 28 Oct 2026">
-- **27 Oct 2026:** the round-2 text-to-SQL recipe was retrained by hand as a Serverless Job on a spot <Term t="l40s">L40S</Term>: 40.7% on exam 1 and 34.5% on exam 2, which reproduces the original adapter ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
-- **27 to 28 Oct 2026:** the student was served from a Nebius <Term t="serverless-endpoint">Serverless Endpoint</Term> for speed tests, then the endpoint was deleted ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
-- **28 Oct 2026:** Night School ran end to end once, by hand: the gateway on a Nebius CPU VM, a spot L40S training job and a Serverless Endpoint. The golden gate rejected the student, so it was never made live ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
+<Aside type="tip" title="Ran on Nebius">
+- **Live site, as of 29 Oct 2026:** every model call on the live site runs on Nebius <Term t="token-factory">Token Factory</Term>. Nemotron 3 Ultra teaches, and a <Term t="random-split">random</Term> 40% of eligible requests are answered by the hosted Nemotron 3 Nano 30B, with a quarter of those re-checked by Ultra ([live stats](https://live.ratchet.dualmindlab.tech/ratchet/stats)).
+- **27 Oct 2026:** the text-to-SQL adapter was retrained on Nebius AI Cloud, by hand, as one spot <Term t="l40s">L40S</Term> Serverless Job: 40.7% on exam 1 and 34.5% on exam 2 (originally 39.0% and 33.0%) ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius)).
+- **27 to 28 Oct 2026:** the student was served from a Nebius Serverless Endpoint with 16 users at once: median 1.6 s for SQL and 1.2 s for tool calling. The endpoint was deleted afterwards, so no GPU sits idle ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)).
+- **28 Oct 2026:** Night School ran end to end once, by hand. The golden gate rejected the candidate at 81.8% precision against the 95% target, so it was never made live: the safety check doing its job ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)).
 </Aside>
 
-<Aside type="caution" title="Still not done: the nightly loop, the live connection and savings">
-As of Oct 29, 2026, the teacher runs on Nebius Token Factory and the round-2 recipe was retrained once by hand as a Nebius Serverless Job (one L40S). Night School ran end to end once on Nebius, by hand (28 Oct 2026): the gateway on a Nebius CPU VM, the training job on a spot L40S, the adapter served from a Nebius Serverless Endpoint. The golden gate rejected it (81.8% precision against the 95% target), so it was never made live. ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius)) The nightly schedule and the one-command host are scripted and tested against mock models and fake HTTP transports, ready to run with `make nebius-plan` and `make nebius-up`; the student was served by hand, in two short sessions, on a Nebius endpoint for speed tests ([evidence](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius)), but the live gateway is not connected to an endpoint, so the teacher answers every request. The `nebius ai` commands in `deploy/` follow the CLI reference. Live mode itself runs on the live gateway, where every request is a real Token Factory call. See the [deployment guide](/reference/deployment/) and [Host on Nebius](/guides/host-on-nebius/).
+<Aside type="note" title="Ready, not switched on yet">
+- **Ratchet's own adapter on the live site.** The live site is not connected to a student endpoint. The fine-tuned Nano 4B adapter goes live only after it passes the golden gate.
+- **The nightly schedule on live traffic.** Night School runs by hand today; the timer is scripted.
+- **The one-command host** (`make nebius-plan`, `make nebius-up`) is ready and dry-run by default; it has not yet run as one command. The VM and GPU scripts follow the Nebius docs and CLI reference and are tested offline.
+- **Measured savings.** They come from a published live run; none is published yet. The `nebius ai` commands in `deploy/` follow the CLI reference.
+
+Run every script with `DRY_RUN=1` first.
 </Aside>
 
 ### What a request leaves behind

@@ -1,10 +1,12 @@
 ---
 /**
  * A glossary word in running text: <Term t="lora">LoRA</Term>.
- * The word is a real link to /guides/glossary/#lora (so it works without JavaScript) with a dotted underline. On hover and
- * keyboard focus a small card shows the term, its one-line definition and a "Read more" link; the definition comes from
- * src/data/glossary.ts at build time, so the tooltip and the glossary page cannot disagree. The tiny script below only keeps
- * the card inside the window and lets Escape close it. Link a term once per page, at its first meaningful use.
+ * The word is a real link to /guides/glossary/#lora (so it works without JavaScript) with a dotted underline. The definition
+ * comes from src/data/glossary.ts at build time and sits in a hidden span next to the link (it is what aria-describedby points
+ * at). With JavaScript, hovering (after a short intent delay) or focusing the word shows ONE shared card that the script
+ * appends to <body> and puts in the browser's top layer (the Popover API, or position: fixed where that is missing), so no
+ * box with overflow: hidden around the word can ever clip it. On touch, the first tap opens the card and the second follows
+ * the link. Link a term once per page, at its first meaningful use.
  */
 import { getTerm, inline, GLOSSARY_PATH } from '../lib/glossary';
 
@@ -22,11 +24,10 @@ const id = `rt-term-${term.slug}-${g.__rtTermId}`;
 const learnLabel = term.learn && term.learn[0].length > 38 ? 'Source' : term.learn?.[0];
 ---
 
-<span class="rt-term"><a class="rt-term__link" href={href} aria-describedby={id}><slot /></a><span class="rt-term__tip" role="tooltip"><span class="rt-term__card"><span class="rt-term__name">{term.name}</span><span class="rt-term__def" id={id} set:html={inline(term.short, false)} /><span class="rt-term__more"><a href={href}>Read more in the glossary &rarr;</a>{term.learn && <a href={term.learn[1]} rel="noopener">{learnLabel} &#8599;</a>}</span></span></span></span>
+<span class="rt-term"><a class="rt-term__link" href={href} aria-describedby={id}><slot /></a><span class="rt-term__src" hidden><span class="rt-card__name">{term.name}</span><span class="rt-card__def" id={id} set:html={inline(term.short, false)} /><span class="rt-card__more"><a href={href}>Read more in the glossary &rarr;</a>{term.learn && <a href={term.learn[1]} rel="noopener">{learnLabel} &#8599;</a>}</span></span></span>
 
 <style is:global>
   .rt-term {
-    position: relative;
     display: inline;
   }
   .sl-markdown-content a.rt-term__link {
@@ -43,100 +44,139 @@ const learnLabel = term.learn && term.learn[0].length > 38 ? 'Source' : term.lea
     color: var(--rt-owned-ink);
     text-decoration-color: var(--rt-owned);
   }
-  .rt-term__tip {
-    position: absolute;
-    z-index: 30;
-    top: 100%;
+
+  /* The shared card: a child of <body>, in the top layer, so nothing around a term can clip it. */
+  .rt-card {
+    position: fixed;
+    inset: auto;
     left: 0;
-    width: min(21rem, calc(100vw - 2rem));
-    padding-top: 0.45rem; /* an invisible bridge, so the pointer can travel from the word to the card */
-    transform: translateX(var(--rt-tip-dx, 0px));
-    visibility: hidden;
+    top: 0;
+    z-index: 2147483000;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    overflow: visible;
+    width: max-content;
+    max-width: min(20rem, calc(100vw - 16px));
+    color: var(--rt-ink-2);
+    font-family: inherit;
+    font-size: 0.875rem;
+    font-weight: 400;
+    line-height: 1.55;
+    text-align: left;
     opacity: 0;
+    transform: translateY(var(--rt-slide, -4px));
     transition:
       opacity 0.14s ease,
-      visibility 0s linear 0.14s;
-    font-size: 0.85rem;
-    font-weight: 400;
-    font-style: normal;
-    line-height: 1.5;
-    text-align: left;
-    white-space: normal;
-    pointer-events: none;
+      transform 0.14s ease;
   }
-  .rt-term[data-flip] > .rt-term__tip {
-    top: auto;
-    bottom: 100%;
-    padding-top: 0;
-    padding-bottom: 0.45rem;
+  .rt-card[hidden] {
+    display: none;
   }
-  .rt-term__card {
+  .rt-card[data-placement='top'] {
+    --rt-slide: 4px;
+  }
+  .rt-card.is-open {
+    opacity: 1;
+    transform: none;
+  }
+  .rt-card__body {
+    position: relative;
     display: block;
-    padding: 0.7rem 0.85rem 0.75rem;
+    padding: 0.8rem 1rem 0.85rem;
     background: var(--rt-surface);
-    color: var(--rt-ink-2);
     border: 1px solid var(--rt-line-strong);
-    border-radius: 0.65rem;
+    border-radius: var(--rt-radius-lg, 0.85rem);
     box-shadow: var(--rt-shadow-lift);
   }
-  .rt-term__name {
+  .rt-card__arrow {
+    position: absolute;
+    left: var(--rt-arrow-x, 20px);
+    width: 11px;
+    height: 11px;
+    margin-left: -5.5px;
+    background: var(--rt-surface);
+    border: 1px solid var(--rt-line-strong);
+    transform: rotate(45deg);
+    z-index: 1;
+  }
+  .rt-card[data-placement='bottom'] .rt-card__arrow {
+    top: -6px;
+    border-right: 0;
+    border-bottom: 0;
+  }
+  .rt-card[data-placement='top'] .rt-card__arrow {
+    bottom: -6px;
+    border-left: 0;
+    border-top: 0;
+  }
+  .rt-card__name,
+  .rt-card__def,
+  .rt-card__more {
+    position: relative;
+    z-index: 2;
     display: block;
-    margin-bottom: 0.15rem;
-    font-size: 0.78rem;
+  }
+  .rt-card__name {
+    margin-bottom: 0.2rem;
+    font-size: 0.9rem;
     font-weight: 650;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.005em;
     color: var(--rt-ink);
   }
-  .rt-term__def {
-    display: block;
+  .rt-card__def {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 6;
+    line-clamp: 6;
+    overflow: hidden;
   }
-  .rt-term__def code {
-    font-size: 0.8em;
+  .rt-card__def code {
+    font-size: 0.82em;
   }
-  .rt-term__more {
+  .rt-card__more {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.25rem 0.9rem;
-    margin-top: 0.5rem;
-    font-size: 0.78rem;
+    gap: 0.25rem 1rem;
+    margin-top: 0.6rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid var(--rt-line);
+    font-size: 0.8rem;
   }
-  .sl-markdown-content .rt-term__more a {
+  .rt-card__more a {
     color: var(--rt-owned-ink);
     text-decoration: none;
     font-weight: 550;
   }
-  .sl-markdown-content .rt-term__more a:hover {
+  .rt-card__more a:hover {
     text-decoration: underline;
   }
-  /* Keyboard focus always shows the card; hover only where a pointer can hover. */
-  .rt-term:focus-within:not([data-dismissed]) > .rt-term__tip {
-    visibility: visible;
-    opacity: 1;
-    pointer-events: auto;
-    transition-delay: 0s;
-  }
-  @media (hover: hover) {
-    .rt-term:hover:not([data-dismissed]) > .rt-term__tip {
-      visibility: visible;
-      opacity: 1;
-      pointer-events: auto;
-      transition-delay: 0s;
-    }
+  .rt-card__more a:focus-visible {
+    outline: 2px solid var(--rt-focus);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
   @media (prefers-reduced-motion: reduce) {
-    .rt-term__tip,
+    .rt-card,
     .sl-markdown-content a.rt-term__link {
       transition: none;
+      transform: none;
     }
   }
   @media (forced-colors: active) {
-    .rt-term__card {
+    .rt-card__body,
+    .rt-card__arrow {
+      background: Canvas;
       border-color: CanvasText;
+    }
+    .rt-card__more {
+      border-top-color: CanvasText;
     }
   }
   @media print {
-    .rt-term__tip {
-      display: none;
+    .rt-card {
+      display: none !important;
     }
     .sl-markdown-content a.rt-term__link {
       text-decoration: none;
@@ -145,34 +185,214 @@ const learnLabel = term.learn && term.learn[0].length > 38 ? 'Source' : term.lea
 </style>
 
 <script>
-  // Keep the card inside the window, flip it above the word when there is no room below, and let Escape close it.
-  const place = (w: HTMLElement) => {
-    const tip = w.querySelector<HTMLElement>('.rt-term__tip');
-    if (!tip) return;
-    w.removeAttribute('data-flip');
-    w.style.setProperty('--rt-tip-dx', '0px');
-    const r = tip.getBoundingClientRect();
+  // One shared card, opened by hover intent, keyboard focus or a first tap; see the header comment.
+  const OPEN_DELAY = 120;
+  const CLOSE_DELAY = 150;
+  const MARGIN = 8;
+  const GAP = 10;
+  type PopoverEl = HTMLElement & { showPopover?: () => void; hidePopover?: () => void };
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let card: PopoverEl | null = null;
+  let current: HTMLAnchorElement | null = null;
+  let openT = 0;
+  let closeT = 0;
+  let hideT = 0;
+  let pointer = { x: -1, y: -1 };
+  let touch: { link: HTMLAnchorElement; wasOpen: boolean } | null = null;
+
+  const linkOf = (n: EventTarget | null) => (n instanceof Element ? n.closest<HTMLAnchorElement>('a.rt-term__link') : null);
+  const inCard = (n: EventTarget | null) => !!card && n instanceof Node && card.contains(n);
+
+  function ensureCard(): PopoverEl {
+    if (card) return card;
+    const c = document.createElement('div') as PopoverEl;
+    c.className = 'rt-card';
+    c.setAttribute('role', 'group');
+    if (typeof c.showPopover === 'function') c.setAttribute('popover', 'manual');
+    else c.hidden = true;
+    c.innerHTML = '<span class="rt-card__body"></span><span class="rt-card__arrow" aria-hidden="true"></span>';
+    document.body.appendChild(c);
+    card = c;
+    return c;
+  }
+  const isShown = (c: PopoverEl) => (typeof c.showPopover === 'function' ? c.matches(':popover-open') : !c.hidden);
+
+  function position() {
+    if (!card || !current) return;
+    const rects = [...current.getClientRects()];
+    if (!rects.length) return;
+    const r = rects.find((q) => pointer.y >= q.top && pointer.y <= q.bottom && pointer.x >= q.left && pointer.x <= q.right) ?? rects[0];
     const vw = document.documentElement.clientWidth;
-    let dx = 0;
-    if (r.right > vw - 8) dx = vw - 8 - r.right;
-    if (r.left + dx < 8) dx = 8 - r.left;
-    w.style.setProperty('--rt-tip-dx', `${Math.round(dx)}px`);
-    if (r.bottom > window.innerHeight - 8 && w.getBoundingClientRect().top > r.height + 16) w.setAttribute('data-flip', '');
+    const vh = window.innerHeight;
+    if (r.bottom < 0 || r.top > vh) return close(false);
+    card.style.left = '0px';
+    card.style.top = '0px';
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    const below = r.bottom + GAP + h <= vh - MARGIN;
+    const above = r.top - GAP - h >= MARGIN;
+    const placement = below || !above ? 'bottom' : 'top';
+    const left = Math.max(MARGIN, Math.min(r.left, vw - MARGIN - w));
+    const top = placement === 'bottom' ? r.bottom + GAP : r.top - GAP - h;
+    card.dataset.placement = placement;
+    card.style.left = `${Math.round(left)}px`;
+    card.style.top = `${Math.round(top)}px`;
+    const arrow = Math.max(18, Math.min(r.left + r.width / 2 - left, w - 18));
+    card.style.setProperty('--rt-arrow-x', `${Math.round(arrow)}px`);
+  }
+
+  function open(link: HTMLAnchorElement) {
+    clearTimeout(openT);
+    clearTimeout(closeT);
+    clearTimeout(hideT);
+    const c = ensureCard();
+    if (current !== link) {
+      const src = link.parentElement?.querySelector('.rt-term__src');
+      if (!src) return;
+      c.querySelector('.rt-card__body')!.innerHTML = src.innerHTML.replace(/ id="[^"]*"/g, '');
+      c.setAttribute('aria-label', src.querySelector('.rt-card__name')?.textContent ?? 'Definition');
+      c.classList.remove('is-open');
+    }
+    current = link;
+    if (!isShown(c)) {
+      if (typeof c.showPopover === 'function') c.showPopover();
+      else c.hidden = false;
+    }
+    position();
+    if (reduced()) c.classList.add('is-open');
+    else requestAnimationFrame(() => c.classList.add('is-open'));
+  }
+
+  function close(restoreFocus: boolean) {
+    clearTimeout(openT);
+    clearTimeout(closeT);
+    const c = card;
+    const link = current;
+    if (!c || !link) return;
+    current = null;
+    c.classList.remove('is-open');
+    clearTimeout(hideT);
+    hideT = window.setTimeout(
+      () => {
+        if (current) return;
+        if (typeof c.hidePopover === 'function') {
+          try {
+            c.hidePopover();
+          } catch {
+            /* already hidden */
+          }
+        } else c.hidden = true;
+      },
+      reduced() ? 0 : 150,
+    );
+    if (restoreFocus) {
+      quiet = true;
+      link.focus();
+      quiet = false;
+    }
+  }
+
+  const scheduleClose = () => {
+    clearTimeout(openT);
+    clearTimeout(closeT);
+    if (current) closeT = window.setTimeout(() => close(false), CLOSE_DELAY);
   };
-  const wordOf = (e: Event) => (e.target instanceof Element ? e.target.closest<HTMLElement>('.rt-term') : null);
-  const show = (e: Event) => {
-    const w = wordOf(e);
-    if (w) place(w);
-  };
-  document.addEventListener('pointerover', show);
-  document.addEventListener('focusin', show);
+
+  document.addEventListener('pointermove', (e) => (pointer = { x: e.clientX, y: e.clientY }), { passive: true });
+
+  document.addEventListener('pointerover', (e) => {
+    if (e.pointerType === 'touch') return;
+    const link = linkOf(e.target);
+    if (link) {
+      clearTimeout(closeT);
+      if (current === link) return;
+      clearTimeout(openT);
+      openT = window.setTimeout(() => open(link), OPEN_DELAY);
+    } else if (inCard(e.target)) {
+      clearTimeout(closeT);
+    }
+  });
   document.addEventListener('pointerout', (e) => {
-    const w = wordOf(e);
-    if (w && !w.contains((e as PointerEvent).relatedTarget as Node | null)) w.removeAttribute('data-dismissed');
+    if (e.pointerType === 'touch') return;
+    const from = linkOf(e.target) ?? (inCard(e.target) ? card : null);
+    if (!from) return;
+    const to = e.relatedTarget;
+    if (linkOf(to) === current && current) return;
+    if (inCard(to) || (to instanceof Node && linkOf(to) === linkOf(e.target) && linkOf(to))) return;
+    scheduleClose();
   });
-  document.addEventListener('focusout', (e) => wordOf(e)?.removeAttribute('data-dismissed'));
+
+  // Focus opens the card unless a pointer press just caused it (a mouse click or a tap follows the link instead).
+  let pressedAt = -1000;
+  let quiet = false; // focus we move ourselves (Escape, Tab out of the card) must not reopen the card
+  document.addEventListener('pointerdown', () => (pressedAt = performance.now()), true);
+  document.addEventListener('focusin', (e) => {
+    const link = linkOf(e.target);
+    if (link && !quiet && performance.now() - pressedAt > 500) open(link);
+  });
+  document.addEventListener('focusout', (e) => {
+    if (!current) return;
+    if (!linkOf(e.target) && !inCard(e.target)) return;
+    const to = e.relatedTarget;
+    if (to && (inCard(to) || linkOf(to) === current)) return;
+    close(false);
+  });
+
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    document.querySelectorAll<HTMLElement>('.rt-term:hover, .rt-term:focus-within').forEach((w) => w.setAttribute('data-dismissed', ''));
+    if (!current) return;
+    if (e.key === 'Escape') {
+      close(inCard(document.activeElement));
+      return;
+    }
+    if (e.key !== 'Tab' || !card) return;
+    const links = [...card.querySelectorAll<HTMLAnchorElement>('a')];
+    if (!links.length) return;
+    const active = document.activeElement;
+    if (active === current && !e.shiftKey) {
+      e.preventDefault();
+      links[0].focus();
+    } else if (inCard(active)) {
+      if (e.shiftKey && active === links[0]) {
+        e.preventDefault();
+        current.focus();
+      } else if (!e.shiftKey && active === links[links.length - 1]) {
+        // hand focus back to the word and let the browser move on from there
+        const link = current;
+        quiet = true;
+        link.focus();
+        quiet = false;
+      }
+    }
   });
+
+  // Touch: the first tap on a word opens the card; a tap on an open word, or on the card's links, follows the link.
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      const link = linkOf(e.target);
+      if (e.pointerType === 'touch' && link) touch = { link, wasOpen: current === link };
+      else touch = null;
+      if (!link && !inCard(e.target)) close(false);
+    },
+    true,
+  );
+  document.addEventListener(
+    'click',
+    (e) => {
+      const link = linkOf(e.target);
+      if (!link || !touch || touch.link !== link) return;
+      const { wasOpen } = touch;
+      touch = null;
+      if (!wasOpen) {
+        e.preventDefault();
+        open(link);
+      }
+    },
+    true,
+  );
+
+  const reposition = () => current && position();
+  addEventListener('scroll', reposition, { passive: true, capture: true });
+  addEventListener('resize', reposition);
 </script>
