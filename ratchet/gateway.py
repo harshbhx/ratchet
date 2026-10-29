@@ -646,7 +646,15 @@ class Runtime:
             detail = f"answers {what} while no version is live; the teacher answers the rest"
         else:
             why = "; ".join(f"{name}: {rec.get('disabled')}" for name, rec in sorted(ev["tasks"].items())) or "no records"
-            detail = f"answers no task (none met its bar: {why}); the teacher answers every request"
+            if s.demo_split > 0:
+                pct = f"{s.demo_split * 100:g}%"
+                tail = (
+                    "the confidence gate sends every request to the teacher; "
+                    f"the random split still sends {pct} to the hosted model"
+                )
+            else:
+                tail = "the teacher answers every request"
+            detail = f"answers no task (none met its bar: {why}); {tail}"
         self.ledger.event("hosted", f"v{v.id} {change}: the hosted student {s.fallback_student_model} (untuned) {detail}")
 
     def known_clients(self) -> list[str] | None:

@@ -228,6 +228,20 @@ def test_live_gateway_with_the_shipped_records_answers_with_the_teacher(gw_env, 
     assert {call.json["model"] for call in tf.calls} == {OPEN_TEACHER}
 
 
+@pytest.mark.req("FR-12.33", "FR-12.34")
+@pytest.mark.parametrize(
+    ("split", "words"),
+    [(0.0, "the teacher answers every request"), (0.4, "the random split still sends 40% to the hosted model")],
+)
+def test_hosted_row_event_wording_follows_the_demo_split(gw_env, tmp_path, monkeypatch, split, words):
+    """The event for a row that serves no task says the teacher answers every request only while the random split is off."""
+    gw = gw_env()
+    rt = gw.Runtime(_settings(tmp_path, demo_split=split), transports={"teacher": FakeOpenAIServer(_tf).transport})
+    monkeypatch.setattr(gw, "rt", rt)
+    (event,) = [e for e in rt.ledger.events() if e["kind"] == "hosted"]
+    assert words in event["detail"]
+
+
 @pytest.mark.req("FR-12.33", "FR-7.40", "FR-12.32")
 def test_live_gateway_serves_a_task_that_met_the_bar(gw_env, tmp_path, monkeypatch):
     """A task whose record serves goes to the hosted Nano on Token Factory first, also with a student endpoint set (the
