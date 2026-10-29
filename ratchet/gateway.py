@@ -647,7 +647,11 @@ class Runtime:
         else:
             why = "; ".join(f"{name}: {rec.get('disabled')}" for name, rec in sorted(ev["tasks"].items())) or "no records"
             if s.demo_split > 0:
-                tail = f"the confidence gate sends every request to the teacher; the random split still sends {s.demo_split * 100:g}% to the hosted model"
+                pct = f"{s.demo_split * 100:g}%"
+                tail = (
+                    "the confidence gate sends every request to the teacher; "
+                    f"the random split still sends {pct} to the hosted model"
+                )
             else:
                 tail = "the teacher answers every request"
             detail = f"answers no task (none met its bar: {why}); {tail}"
