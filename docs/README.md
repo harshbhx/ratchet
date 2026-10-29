@@ -67,13 +67,15 @@ Screenshots of the pages: `img/landing.jpg`, `img/scout.jpg`, `img/dashboard.jpg
 
 Charts and diagrams:
 
-- `img/sql-results-16x9.png`: the README's text-to-SQL chart (both exams). `img/results.svg` is a static chart of the same scores, drawn from the exam data by `scripts/readme_results_svg.py` (`--check` compares only); no page embeds it now.
+- `img/sql-results-16x9.png`: a text-to-SQL chart (both exams), from before the README's own set in `img/readme/`. `img/results.svg` is a static chart of the same scores, drawn from the exam data by `scripts/readme_results_svg.py` (`--check` compares only); no page embeds it now.
 - `img/toolcall-results.svg`: the tool-calling chart, drawn by `scripts/toolcall_results_svg.py` from `evidence/toolcall/results.json` (`--check` compares only); `img/toolcall-results-16x9.png` is the still the README links.
 - `img/architecture.svg` and its PNGs (`architecture-light.png`, `architecture-dark.png`, and `architecture-devpost-1200x800.png` for Devpost): the architecture diagram, drawn by `scripts/render_architecture.py`.
 - `img/where-it-runs.svg` and its PNGs (`where-it-runs-light.png`, `where-it-runs-dark.png`): the map of where everything runs, drawn in the same style by the same script.
-- `img/try-it-16x9.png`: the README's "try it" card (three links in order). `img/run-on-nebius.svg`: the README's text-only "Run on Nebius" badge. `img/demo-reel-poster.png`: the reel's still, shown instead of the animation when motion is reduced. `img/social-preview.png`: the repository's share image. `img/hf/`: the Hugging Face models, datasets and Spaces pages, linked from the README.
+- `img/try-it-16x9.png`: an older "try it" card, no longer shown. `img/run-on-nebius.svg`: the README's text-only "Run on Nebius" badge. `img/demo-reel-poster.png`: the older reel's still. `img/social-preview.png`: the repository's share image. `img/hf/`: older cards for the Hugging Face models, datasets and Spaces pages.
 
-Animations in `img/anim/`: `readme-banner.gif`, `readme-stats.gif` and `readme-footer.gif` are the README's banner, at-a-glance strip and footer; `ratchet-demo-reel.gif` is the reel; `ratchet-how-it-works-light.gif` is an animated walkthrough of one request through the system (not shown in the README at the moment); `tool-calling-results.gif` is the animated tool-calling chart; `judge-box-howto.gif` shows the Scout page's judge box (README and [WHERE_IT_RUNS.md](WHERE_IT_RUNS.md)).
+Animations in `img/anim/`: `readme-banner.gif` and `readme-footer.gif` are the README's banner and footer; `readme-stats.gif` and `ratchet-demo-reel.gif` are the older at-a-glance strip and reel; `ratchet-how-it-works-light.gif` is an animated walkthrough of one request through the system (not shown in the README at the moment); `tool-calling-results.gif` is the older animated tool-calling chart; `judge-box-howto.gif` shows the Scout page's judge box ([WHERE_IT_RUNS.md](WHERE_IT_RUNS.md)).
+
+The README's middle images are in `img/readme/`, one dark set in the banner's style (Inter, JetBrains Mono, the Ratchet mark, the student in blue and the teacher in orange): `reel.gif` and its still `reel-poster.png`, `stats.png` (at a glance), `sql-results.png`, `try-it.png`, `judge-box.gif` (an illustration of the Scout page's judge box), `tool-calling.gif` and its still `tool-calling.png`, and `hf-models.png`, `hf-datasets.png` and `hf-spaces.png` (the Hugging Face lists, captured 30 Oct 2026). Only the README uses them.
 
 ## Repo-level files
 

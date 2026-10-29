@@ -39,14 +39,14 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/demo-reel-poster.png">
-    <img src="docs/img/anim/ratchet-demo-reel.gif" alt="Reel, 14 seconds: 200 exam questions the model never saw, with strict marking; a recorded Scout run on the live site, labelled live site and recorded live run (18 model calls, all answered by the teacher, 13.2 seconds, $0.0223); the 95% precision bar, where the student may answer alone 0 times out of 100; and the real exam numbers: text-to-SQL 12.8% untrained, 25.6% teacher, 39.0% adapter on exam 1, and 12.5%, 15.0% and 33.0% on exam 2." width="100%">
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/readme/reel-poster.png">
+    <img src="docs/img/readme/reel.gif" alt="Reel, 20 seconds, five scenes. The design: your app changes one line, its base URL, to the Ratchet gateway; the student, Nemotron 3 Nano 4B with an adapter you own, answers first, and when it is unsure the teacher, Nemotron 3 Ultra on Nebius Token Factory, answers. Live today: every live model call runs on Token Factory; Ultra answers, a random 40% of eligible requests go to the hosted Nemotron 3 Nano 30B, and a quarter of those are re-checked by Ultra; the site runs on Cloudflare and Ratchet's own adapter is not connected to it. Measured, 22 to 24 Oct 2026: text-to-SQL exam 1, 12.8% untrained, 25.6% teacher, 33.1% round 1 and 39.0% round 2; exam 2, 12.5%, 15.0%, 28.0% and 33.0%; teaching cost about $17 on record. On Nebius, by hand: retrained on 27 Oct 2026, 40.7% and 34.5% for about $2.16 (39.0% and 33.0% on a borrowed GPU); served 27 to 28 Oct 2026, median answer 1.6 s for the SQL adapter and 1.2 s for the tool-calling adapter with 16 requests at once. Night School, 28 Oct 2026: precision 81.8% (9 of 11) against the 95% target, so the gate rejected it and it was never made live." width="100%">
   </picture>
-  <br><sub><b>Reel</b> (from the video). Exam numbers are measured; the Scout run is a recorded live run. <a href="https://video.ratchet.dualmindlab.tech/?from=readme">Watch the full video (2:59)</a></sub>
+  <br><sub><b>In 20 seconds.</b> Exam numbers are measured; the Nebius runs and Night School ran once, by hand. <a href="https://video.ratchet.dualmindlab.tech/?from=readme">Watch the full video (2:59)</a></sub>
 </p>
 
 <p align="center">
-  <img src="docs/img/anim/readme-stats.gif" alt="At a glance, four tiles: unseen SQL exam, 12.8% to 39.0% on exam 1, and unseen tools, 62.7% to 90.7% on the hard exam (both measured, strict scoring); on Hugging Face, 2 adapters, 6 datasets and 2 Spaces, published and open; live gateway, free, no sign-up, real requests." width="100%">
+  <img src="docs/img/readme/stats.png" alt="At a glance, four tiles: unseen SQL exam, measured, 12.8% to 39.0% on exam 1 (172 questions), the teacher 25.6%; unseen tools, measured, 62.7% to 90.7% on the hard exam (150 questions), the teacher 91.3%; Nebius retrain, 27 Oct, 40.7% and 34.5% on exams 1 and 2 for about $2.16, all attempts; live gateway, free, no sign-up, real requests, models on Token Factory." width="100%">
 </p>
 
 ## In 30 seconds
@@ -57,7 +57,7 @@
 - **What is not claimed.** Night School ran end to end once on Nebius, by hand (28 Oct 2026): the gateway on a Nebius CPU VM, the training job on a spot [L40S](https://docs.ratchet.dualmindlab.tech/guides/glossary/#l40s), the adapter served from a Nebius Serverless Endpoint. The golden gate rejected it (81.8% precision against the 95% target), so it was never made live. The loop has not run nightly on live traffic, and the live site's own gateway (on Cloudflare) is not connected to that endpoint ([evidence](evidence/nightschool-nebius/README.md)). The rest of the VM kit is tested offline. The original adapters were trained by hand on a borrowed GPU; the round-2 recipe was retrained once by hand on Nebius AI Cloud (a [Serverless Job](https://docs.ratchet.dualmindlab.tech/guides/glossary/#serverless-job), 27 Oct 2026). The student was served by hand, in two short sessions, on a Nebius Serverless Endpoint for speed tests (one spot L40S, 27 to 28 Oct 2026, [evidence](evidence/student-endpoint-nebius/README.md)); the endpoint was deleted afterwards and the live site is not connected to it. At a 95% precision bar the student still answers almost nothing, so in practice Ultra answers the live traffic, apart from the random 40% split to the hosted Nano 30B. Details in [What is real](#what-is-real-what-is-ready-to-run) and [Limitations](#limitations).
 
 <p align="center">
-  <img src="docs/img/sql-results-16x9.png" alt="Two bar charts of text-to-SQL accuracy under strict scoring; on exam 1 (172 questions) the untrained Nano 4B scores 12.8%, Nemotron 3 Ultra 25.6% and the adapter 39.0%, and on exam 2 (200 questions, new industries) 12.5%, 15.0% and 33.0%." width="100%">
+  <img src="docs/img/readme/sql-results.png" alt="Two bar charts of text-to-SQL accuracy under strict scoring, measured 22 to 24 Oct 2026. Exam 1 (172 questions): untrained Nano 4B 12.8%, the teacher Nemotron 3 Ultra 25.6%, the round 1 adapter (821 rows) 33.1% and the round 2 adapter (4,322 rows) 39.0%. Exam 2 (200 questions, new industries): 12.5%, 15.0%, 28.0% and 33.0%. Every answer is saved and recomputable; teaching cost about $17 on record." width="100%">
   <br><sub>Measured, 22 to 24 Oct 2026. Strict scoring: a query counts only if it returns exactly the reference rows.</sub>
 </p>
 
@@ -78,14 +78,14 @@ Judges get the access code for Scout runs on the Devpost page (it is not in this
 | [llms.txt](https://ratchet.dualmindlab.tech/llms.txt) | A plain-text summary of the project for language models, pointing to the docs' own [llms.txt](https://docs.ratchet.dualmindlab.tech/llms.txt) and [llms-full.txt](https://docs.ratchet.dualmindlab.tech/llms-full.txt) | Documentation |
 
 <p align="center">
-  <img src="docs/img/try-it-16x9.png" alt="Try it in 90 seconds, three links in this order: the judges' page, a real request on the live gateway, and Scout with real searches. The live gateway is free, with no sign-up." width="100%">
+  <img src="docs/img/readme/try-it.png" alt="Try it in 90 seconds, three links in this order: 1, the judges' page, ratchet.dualmindlab.tech/judges, every claim with its status and a way to check it (start here); 2, a real request on the live gateway, live.ratchet.dualmindlab.tech, Nemotron 3 Ultra on Nebius Token Factory, read the ratchet block in the reply; 3, Scout with real web searches, live.ratchet.dualmindlab.tech/scout, five research agents, every model call tagged with who answered it. Free, no sign-up, real Token Factory calls under spend limits; judges find the Scout code on the Devpost page." width="100%">
 </p>
 
 <details>
 <summary>How judges unlock Scout runs</summary>
 
 <p align="center">
-  <img src="docs/img/anim/judge-box-howto.gif" alt="Animation of the judge code box on the Scout page: type the code from the Devpost page into the box and a reserve of live Scout runs unlocks. The code itself is never shown." width="80%">
+  <img src="docs/img/readme/judge-box.gif" alt="Animation, an illustration of the Scout page, not a screen recording, in four steps: open the Scout page; click I am a judge and a judge code box appears; type the code from the Devpost page, shown only as dots; press Unlock and the page shows Judge access on with a Sign out button. The code itself is never shown." width="80%">
 </p>
 
 Type the code from the Devpost page into the box on the Scout page.
@@ -126,8 +126,8 @@ All of this is **measured** on real models, 22 to 24 Oct 2026, not estimated. Sc
 
 <p align="center">
   <picture>
-    <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/toolcall-results-16x9.png">
-    <img src="docs/img/anim/tool-calling-results.gif" alt="Animated bar chart of a second Ratchet adapter, for tool calling: on the 150-question hard exam the untrained model scores 62.7% and the adapter 90.7% (Nemotron 3 Ultra, the teacher, 91.3%), and on the 300-question public BFCL benchmark 77.3% against 80.3% (Ultra 88.3%), a small gain." width="100%">
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/img/readme/tool-calling.png">
+    <img src="docs/img/readme/tool-calling.gif" alt="Animated bar charts of a second Ratchet adapter, for tool calling, measured 24 Oct 2026 under strict scoring: on the hard exam (150 questions, 20 unseen tools) the untrained model scores 62.7% (94 of 150), the adapter 90.7% (136 of 150) and the teacher, Nemotron 3 Ultra, 91.3% (137 of 150): a large gain, about the same as the teacher. On BFCL (300 questions, a public benchmark) 77.3% (232), 80.3% (241) and 88.3% (265): a small gain, and below the teacher." width="100%">
   </picture>
   <br><sub>Hard exam: 150 questions, 20 tools never in training. BFCL: 300 questions from the Berkeley Function Calling Leaderboard (Apache-2.0). <a href="docs/img/toolcall-results-16x9.png">Still with 95% ranges and exact counts</a>.</sub>
 </p>
@@ -155,15 +155,15 @@ Two adapters, six datasets and two Spaces, all public: the adapters, the synthet
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <a href="https://huggingface.co/harshbhx/models"><img src="docs/img/hf/hf-models.png" alt="Models card on Hugging Face showing the text-to-SQL and tool-calling adapters; the Nebius retrain of the text-to-SQL adapter is a third model repository" width="100%"></a>
-      <br><sub><i>Models: 2 adapters</i></sub>
+      <a href="https://huggingface.co/harshbhx/models"><img src="docs/img/readme/hf-models.png" alt="Hugging Face, models: 3 model repositories, the 2 adapters plus the Nebius retrain, with a screenshot of huggingface.co/harshbhx/models (30 Oct 2026) listing ratchet-nemotron-nano-4b-toolcall, ratchet-nemotron-nano-4b-text2sql-nebius and ratchet-nemotron-nano-4b-text2sql" width="100%"></a>
+      <br><sub><i>Models: 2 adapters, plus the Nebius retrain</i></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://huggingface.co/harshbhx/datasets"><img src="docs/img/hf/hf-datasets.png" alt="Datasets: 6 repos of training data, exams and recorded runs (text-to-SQL, tool calling and Scout)" width="100%"></a>
+      <a href="https://huggingface.co/harshbhx/datasets"><img src="docs/img/readme/hf-datasets.png" alt="Hugging Face, datasets: 6 repositories of training data, exams and recorded runs, with a screenshot of huggingface.co/harshbhx/datasets (30 Oct 2026) showing the first three: ratchet-toolcall-train, ratchet-toolcall-exam-hard and ratchet-toolcall-exam-bfcl" width="100%"></a>
       <br><sub><i>Datasets: 6 repos, training data, exams and recorded runs</i></sub>
     </td>
     <td align="center" width="33%">
-      <a href="https://huggingface.co/harshbhx/spaces"><img src="docs/img/hf/hf-demos.png" alt="Spaces: 2, the exam explorer and the Scout viewer" width="100%"></a>
+      <a href="https://huggingface.co/harshbhx/spaces"><img src="docs/img/readme/hf-spaces.png" alt="Hugging Face, Spaces: 2, the exam explorer and the Scout viewer, with a screenshot of huggingface.co/harshbhx/spaces (30 Oct 2026) showing Ratchet tool-calling exam explorer and Ratchet Scout, both running" width="100%"></a>
       <br><sub><i>Spaces: 2</i></sub>
     </td>
   </tr>
