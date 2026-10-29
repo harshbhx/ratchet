@@ -27,7 +27,8 @@
 // token (header cf-turnstile-response, or the same query parameter for Scout's EventSource), verified once at the top of this Worker and removed
 // before forwarding; a call with no token (curl) keeps its 3 a day and shares EDGE_DAILY_CURL_TOTAL (default 100) a day across everybody. Settings:
 // TURNSTILE_SECRET_KEY (secret), TURNSTILE_SITE_KEY (public variable, served at GET /ratchet/turnstile), EDGE_TURNSTILE_MAX_FAILS (default 5),
-// EDGE_DAILY_CURL_TOTAL (default 100, 0 is off). turnstile.ts says what counts as a failure and what fails open.
+// EDGE_DAILY_CURL_TOTAL (default 100, 0 is off). turnstile.ts says what counts as a failure and what fails open. A passed check earns a 12-hour
+// signed session cookie (rt_human, human.ts), so a visitor verifies once per visit; GET /ratchet/human says whether the cookie is valid.
 //
 // THE RUNNING TOTALS (LiveCounters, one Durable Object, SQLite-backed, migration v3): the ledger above is emptied by every restart, so the Worker
 // keeps the gateway's aggregate counters itself. After each paid call, when someone reads the totals while the container is up, and when the

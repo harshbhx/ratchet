@@ -27,7 +27,8 @@ export function HumanRow({ human, onRetry, className }: { human: Human; onRetry:
         className,
       )}
     >
-      <div className="min-h-0 overflow-hidden">
+      {/* The 16px of side room (inside the card's 20px padding) keeps Cloudflare's widget, never narrower than 300px, from being clipped in the narrowest card. */}
+      <div className="-mx-4 min-h-0 overflow-hidden px-4">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 pt-2.5 text-[12.5px] leading-snug">
           {state.phase === "checking" && <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted motion-reduce:animate-none" aria-hidden />}
           {state.phase === "verified" && <Check className="size-3.5 shrink-0 text-good-ink" aria-hidden />}
