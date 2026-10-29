@@ -11,9 +11,10 @@ import { lastCall, lastCallLine } from "@/lib/surface-model";
 import { hostedServing, servingLine } from "@/lib/who-model";
 import { CostChart, PrecisionChart, ShareChart } from "./charts";
 import { EconomicsPanel, hasEconomics } from "./economics";
-import { DemoSplitTile, KpiSkeleton, Kpis } from "./kpis";
+import { CumulativeKpis, DemoSplitTile, KpiSkeleton, Kpis } from "./kpis";
+import { chartCaption, emptyChartSentence, headline, instanceLabel } from "./cumulative-model";
 import { MeasuredResults } from "./measured";
-import { LiveSince, MEASURED, MeasuredTiles } from "@/components/measured/measured";
+import { LiveSince, MEASURED, MeasuredTiles, usePersistent } from "@/components/measured/measured";
 import { nightSchoolWording } from "@/lib/measured-model";
 import { Group, JumpBar, SECTIONS, type SectionId } from "./sections";
 import { armedFault, fmtTime } from "./model";
@@ -236,7 +237,10 @@ export default function DashboardPage() {
   const waking = isWaking(useWaking());
   const cost = useCostReport(updatedAt);
   const registry = useTaskRegistry(updatedAt);
+  const persistent = usePersistent();
   const mock = stats?.mode === "mock";
+  const head = stats ? headline({ mock: !!mock, persistent, stats }) : null;
+  const instanceSince = stats?.upstream?.since;
   const cold = stats != null && stats.days.length === 0;
   const fault = stats ? armedFault(stats) : null;
   const shown: SectionId[] = SECTIONS.map((x) => x.id);
@@ -273,12 +277,17 @@ export default function DashboardPage() {
 
                 <Group id="overview" title="Overview" hint={mock ? "Mock models" : "Live"}>
                   <Reveal>
-                    {cold && !mock ? (
+                    {head?.kind === "cumulative" ? (
+                      <CumulativeKpis items={head.items} since={persistent?.since ?? null} />
+                    ) : head?.kind === "loading" ? (
+                      <KpiSkeleton />
+                    ) : head?.kind === "measured" ? (
                       <MeasuredTiles ids={["toolcall", "smoke", "hosted-nano"]} />
                     ) : (
                       <>
                         <Kpis stats={stats} />
                         <DemoSplitTile stats={stats} />
+                        {!mock && <p className="mt-2 text-[12px] text-muted">The tiles above are {instanceLabel(instanceSince)}; the cumulative totals are unavailable right now.</p>}
                       </>
                     )}
                   </Reveal>
@@ -290,10 +299,12 @@ export default function DashboardPage() {
                 <Group id="money" title="Money" hint="What each answer cost, and what the student saved">
                   {cold && !mock ? (
                     <Reveal delay={0.08}>
+                      <p className="mb-3 text-[13.5px] leading-relaxed text-ink-2">{emptyChartSentence(instanceSince)}</p>
                       <MeasuredTiles ids={["labelling", "endpoint", "scout"]} />
                     </Reveal>
                   ) : (
                     <>
+                      {!mock && <p className="text-[12px] text-muted">{chartCaption(instanceSince)}</p>}
                       {hasEconomics(stats, cost) && (
                         <Reveal delay={0.08}>
                           <EconomicsPanel stats={stats} cost={cost} />

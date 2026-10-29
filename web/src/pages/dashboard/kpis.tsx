@@ -3,6 +3,8 @@ import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import type { Stats } from "@/lib/api";
 import { cn, fmtPct, fmtUsd } from "@/lib/utils";
 import { NOT_CERTIFIED, demoSplitStat, hostedServing, precisionShown, studentCopy } from "@/lib/who-model";
+import type { StripItem } from "@/lib/live-strip-model";
+import { fmtDay } from "@/lib/measured-model";
 import { cumulativeSaved, fmtPts, inFlight, latest, liveVersion, prev, stateLabel } from "./model";
 
 /** Tiny trend line. De-emphasis line with the current point in the owned accent. */
@@ -52,6 +54,28 @@ function Tile({ label, value, foot, trend, className }: { label: string; value: 
         </div>
       </div>
       {foot && <div className="min-h-5 text-[12.5px] leading-5 text-muted">{foot}</div>}
+    </div>
+  );
+}
+
+/** The four headline tiles from the cumulative totals: requests, the hosted Nano's share, savings or cost, server errors. */
+export function CumulativeKpis({ items, since }: { items: StripItem[]; since: string | null }) {
+  const label = since ? `Live since ${fmtDay(since)}` : "Live";
+  return (
+    <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-4" data-cumulative>
+      {items.map((it) => (
+        <Tile
+          key={it.id}
+          label={it.label}
+          value={it.value}
+          foot={
+            <>
+              <span className="block text-ink-2">{it.sub}</span>
+              <span className="block">{label}</span>
+            </>
+          }
+        />
+      ))}
     </div>
   );
 }
