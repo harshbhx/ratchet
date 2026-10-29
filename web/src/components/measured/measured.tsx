@@ -111,9 +111,9 @@ export function TileCard({ tile, className }: { tile: Tile; className?: string }
       </div>
       {tile.bars && tile.bars.length > 0 && <Bars bars={tile.bars} />}
       {tile.facts.length > 0 && (
-        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line">
+        <dl className="grid grid-cols-2 gap-2">
           {tile.facts.map((f, i) => (
-            <div key={f.label} className={cn("min-w-0 bg-surface px-3 py-2", tile.facts.length % 2 === 1 && i === tile.facts.length - 1 && "col-span-2")}>
+            <div key={f.label} className={cn("min-w-0 rounded-xl border border-line bg-surface px-3 py-2", tile.facts.length % 2 === 1 && i === tile.facts.length - 1 && "col-span-2")}>
               <dt className="text-[11.5px] leading-snug text-muted">{f.label}</dt>
               <dd className="mt-0.5 text-[13.5px] font-semibold tabular-nums text-ink [overflow-wrap:anywhere]">{f.value}</dd>
             </div>
@@ -172,9 +172,9 @@ export function LiveSince({ className }: { className?: string }) {
           {l.note && <span className="text-[12px] text-muted">{l.note}</span>}
         </div>
         <p className="mt-2 text-[15px] font-medium text-ink">{l.headline}</p>
-        <dl className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-4 lg:grid-cols-7">
+        <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
           {l.items.map((i) => (
-            <div key={i.label} className="min-w-0 bg-surface px-3 py-2">
+            <div key={i.label} className="min-w-0 rounded-xl border border-line bg-surface px-3 py-2">
               <dt className="text-[11.5px] leading-snug text-muted">{i.label}</dt>
               <dd className="mt-0.5 text-[15px] font-semibold tabular-nums text-ink">{i.value}</dd>
             </div>
