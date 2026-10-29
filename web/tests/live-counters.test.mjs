@@ -74,11 +74,11 @@ test("a float sum does not drift into digits nobody measured", async () => {
   assert.equal((await c.readView(s)).totals.cost_usd, 0.005);
 });
 
-test("parseSnapshot keeps only the ten counters and rejects anything else", () => {
+test("parseSnapshot keeps only the eleven counters and rejects anything else", () => {
   const ok = c.parseSnapshot({ ...json("0123456789abcdef"), mode: "live", started: 1, prompt: "hello", ip: "203.0.113.7" });
   assert.deepEqual(Object.keys(ok).sort(), ["instance", "values"]);
   assert.deepEqual(Object.keys(ok.values).sort(), [...c.FIELDS].sort());
-  assert.equal(c.FIELDS.length, 10);
+  assert.equal(c.FIELDS.length, 11);
   assert.equal(c.parseSnapshot({ ...json("0123456789abcdef"), requests: -1 }), null);
   assert.equal(c.parseSnapshot({ ...json("0123456789abcdef"), requests: "5" }), null);
   assert.equal(c.parseSnapshot({ ...json("not hex!") }), null);
@@ -120,10 +120,12 @@ test("server_errors is a new key: the old errors total is kept, and the new key 
 });
 
 test("a container from before server_errors still counts: the field reads as none", () => {
-  const { server_errors, ...old } = json("0123456789abcdef", { requests: 4 });
+  const { server_errors, baseline_usd, ...old } = json("0123456789abcdef", { requests: 4 });
   assert.equal(server_errors, 0);
+  assert.equal(baseline_usd, 0);
   const parsed = c.parseSnapshot(old);
   assert.equal(parsed.values.server_errors, 0);
+  assert.equal(parsed.values.baseline_usd, 0);
   assert.equal(parsed.values.requests, 4);
   assert.equal(c.parseSnapshot({ ...old, server_errors: -1 }), null);
 });

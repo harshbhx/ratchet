@@ -25,10 +25,14 @@ export const FIELDS = [
   "cost_usd",
   "errors",
   "server_errors",
+  "baseline_usd",
   "scout_runs",
 ] as const;
 
 export type Field = (typeof FIELDS)[number];
+
+/** Fields added after the first Workers shipped: a container from before them is still counted, with none of these. */
+const NEW_FIELDS: ReadonlySet<string> = new Set(["server_errors", "baseline_usd"]);
 export type Totals = Record<Field, number>;
 
 /** One reading of the container: its instance and the counters since that instance began. */
@@ -62,7 +66,7 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
   if (typeof r.instance !== "string" || !INSTANCE.test(r.instance)) return null;
   const values = emptyTotals();
   for (const f of FIELDS) {
-    const v = f === "server_errors" && r[f] === undefined ? 0 : r[f]; // a container from before the field counts none
+    const v = NEW_FIELDS.has(f) && r[f] === undefined ? 0 : r[f]; // a container from before a newer field counts none of it
     if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
     values[f] = v;
   }
@@ -70,7 +74,7 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
 }
 
 /** Dollars to the millionth, so a long sum of small floats does not drift into digits nobody measured. */
-const round = (f: Field, v: number): number => (f === "cost_usd" ? Math.round(v * 1e6) / 1e6 : Math.round(v));
+const round = (f: Field, v: number): number => (f === "cost_usd" || f === "baseline_usd" ? Math.round(v * 1e6) / 1e6 : Math.round(v));
 
 /** The UTC day of a time in milliseconds, as YYYY-MM-DD. */
 export const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);

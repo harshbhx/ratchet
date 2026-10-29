@@ -4383,8 +4383,9 @@ class Ledger:
         """Cumulative counts and dollars of this ledger, for `GET /ratchet/counters`: requests in all and by how they were
         served (`split`: the live demo's random split, route `demo_split`; `student`: answered by a student on any other
         route; `teacher`: the rest), the student calls' tokens, what every request and every failure spent, and the failures
-        (`errors`: every `failures` row, a refused key included; `server_errors`: only the model calls that failed and
-        the gateway's own 5xx, see `SERVER_ERROR_STAGES`).
+        (`baseline_usd`: what the same requests would have cost all-Ultra; `errors`: every `failures` row, a refused
+        key included; `server_errors`: only the model calls that failed and the gateway's own 5xx, see
+        `SERVER_ERROR_STAGES`).
         Folded request rows (FR-13.4) count and embeddings pass-through rows do not, as in `totals`. Counts only: no text,
         no client, no end user. Each number only grows while the ledger lives, which is what lets a reader of two snapshots
         take their difference."""
@@ -4392,6 +4393,7 @@ class Ledger:
             self._rdb.execute(
                 "SELECT COUNT(*) n, COALESCE(SUM(route='demo_split'), 0) split,"
                 " COALESCE(SUM(served_by='student' AND route IS NOT 'demo_split'), 0) student, COALESCE(SUM(cost_usd), 0.0) cost,"
+                " COALESCE(SUM(baseline_cost_usd), 0.0) baseline,"
                 " COALESCE(SUM(student_in_tokens), 0) tin, COALESCE(SUM(student_out_tokens), 0) tout"
                 f" FROM requests WHERE {NOT_PASSTHROUGH}"
             ).fetchone()
@@ -4401,7 +4403,8 @@ class Ledger:
                 self._rdb.execute(
                     "SELECT COALESCE(SUM(requests), 0) n, COALESCE(SUM(CASE WHEN route='demo_split' THEN requests END), 0) split,"
                     " COALESCE(SUM(CASE WHEN route IS NOT 'demo_split' THEN student_served END), 0) student,"
-                    " COALESCE(SUM(cost), 0.0) cost, COALESCE(SUM(student_in_tokens), 0) tin,"
+                    " COALESCE(SUM(cost), 0.0) cost, COALESCE(SUM(baseline), 0.0) baseline,"
+                    " COALESCE(SUM(student_in_tokens), 0) tin,"
                     f" COALESCE(SUM(student_out_tokens), 0) tout FROM daily_rollup WHERE {NOT_PASSTHROUGH}"
                 ).fetchone()
             )
@@ -4421,6 +4424,7 @@ class Ledger:
             "student_tokens_in": int(r["tin"]),
             "student_tokens_out": int(r["tout"]),
             "cost_usd": float(r["cost"]) + float(failed[1]),
+            "baseline_usd": float(r["baseline"]),
             "errors": int(failed[0]),
             "server_errors": int(server_failed),
         }

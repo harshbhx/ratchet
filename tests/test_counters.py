@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 KEYS = {
     "instance", "started", "mode", "requests", "requests_split", "requests_student", "requests_teacher",
-    "student_tokens_in", "student_tokens_out", "cost_usd", "errors", "server_errors", "scout_runs",
+    "student_tokens_in", "student_tokens_out", "cost_usd", "baseline_usd", "errors", "server_errors", "scout_runs",
 }  # fmt: skip
 
 
@@ -59,6 +59,16 @@ def test_a_new_process_has_a_new_instance(gw_env):
     a = TestClient(gw_env().app).get("/ratchet/counters").json()
     b = TestClient(gw_env().app).get("/ratchet/counters").json()
     assert a["instance"] != b["instance"]
+
+
+def test_counters_baseline_is_the_same_all_teacher_total_stats_reports(gw):
+    c = TestClient(gw.app)
+    for i in range(3):
+        assert _chat(c, f"baseline {i}").status_code == 200
+    counters = c.get("/ratchet/counters").json()
+    stats = c.get("/ratchet/stats").json()
+    assert isinstance(counters["baseline_usd"], float) and counters["baseline_usd"] >= 0
+    assert abs(counters["baseline_usd"] - (stats["totals"].get("baseline_usd") or 0.0)) < 1e-9
 
 
 def test_server_errors_count_failed_model_calls_not_refusals(gw):
