@@ -1,7 +1,8 @@
 """The judges pack says the same true things on three surfaces: JUDGES.md, the docs' "For judges" guide and the /judges page.
 
 Each carries the approved headline, the proof numbers, the signed BOM's key id, the cost figures and every link a judge needs;
-every repo path JUDGES.md links to exists, and README links to it from the very top. The numbers are the evidence folders' numbers.
+every repo path JUDGES.md links to exists, and README links to it from the very top. The numbers are the evidence
+folders' numbers.
 """
 
 from __future__ import annotations
