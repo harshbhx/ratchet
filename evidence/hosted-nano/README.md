@@ -1,7 +1,7 @@
 # The hosted Nano as a stand-in student: calibration data
 
 Real Token Factory calls, made on 26 Oct 2026 (UTC) from one laptop, to decide whether the untuned, hosted
-**Nemotron 3 Nano 30B** (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`) may answer Scout's two distillable calls on the live demo
+**Nemotron 3 Nano 30B** (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`) may answer Scout's two distillable calls on the live site
 before Ultra, and at which confidence ([ADR 0146](../../docs/adr/0146-hosted-student.md), FR-12.33). The answer, for now, is
 no: neither task reached the bar, so `RATCHET_HOSTED_STUDENT=1` changes no answer yet.
 

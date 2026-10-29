@@ -1,13 +1,13 @@
-# Ratchet demo on Cloudflare Containers
+# Ratchet mock-mode host on Cloudflare Containers
 
-The mock-mode demo (the repo's Dockerfile, no keys, nothing secret), run as a Cloudflare Container behind a Worker at
-`demo.ratchet.dualmindlab.tech`. Every number it shows is simulation, labelled as such.
+An optional mock-mode host for development (the repo's Dockerfile, no keys, nothing secret), run as a Cloudflare Container behind a Worker at
+`demo.ratchet.dualmindlab.tech`. It is not linked from the site. Every number it shows comes from mock models, labelled as such.
 
 - **Manual deploys only.** The workflow `.github/workflows/deploy-cloudflare-demo.yml` runs only from the Actions tab
   (Run workflow, type `deploy`). Pushes and merges never deploy it, and nothing rebuilds it on a schedule.
 - **On demand.** Nothing calls it in the background (no cron, no keep-alive). The first visitor starts it; the mock warm-up (four
-  simulated days, as `make demo`) takes about a minute, so that first page load is slow. A visitor never sees a blank page: after 2 seconds without an answer the Worker shows a
-  "Waking up the demo server" page with a seconds counter, which checks `/__ready` every 2 seconds and opens the demo by itself. It sleeps again 20 minutes after the last request, so no
+  mock days, as `make demo`) takes about a minute, so that first page load is slow. A visitor never sees a blank page: after 2 seconds without an answer the Worker shows a
+  "Waking up the server" page with a seconds counter, which checks `/__ready` every 2 seconds and opens the page by itself. It sleeps again 20 minutes after the last request, so no
   container time is billed while nobody is looking (the Workers Paid plan that Containers need is a monthly fee either way). Instance type `standard-2` (1 vCPU, 6 GiB), at most one instance.
 - **State** is in memory and resets when the container restarts or is redeployed.
 
