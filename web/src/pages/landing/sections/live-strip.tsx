@@ -9,6 +9,8 @@ import type { Stats } from "@/lib/api";
 import { rise } from "@/lib/motion";
 import { fmtInt, fmtPct, fmtUsd } from "@/lib/utils";
 import { fmtAge, lastCall, lastCallLine } from "@/lib/surface-model";
+import { emptyItems, provenanceLabel, type Provenance } from "@/lib/live-strip-model";
+import { MEASURED, MeasuredChip, usePersistent } from "@/components/measured/measured";
 import { studentShareCopy } from "@/lib/who-model";
 
 /** "No Token Factory call since the gateway started 12 min ago". */
@@ -18,6 +20,7 @@ function noCall(what: string, since: number | null | undefined): string {
 
 /** The gateway's real numbers right now. Hidden when the API is unreachable (static preview). */
 export function LiveStrip({ stats }: { stats: Stats | null }) {
+  const persistent = usePersistent();
   if (!stats) return null;
   const latest = stats.days.length ? stats.days[stats.days.length - 1] : null;
   const live = [...stats.versions].reverse().find((v) => v.state === "live");
@@ -33,28 +36,33 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
   const tavily = !mock && stats.upstream?.recording ? lastCall(stats.upstream, "tavily") : null;
   const since = stats.upstream?.since;
 
-  const items: { label: string; value: ReactNode; sub: string }[] = [
-    {
-      label: "Saved vs all-Ultra",
-      value: empty ? "–" : <CountUp value={stats.totals.savings_pct} format={(v) => fmtPct(v)} />,
-      sub: empty ? "no requests yet on this live gateway" : `${fmtUsd(stats.totals.saved_usd, 2)} so far`,
-    },
-    {
-      label: share.label,
-      value: latest ? <CountUp value={latest.student_share} format={(v) => fmtPct(v)} /> : "–",
-      sub: share.sub ?? (latest ? `day ${latest.day} · ${fmtPct(latest.escalation_rate)} to the teacher` : "no traffic yet"),
-    },
-    {
-      label: "Live version",
-      value: live ? `v${live.id}` : "none yet",
-      sub: canary ? `v${canary.id} in canary at ${canary.traffic_pct}%` : shadow ? `v${shadow.id} in shadow` : "no release in flight",
-    },
-    {
-      label: "Requests",
-      value: <CountUp value={stats.totals.requests} format={(v) => fmtInt(v)} />,
-      sub: empty ? "send one to start the ledger" : `over ${stats.days.length} ${stats.days.length === 1 ? "day" : "days"}`,
-    },
-  ];
+  const release = { live: live ? `v${live.id}` : null, flight: canary ? `v${canary.id} in canary at ${canary.traffic_pct}%` : shadow ? `v${shadow.id} in shadow` : null };
+  // A restart empties this process's ledger: show the Worker's running totals, else dated measured values, never a bare zero.
+  const fallback = empty ? emptyItems({ measured: MEASURED, persistent: persistent ?? null, release }) : null;
+  const items: { label: string; value: ReactNode; sub: string; from?: Provenance | null }[] =
+    fallback ??
+    [
+      {
+        label: "Saved vs all-Ultra",
+        value: empty ? "–" : <CountUp value={stats.totals.savings_pct} format={(v) => fmtPct(v)} />,
+        sub: empty ? "no requests yet on this live gateway" : `${fmtUsd(stats.totals.saved_usd, 2)} so far`,
+      },
+      {
+        label: share.label,
+        value: latest ? <CountUp value={latest.student_share} format={(v) => fmtPct(v)} /> : "–",
+        sub: share.sub ?? (latest ? `day ${latest.day} · ${fmtPct(latest.escalation_rate)} to the teacher` : "no traffic yet"),
+      },
+      {
+        label: "Live version",
+        value: live ? `v${live.id}` : "none yet",
+        sub: canary ? `v${canary.id} in canary at ${canary.traffic_pct}%` : shadow ? `v${shadow.id} in shadow` : "no release in flight",
+      },
+      {
+        label: "Requests",
+        value: <CountUp value={stats.totals.requests} format={(v) => fmtInt(v)} />,
+        sub: empty ? "send one to start the ledger" : `over ${stats.days.length} ${stats.days.length === 1 ? "day" : "days"}`,
+      },
+    ];
 
   return (
     <section data-tour="live-strip" aria-labelledby="live-title" className="relative">
@@ -97,9 +105,26 @@ export function LiveStrip({ stats }: { stats: Stats | null }) {
                 <dt className="min-h-[2.5em] text-[12px] leading-tight text-muted sm:min-h-0">{it.label}</dt>
                 <dd className="mt-1.5 text-[22px] font-semibold leading-none tracking-[-0.025em] text-ink tabular sm:text-[26px]">{it.value}</dd>
                 <dd className="mt-1.5 text-[12px] leading-snug text-muted [overflow-wrap:anywhere]">{it.sub}</dd>
+                {it.from && (
+                  <dd className="mt-2 min-w-0 [&_*]:whitespace-normal">
+                    {it.from.tag === "Live" ? (
+                      <Badge tone="good" className="gap-1">
+                        <Radio aria-hidden /> {provenanceLabel(it.from)}
+                      </Badge>
+                    ) : it.from.source ? (
+                      <MeasuredChip date={it.from.date} dateEnd={it.from.dateEnd} source={it.from.source} tag={it.from.tag} />
+                    ) : null}
+                  </dd>
+                )}
               </div>
             ))}
           </dl>
+          {fallback && (
+            <p className="border-t border-line px-4 py-3 text-[12.5px] leading-snug text-muted sm:px-5">
+              This gateway has not answered a request since it last started, and its own ledger starts empty after every restart. What is shown is from saved, dated runs, each
+              linked to its evidence. Send a request at <Link to="/live" className="font-medium text-ink underline decoration-line-strong underline-offset-[3px] hover:decoration-ink">/live</Link> to start this ledger.
+            </p>
+          )}
           {!mock && stats.upstream?.recording && (
             <dl className="grid gap-x-6 gap-y-1 border-t border-line px-4 py-3 text-[12.5px] text-muted sm:grid-cols-2 sm:px-5">
               <div className="min-w-0 [overflow-wrap:anywhere]">
