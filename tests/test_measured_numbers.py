@@ -83,6 +83,17 @@ def test_nightschool_is_hidden_until_its_evidence_exists():
         assert set(DATA["nightschool"]) == {"present", "source"}  # no number, no date, nothing to show
 
 
+def test_nightschool_card_numbers_are_the_evidence_readmes():
+    """The story's Night School card prints these (web/src/lib/night-run-model.ts): each is a number in the run's own README."""
+    readme = (ROOT / "evidence/nightschool-nebius/README.md").read_text(encoding="utf-8")
+    n = DATA["nightschool"]["numbers"]
+    assert (n["rows_imported"], n["training_rows"], n["golden_rows"]) == ("4,322", "3,864", "458")
+    assert n["steps"] == "966" and (n["loss_start"], n["loss_end"]) == ("0.15", "0.08")
+    assert f"**{n['precision']}** ({n['gate_right']} of {n['gate_answered']} right)" in readme
+    assert f"would answer {n['gate_answered']} of {n['gate_questions']} test questions" in readme
+    assert 3864 * 2 // 8 == int(n["steps"])  # two epochs of the training rows at batch size 8
+
+
 def test_no_demo_or_simulation_wording_in_the_data():
     text = json.dumps(DATA).lower()
     assert "demo" not in text and "simulat" not in text

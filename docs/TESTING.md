@@ -77,8 +77,8 @@ python scripts/reference_check.py                    # do tickets, mixed and res
 | `tests/test_student_endpoint_evidence.py` | 4 |
 | `tests/test_nightschool_nebius_evidence.py` | 7 |
 | `tests/test_counters.py` | 5 |
-| `tests/test_measured_numbers.py` | 6 |
-| **Total** | **2010** |
+| `tests/test_measured_numbers.py` | 7 |
+| **Total** | **2011** |
 
 Tests without a table of their own yet: `test_model_routing`, `test_attribution`, `test_exam_numbers`, `test_reasoning`, `test_toolcall_results`, `test_hosted_student`, `test_demo_split` and `test_judges_page` (the file names and the docstrings of their tests say what each covers); `test_watch` has a paragraph below and no table.
 

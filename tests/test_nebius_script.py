@@ -245,7 +245,7 @@ def test_a_real_run_makes_these_calls_in_this_order(rig: Rig):
         ["ai", "endpoint", "get"],
     ], calls
     disk = next(c for c in calls if c[:3] == ["compute", "disk", "create"])
-    assert disk[disk.index("--name") + 1] == "ratchet-demo-boot" and "--parent-id" in disk
+    assert disk[disk.index("--name") + 1] == "ratchet-host-boot" and "--parent-id" in disk
     instance = next(c for c in calls if c[:3] == ["compute", "instance", "create"])
     assert instance[instance.index("--boot-disk-existing-disk-id") + 1] == "computedisk-e00test"
     start = next(c for c in calls if c[:3] == ["ai", "endpoint", "start"])

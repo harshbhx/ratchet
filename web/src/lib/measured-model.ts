@@ -101,7 +101,7 @@ export interface MeasuredData {
     what?: string | null;
     verdict?: string | null;
     adapter_name?: string | null;
-    numbers?: { golden_agreement?: string; coverage?: string; precision?: string; target?: string; training_rows?: string; golden_rows?: string };
+    numbers?: { golden_agreement?: string; coverage?: string; precision?: string; target?: string; training_rows?: string; golden_rows?: string; rows_imported?: string; steps?: string; loss_start?: string; loss_end?: string; gate_right?: string; gate_answered?: string; gate_questions?: string };
     has_readme?: boolean;
     files?: string[];
   };

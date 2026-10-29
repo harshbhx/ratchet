@@ -195,7 +195,7 @@ What [`create_vm.sh`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/cr
 
 <Steps>
 
-1. Refuses to go on if a VM with the name already exists (`ratchet-demo` by default).
+1. Refuses to go on if a VM with the name already exists (`ratchet-host` by default).
 2. Finds the first subnet in the project (`nebius vpc subnet list`), unless you set `NEBIUS_SUBNET_ID`.
 3. Creates a 30 GiB `network_ssd` boot disk from the image family `ubuntu24.04-driverless`. The disk is created on its own, so it survives deleting the VM; you delete it yourself at teardown.
 4. Creates the VM with that disk, a **static** public IP (kept while the VM is stopped) and [`cloud-init.yaml`](https://github.com/harshbhx/ratchet/blob/main/deploy/vm/cloud-init.yaml) as user data.
@@ -444,9 +444,9 @@ On Dec 16, or whenever judging ends. Deleting the VM does **not** delete its boo
 # Optional: keep a last copy of the ledger
 scp ubuntu@<ip>:/var/backups/ratchet/*.db.gz ./ratchet-backups/
 
-VM_ID=$(nebius compute instance get-by-name --parent-id $NEBIUS_PROJECT_ID --name ratchet-demo --format json | jq -r .metadata.id)
+VM_ID=$(nebius compute instance get-by-name --parent-id $NEBIUS_PROJECT_ID --name ratchet-host --format json | jq -r .metadata.id)
 nebius compute instance delete --id $VM_ID
-nebius compute disk list --parent-id $NEBIUS_PROJECT_ID     # find ratchet-demo-boot (verify the flags on day 1)
+nebius compute disk list --parent-id $NEBIUS_PROJECT_ID     # find ratchet-host-boot (verify the flags on day 1)
 nebius compute disk delete --id <disk ID>
 ```
 
