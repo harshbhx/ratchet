@@ -44,7 +44,7 @@ it can be taken back without warning.
 
 ## Round 2 as one detached job
 
-`modal_train.py` runs the same `train_lora.py` and `fast_generate.py` on a borrowed GPU, as one detached pipeline (train, then answer the
+`modal_train.py` is the job script used for the round 2 training run on a rented GPU (it needs a Modal account; any GPU that meets `deploy/train-versions.txt` works). It runs the same `train_lora.py` and `fast_generate.py` on a borrowed GPU, as one detached pipeline (train, then answer the
 exam) that survives the laptop being off, with a cost cap enforced in code and a read-only progress endpoint (`modal_status_app.py`). Put
 `train_lora.py`, `fast_generate.py`, `golden.jsonl` and the merged training file (`train_r2.jsonl`, see
 `evidence/text2sql-round2/data/merge_and_check.py`) in one folder with these two scripts, then:
