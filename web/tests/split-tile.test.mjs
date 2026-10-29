@@ -18,10 +18,22 @@ const persistent = (over = {}) => ({
 });
 const text = (t) => `${t.value} ${t.label} ${t.note}`;
 
-test("the process's own savings come first", () => {
+test("the Worker's cumulative totals come first, never this process's own counter", () => {
   const t = m.splitTile(stats, persistent(), costs);
+  assert.equal(t.kind, "since");
+  assert.equal(t.value, "4");
+});
+
+test("this process's own counter is used only when the totals are unreachable", () => {
+  const t = m.splitTile(stats, null, costs);
   assert.equal(t.kind, "process");
   assert.match(t.label, /saved by the random split/);
+});
+
+test("totals with no split answers say so in a sentence, not as a zero", () => {
+  const t = m.splitTile(stats, persistent({ requests_split: 0, requests_teacher: 19 }), costs);
+  assert.equal(t.kind, "listed");
+  assert.match(t.note, /Ultra answered all of the 19 live requests since 29 Oct 2026; the random split has not sent one/);
 });
 
 test("after a restart the Worker's totals say how many the hosted Nano answered, with the date and no invented saving", () => {

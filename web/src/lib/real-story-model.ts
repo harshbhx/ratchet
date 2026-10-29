@@ -62,22 +62,14 @@ export interface SplitTile {
 }
 
 /**
- * The "random split" tile, never a bare dash. First the process's own savings (`/ratchet/stats`); a restart empties that, so
- * next the Worker's totals (`/ratchet/stats/persistent`: the count of requests the hosted Nano answered since the first record,
- * and the cost of all calls; they hold no all-Ultra baseline, so no saving is shown from them); last the per-call list prices.
+ * The "random split" tile, never a bare dash. First the Worker's cumulative totals (`/ratchet/stats/persistent`: how many requests the
+ * hosted Nano answered since the first record, and the cost of all calls; no saving is shown from them, the baseline is for all
+ * requests, not the split's). Only when those are unreachable, this process's own counter (`/ratchet/stats`); else the per-call list
+ * prices. A process's numbers since its last restart are never the headline when the totals exist.
  */
 export function splitTile(stats: Stats | null | undefined, persistent: Persistent | null | undefined, costs: RealCosts): SplitTile {
   const fmt = (v: number, digits: number) => `$${v.toFixed(digits)}`;
   const live = demoSavings(stats);
-  if (live) {
-    return {
-      kind: "process",
-      value: fmt(live.savedUsd, live.savedUsd < 1 ? 4 : 2),
-      label: `saved by the random split${live.savingsPct != null ? `, ${Math.round(live.savingsPct * 100)}% below all-Ultra` : ""}`,
-      note: `${live.requests} requests answered by the hosted Nano, picked at random: ${fmt(live.costUsd, 4)} paid against ${fmt(live.baselineUsd, 4)} all-Ultra.`,
-      badge: "Live",
-    };
-  }
   if (persistent && persistent.totals.requests_split > 0) {
     const t = persistent.totals;
     const n = t.requests_split;
@@ -89,12 +81,24 @@ export function splitTile(stats: Stats | null | undefined, persistent: Persisten
       badge: "Live",
     };
   }
+  if (live && !persistent) {
+    return {
+      kind: "process",
+      value: fmt(live.savedUsd, live.savedUsd < 1 ? 4 : 2),
+      label: `saved by the random split${live.savingsPct != null ? `, ${Math.round(live.savingsPct * 100)}% below all-Ultra` : ""}`,
+      note: `${live.requests} requests answered by the hosted Nano, picked at random: ${fmt(live.costUsd, 4)} paid against ${fmt(live.baselineUsd, 4)} all-Ultra.`,
+      badge: "Live",
+    };
+  }
   const ratio = callRatio(costs, "triage");
   return {
     kind: "listed",
     value: `${ratio}x`,
     label: "cheaper per triage call: the hosted Nano against Ultra",
-    note: "List prices per call. The gateway's own counter of what the random split saved appears here once it has served a request.",
+    note:
+      persistent && persistent.totals.requests > 0
+        ? `List prices per call. Ultra answered ${persistent.totals.requests_teacher >= persistent.totals.requests ? "all" : String(persistent.totals.requests_teacher)} of the ${persistent.totals.requests} live requests since ${fmtDay(persistent.since ?? "")}; the random split has not sent one to the hosted Nano yet.`
+        : "List prices per call. The count of requests the random split sent to the hosted Nano appears here once the live totals are available.",
     badge: "Measured",
   };
 }

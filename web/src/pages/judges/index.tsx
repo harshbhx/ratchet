@@ -139,8 +139,8 @@ function GatewayLine() {
       <span>
         Live chapters read the gateway serving this page: {stats.mode === "mock" ? "a mock gateway" : "a live gateway"}
         {stats.totals.requests > 0
-          ? `, day ${fmtInt(stats.day)}, ${fmtInt(stats.totals.requests)} requests since it started.`
-          : ". It has not answered a request since it last started, so those chapters show dated, measured runs instead."}
+          ? `, day ${fmtInt(stats.day)}. The totals for all traffic since the first record are in the live strip.`
+          : ". Its own ledger starts empty after every restart, so those chapters show dated, measured runs where it has nothing yet."}
       </span>
     </p>
   );

@@ -352,6 +352,8 @@ export interface Persistent {
     errors: number;
     /** Failed model calls and the gateway's own 5xx only. Absent from a Worker that has not started counting it. */
     server_errors?: number;
+    /** What the same requests would have cost all-Ultra, cumulative. Absent from a Worker that has not started counting it. */
+    baseline_usd?: number;
     scout_runs: number;
   };
 }
@@ -365,9 +367,11 @@ export function parsePersistent(raw: unknown): Persistent | null {
   if (r.recorded !== true || typeof r.since !== "string" || typeof r.totals !== "object" || r.totals === null) return null;
   const t = r.totals as Record<string, unknown>;
   const totals = {} as Persistent["totals"];
-  if (t.server_errors !== undefined) {
-    if (typeof t.server_errors !== "number" || !Number.isFinite(t.server_errors) || t.server_errors < 0) return null;
-    totals.server_errors = t.server_errors;
+  for (const k of ["server_errors", "baseline_usd"] as const) {
+    if (t[k] === undefined) continue;
+    const v = t[k];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
+    totals[k] = v;
   }
   for (const k of TOTAL_KEYS) {
     const v = t[k];
@@ -380,6 +384,37 @@ export function parsePersistent(raw: unknown): Persistent | null {
 /** Does the live total have something to say? A recorded store with nothing counted yet is no better than an empty one: show the snapshot. */
 export function hasLiveTraffic(p: Persistent | null): p is Persistent {
   return p !== null && (p.totals.requests > 0 || p.totals.scout_runs > 0);
+}
+
+export interface AllToDate {
+  requests: number;
+  usd: number;
+  /** One sentence that says exactly what is added up. */
+  line: string;
+}
+
+/**
+ * "All real traffic to date": the Worker's cumulative totals plus the dated runs that happened before it began to count (the live
+ * smoke run and the recorded Scout runs), each named in the sentence so the sum can be checked by eye. Null without totals.
+ */
+export function allToDate(p: Persistent | null, d: MeasuredData | null): AllToDate | null {
+  if (!hasLiveTraffic(p)) return null;
+  const parts = [`${fmtInt(p.totals.requests)} live requests since ${fmtDay(p.since ?? "")}`];
+  let requests = p.totals.requests;
+  let usd = p.totals.cost_usd;
+  if (d && d.smoke.requests > 0) {
+    parts.push(`${fmtInt(d.smoke.requests)} in the ${fmtDay(d.smoke.date)} live smoke run`);
+    requests += d.smoke.requests;
+    usd += d.smoke.total_usd;
+  }
+  const runs = d?.scout.runs ?? [];
+  if (d && runs.length > 0) {
+    const calls = runs.reduce((n, r) => n + r.llm_calls, 0);
+    parts.push(`${fmtInt(calls)} model calls in ${runs.length} recorded Scout runs (${fmtRange(d.scout.date, d.scout.date_end)})`);
+    requests += calls;
+    usd += runs.reduce((n, r) => n + r.cost_usd, 0);
+  }
+  return { requests, usd, line: `All real traffic to date: ${fmtInt(requests)} model requests and ${fmtUsd(usd)} on Token Factory = ${parts.join(" + ")}.` };
 }
 
 export interface LiveLine {

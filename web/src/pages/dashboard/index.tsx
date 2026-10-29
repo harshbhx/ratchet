@@ -192,9 +192,10 @@ function Header({
                   <dd className="font-medium text-ink-2 tabular">{stats.day}</dd>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <dt className="sr-only">Total requests</dt>
+                  <dt className="sr-only">Requests this server instance has answered</dt>
+                  <span>this server instance:</span>
                   <dd className="font-medium text-ink-2 tabular">{fmtInt(stats.totals.requests)}</dd>
-                  <span>requests since it started</span>
+                  <span>since its last start; all traffic is in the totals below</span>
                 </div>
               </>
             )}
