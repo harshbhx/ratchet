@@ -1541,7 +1541,11 @@ def test_both_cloudflare_workers_pass_the_visitor_ip():
     for worker in ("cloudflare", "cloudflare-live"):
         src = (ROOT / "deploy" / worker / "src" / "index.ts").read_text(encoding="utf-8")
         # The live Worker's defaults live in containerenv.ts (the container's environment, testable on its own).
-        defaults = (ROOT / "deploy" / worker / "src" / "containerenv.ts").read_text(encoding="utf-8") if worker == "cloudflare-live" else src
+        defaults = (
+            (ROOT / "deploy" / worker / "src" / "containerenv.ts").read_text(encoding="utf-8")
+            if worker == "cloudflare-live"
+            else src
+        )
         assert 'RATCHET_TRUST_PROXY: "1"' in defaults, worker
         if worker == "cloudflare-live":
             # The live Worker takes the address from visitor.ts: the proxy's only with the edge token, else cf-connecting-ip.
