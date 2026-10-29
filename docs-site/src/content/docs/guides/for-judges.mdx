@@ -1,60 +1,157 @@
 ---
 title: For judges
-description: "A ten-minute tour for an evaluator of Ratchet: what to open first, a five-step try-it path, what is real and what is not yet, how to verify a result with two commands, and the honest limits."
+description: "The judges pack: the pitch, a five-minute path, the proof with links and one command per claim, every link in one place, the hackathon checklist, what is real and what is not yet, and what it cost."
 ---
 
-import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Aside, LinkCard, CardGrid, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Summary from '../../../components/Summary.astro';
 import Who from '../../../components/Who.astro';
 import PathCard from '../../../components/PathCard.astro';
 import PathGrid from '../../../components/PathGrid.astro';
-import Stepper from '../../../components/ui/Stepper.astro';
 
-<Summary>You have ten minutes. Open the live site, run one Scout question, look at the dashboard, then read the proof and results pages and run one command to check a number yourself. This page says what each step shows and what is real.</Summary>
+<Summary>You have five minutes. Send one real request on the live site, read the exam results, run one command against an evidence folder, and watch the video. This page puts the proof, every link and the honest limits in one place.</Summary>
 
-Short on time? Start with [the video](https://video.ratchet.dualmindlab.tech/?from=docs) (2:59, public on YouTube), then come back for the steps below.
+<div class="rt-callout rt-callout--note">
 
-## Where things are
+**Built on NVIDIA Nemotron and Nebius: every model call on the live site runs on Nebius Token Factory, the adapter was [retrained on Nebius AI Cloud](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius), and the student was served from a Nebius Serverless Endpoint [in a measured test](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius).** The live site is not connected to that endpoint.
 
-<PathGrid cols={2} label="The live gateway and the code">
-  <PathCard title="Live gateway" href="https://live.ratchet.dualmindlab.tech" icon="spark" eyebrow="Start here" description="Real Token Factory calls under spend limits. The teacher answers every request for now; no trained student is served yet." />
-  <PathCard title="The story site" href="https://ratchet.dualmindlab.tech" icon="search" tone="neutral" eyebrow="Live gateway" description="How Ratchet works, why it is license-clean and why releases are safe. Its dashboard and Scout read the live gateway." />
-  <PathCard title="The code" href="https://github.com/harshbhx/ratchet" icon="repo" tone="neutral" eyebrow="Apache-2.0" description="The gateway, Night School, the release gate and the tests, on GitHub." />
+</div>
+
+Ratchet is an OpenAI-compatible gateway for license-clean distillation on open models. A small NVIDIA Nemotron 3 Nano 4B student answers first. When it is unsure, the request goes to the teacher, Nemotron 3 Ultra on Nebius Token Factory, and the answer is logged with the teacher's name and license; closed models are refused as teachers, in code. Night School is built to train a new student from those answers and release it only if it passes a statistical gate. Measured: a Nano adapter taught by Ultra goes from 12.8% to 39.0% on a text-to-SQL exam it never saw, for about $17 on record, and every score recomputes from the saved answers.
+
+<PathGrid cols={3} label="Three ways in">
+  <PathCard title="Try it live" href="https://ratchet.dualmindlab.tech/live" icon="spark" eyebrow="Start here" description="Send a real request. Nemotron 3 Ultra on Nebius Token Factory answers; no key needed." />
+  <PathCard title="Check the evidence" href="https://github.com/harshbhx/ratchet/tree/main/evidence" icon="check" tone="neutral" eyebrow="Run a command" description="Saved answers, logs and signed records, with one command per claim." />
+  <PathCard title="Watch the video" href="https://video.ratchet.dualmindlab.tech/?from=docs" icon="start" tone="rented" eyebrow="2:59" description="The whole project in under three minutes." />
 </PathGrid>
 
-These docs are at https://docs.ratchet.dualmindlab.tech. The main site has a [judges' console](https://ratchet.dualmindlab.tech/judges) that puts the same path, the results and the checks to run on one page.
+## Check it in 5 minutes
 
-Adapters and data on Hugging Face: [text-to-SQL adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql), [the same recipe retrained on Nebius AI Cloud](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius), [tool-calling adapter](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall), [text-to-SQL exams and every answer](https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams), the tool-calling [hard exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard) and [BFCL exam](https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl), the [exam explorer](https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer) (the tool-calling answers, question by question) and [recorded Scout runs](https://huggingface.co/spaces/harshbhx/ratchet-scout). Evidence folders in the repository: `evidence/live-smoke-2026-10-23`, `evidence/scout`, `evidence/text2sql-round2`, `evidence/text2sql-exam2`, `evidence/toolcall`.
+<Steps>
 
-## Try it in five steps
+1. **Use it.** Open [ratchet.dualmindlab.tech/live](https://ratchet.dualmindlab.tech/live) and send a real request. A badge says who answered. Send a few at most; your text is not stored.
 
-<figure class="rt-diagram">
+2. **Read the exam results.** The proof tabs below, or [Results](/guides/results/).
 
-```mermaid
-flowchart LR
-  S1(["1 Story page"]) ==> S2(["2 Scout"])
-  S2 ==> S3(["3 Dashboard"])
-  S3 ==> S4["4 Proof"]
-  S4 ==> S5["5 Results"]
-```
+3. **Check one result.** Clone the repository and run one command against an evidence folder:
 
-<figcaption>
+   ```bash
+   git clone https://github.com/harshbhx/ratchet.git && cd ratchet && pip install -e ".[dev]"
+   python scripts/text2sql/exam_numbers.py --check
+   ```
 
-**Reading this diagram.** The three rounded steps are on the live site and the two square ones are in these docs. The order goes from the idea, to a running system, to the books, to evidence you can recompute, to the measured text-to-SQL (headline) and tool-calling adapters, trained on synthetic data. Each step is about two minutes; the walk-through below has the detail.
+4. **Watch the video** (2:59): [video.ratchet.dualmindlab.tech](https://video.ratchet.dualmindlab.tech/?from=docs).
 
-</figcaption>
-</figure>
+</Steps>
 
-<Stepper
-  label="A ten-minute tour"
-  steps={[
-    { title: 'The story page', body: 'Open [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech). Look at "The catch" (why closed models cannot be distilled) and "One way only" (the release gate).' },
-    { title: 'Scout', body: 'Open `/scout`, ask a question and watch five agents work. Each call shows who answered it, what it cost and what the teacher alone would have cost.\n\nThe planner and the writer are pinned to the teacher by design; triage and reader calls are the repetitive ones the student learns to take over.', tone: 'owned' },
-    { title: 'The dashboard', body: 'Open `/dashboard`. Read the by-task table, the versions with their signed bills of materials, the release log and the economics panel (savings per token and by GPU-hours, the break-even, a recommendation).\n\nPaste an email and a card number into the redactor in the trust panel.' },
-    { title: 'Proof you can run', body: 'Read [Proof you can run](/guides/proof/): commands that recompute a number from a signed record.' },
-    { title: 'The results', body: 'Read [Results](/guides/results/): the measured text-to-SQL (headline) and tool-calling adapters, trained on synthetic data (see [Text-to-SQL](/guides/text-to-sql/)).' },
-  ]}
-/>
+For the console version of this page, with live chapters read from the gateway, open the [judges page](https://ratchet.dualmindlab.tech/judges). A one-page copy for GitHub is [JUDGES.md](https://github.com/harshbhx/ratchet/blob/main/JUDGES.md).
+
+## The proof, with links
+
+Every number is read from saved files in the repository. Commands are from [Check it yourself](https://github.com/harshbhx/ratchet/blob/main/docs/VERIFY.md) and need no GPU and no key.
+
+<Tabs>
+<TabItem label="Models">
+
+| What | Result | Evidence | Check it |
+|---|---|---|---|
+| Text-to-SQL exams (22 to 24 Oct) | Adapter **39.0%** / **33.0%**; untrained 12.8% / 12.5%; teacher (Ultra) 25.6% / 15.0% | [round 1](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round1), [round 2](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2), [exam 2](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-exam2) | `python scripts/text2sql/exam_numbers.py --check` |
+| Tool calling (24 Oct) | **90.7%** hard exam (Ultra 91.3%), **80.3%** BFCL | [evidence/toolcall](https://github.com/harshbhx/ratchet/tree/main/evidence/toolcall) | `python scripts/toolcall_results.py --check` |
+| Scout runs (23 to 24 Oct) | Three recorded live runs, about $0.02 each | [evidence/scout](https://github.com/harshbhx/ratchet/tree/main/evidence/scout), [replay](https://huggingface.co/spaces/harshbhx/ratchet-scout) | replay in the browser |
+
+</TabItem>
+<TabItem label="On Nebius">
+
+| What | Result | Evidence | Check it |
+|---|---|---|---|
+| Retrain on Nebius AI Cloud (27 Oct) | **40.7% / 34.5%**: the original result reproduces; about **$2.16** | [evidence/text2sql-round2-nebius](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius) | `python evidence/text2sql-round2-nebius/score_nebius.py verify` |
+| Endpoint speed tests (27 to 28 Oct) | Cold start about **7.2 to 7.6 min**, restart **7.1 min**; 16 users: p50 **1.6 s** / **1.2 s** | [evidence/student-endpoint-nebius](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius) | the folder's `results/` |
+| Night School on Nebius (28 Oct) | Gate **rejected**: 81.8% against 95% | [evidence/nightschool-nebius](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius) | the folder's README and logs |
+
+</TabItem>
+<TabItem label="Signed and priced">
+
+| What | Result | Evidence | Check it |
+|---|---|---|---|
+| Signed BOM (signed 29 Oct, after the run) | Ed25519 key `81b0a086250a81d0` | [evidence/keys](https://github.com/harshbhx/ratchet/tree/main/evidence/keys), [signed BOM](https://github.com/harshbhx/ratchet/blob/main/evidence/nightschool-nebius/ratchet_bom.signed.json) | `python -m ratchet.bom verify evidence/nightschool-nebius/ratchet_bom.signed.json --public-key Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc= --notice evidence/nightschool-nebius/NOTICE.md` |
+| Prices verified (29 Oct) | Token Factory list prices match the config | [evidence/day1](https://github.com/harshbhx/ratchet/tree/main/evidence/day1) | read `day1.json` |
+| Live smoke run (23 Oct) | 20 real requests, about $0.01 | [evidence/live-smoke-2026-10-23](https://github.com/harshbhx/ratchet/tree/main/evidence/live-smoke-2026-10-23) | `python -m ratchet.liverun verify evidence/live-smoke-2026-10-23` |
+
+</TabItem>
+</Tabs>
+
+## All the links
+
+### Live and video
+
+<PathGrid cols={3} label="Live links">
+  <PathCard title="Story site" href="https://ratchet.dualmindlab.tech" icon="book" tone="neutral" description="How Ratchet works." />
+  <PathCard title="Send a request" href="https://ratchet.dualmindlab.tech/live" icon="spark" eyebrow="/live" description="A real call to Token Factory." />
+  <PathCard title="Judges page" href="https://ratchet.dualmindlab.tech/judges" icon="check" tone="neutral" eyebrow="/judges" description="The console version of this page." />
+  <PathCard title="Dashboard" href="https://ratchet.dualmindlab.tech/dashboard" icon="chart" tone="neutral" eyebrow="/dashboard" description="Operator console on the live gateway." />
+  <PathCard title="Scout" href="https://ratchet.dualmindlab.tech/scout" icon="search" tone="rented" eyebrow="/scout" description="A multi-agent research run. The access code for extra runs is on the Devpost page." />
+  <PathCard title="Video" href="https://video.ratchet.dualmindlab.tech/?from=docs" icon="start" tone="rented" eyebrow="2:59" description="Public on YouTube." />
+</PathGrid>
+
+### Docs
+
+<CardGrid>
+  <LinkCard title="Docs home" href="/" />
+  <LinkCard title="Quickstart" href="/guides/quickstart/" />
+  <LinkCard title="Proof you can run" href="/guides/proof/" />
+  <LinkCard title="llms.txt" href="https://docs.ratchet.dualmindlab.tech/llms.txt" description="Every page as plain text. The story site has one too: ratchet.dualmindlab.tech/llms.txt." />
+</CardGrid>
+
+### Code
+
+<CardGrid>
+  <LinkCard title="GitHub repository" href="https://github.com/harshbhx/ratchet" />
+  <LinkCard title="README" href="https://github.com/harshbhx/ratchet/blob/main/README.md" />
+  <LinkCard title="Apache-2.0 license" href="https://github.com/harshbhx/ratchet/blob/main/LICENSE" />
+  <LinkCard title="Changelog" href="https://github.com/harshbhx/ratchet/blob/main/CHANGELOG.md" />
+  <LinkCard title="Latest release" href="https://github.com/harshbhx/ratchet/releases/latest" />
+  <LinkCard title="Check it yourself (VERIFY.md)" href="https://github.com/harshbhx/ratchet/blob/main/docs/VERIFY.md" />
+</CardGrid>
+
+### Evidence folders
+
+[`text2sql-round1`](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round1) · [`text2sql-round2`](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2) · [`text2sql-exam2`](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-exam2) · [`toolcall`](https://github.com/harshbhx/ratchet/tree/main/evidence/toolcall) · [`text2sql-round2-nebius`](https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius) · [`student-endpoint-nebius`](https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius) · [`nightschool-nebius`](https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius) · [`keys`](https://github.com/harshbhx/ratchet/tree/main/evidence/keys) · [`day1`](https://github.com/harshbhx/ratchet/tree/main/evidence/day1) · [`live-smoke-2026-10-23`](https://github.com/harshbhx/ratchet/tree/main/evidence/live-smoke-2026-10-23) · [`scout`](https://github.com/harshbhx/ratchet/tree/main/evidence/scout) · [`hosted-nano`](https://github.com/harshbhx/ratchet/tree/main/evidence/hosted-nano)
+
+### Hugging Face
+
+<CardGrid>
+  <LinkCard title="The collection" href="https://huggingface.co/collections/harshbhx/ratchet" />
+  <LinkCard title="ratchet-nemotron-nano-4b-text2sql" href="https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql" />
+  <LinkCard title="ratchet-nemotron-nano-4b-toolcall" href="https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall" />
+  <LinkCard title="ratchet-nemotron-nano-4b-text2sql-nebius" href="https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius" description="The Nebius retrain." />
+  <LinkCard title="Text-to-SQL exams and answers" href="https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams" />
+  <LinkCard title="Tool-calling hard exam" href="https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard" />
+  <LinkCard title="BFCL exam" href="https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl" />
+  <LinkCard title="Scout replay Space" href="https://huggingface.co/spaces/harshbhx/ratchet-scout" />
+  <LinkCard title="Tool-calling explorer Space" href="https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer" />
+</CardGrid>
+
+### Nebius and NVIDIA: what runs where
+
+| Where | What runs there |
+|---|---|
+| Nebius Token Factory | Every model call on the live site: the teacher (Nemotron 3 Ultra), the hosted Nano for the random split, the judge |
+| Nebius AI Cloud | The round-2 retrain (27 Oct) and the Night School training job (28 Oct), as Serverless Jobs on a spot L40S; the Serverless Endpoint for the speed tests and the Night School adapter; a CPU VM for the Night School gateway; an Object Storage bucket. By hand; the endpoint and VM were deleted afterwards |
+| NVIDIA Nemotron | Ultra (teacher), Nano 4B (student, with a LoRA adapter), hosted Nano 30B (random split) |
+| Cloudflare | The story site, the docs and the live gateway, CPU only |
+| A borrowed GPU | Training of the two original adapters |
+
+## Hackathon checklist
+
+| | Requirement | Link |
+|---|---|---|
+| ✓ | Nebius Token Factory and AI Cloud, with NVIDIA open models | [Where everything runs](/reference/where-it-runs/) |
+| ✓ | Video, 2:59 | [video](https://video.ratchet.dualmindlab.tech/?from=docs) |
+| ✓ | Public repository with license and README | [repository](https://github.com/harshbhx/ratchet), [Apache-2.0](https://github.com/harshbhx/ratchet/blob/main/LICENSE), [README](https://github.com/harshbhx/ratchet/blob/main/README.md) |
+| ✓ | Working URL | [ratchet.dualmindlab.tech](https://ratchet.dualmindlab.tech), [/live](https://ratchet.dualmindlab.tech/live) |
+| ✓ | Feedback on Nebius and NVIDIA | [README, Feedback](https://github.com/harshbhx/ratchet#feedback-on-nebius-and-nvidia) |
+
+The track is the one chosen on the Devpost page.
 
 ## What is real and what is not yet
 
@@ -130,6 +227,21 @@ Every answer on Scout and the dashboard carries a badge:
 
 Scout has a daily run cap. If it is used up you get a polite refusal; evaluators receive an access code with their instructions, never on a public page.
 
+## What it cost
+
+All of these are estimates recorded by the scripts, not invoices; the Nebius bill decides.
+
+| Item | About |
+|---|---|
+| Labelling by the teacher, round 1 / round 2 | $2.87 + $9.18 |
+| Nebius retrain, 27 Oct (2.73 GPU-hours, failed attempts included) | $2.16 |
+| Endpoint speed tests, 27 to 28 Oct | $0.67 |
+| Night School run, 28 Oct | about 2.7 GPU-hours, at most about $4 at list prices |
+| One real request on the live site | $0.0002 |
+| One Scout run | $0.02 |
+
+Request and Scout costs are from the [29 Oct day-1 check](https://github.com/harshbhx/ratchet/tree/main/evidence/day1). The GPU-hour rate used in estimates does not appear on the price list Token Factory serves and is unverified.
+
 ## Verify a result with two commands
 
 On the repository as cloned, these two commands recompute the published exam numbers from the saved answers:
@@ -139,7 +251,7 @@ python scripts/text2sql/exam_numbers.py --check
 python scripts/toolcall_results.py --check
 ```
 
-For a real signed bill of materials from your own gateway, `python -m ratchet.stats check bom.json --public-key <key>` recomputes its certificate from the signed counts, and `python -m ratchet.bom verify bom.json --public-key <key>` checks only the signature and the data lineage. No real BOM is published in the repository yet. The [proof page](/guides/proof/) walks through every check; only the exam checks run on real files, and the others on documents the tests write with mock models.
+For a real signed bill of materials from your own gateway, `python -m ratchet.stats check bom.json --public-key <key>` recomputes its certificate from the signed counts, and `python -m ratchet.bom verify bom.json --public-key <key>` checks only the signature and the data lineage. The Night School BOM, signed on 29 Oct 2026, is published in the repository (see the proof tabs above). The [proof page](/guides/proof/) walks through every check; only the exam checks run on real files, and the others on documents the tests write with mock models.
 
 ## What to look at in the code
 
