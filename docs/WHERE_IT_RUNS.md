@@ -24,7 +24,7 @@ This page says, for every part of Ratchet, where it runs **today** and where it 
 
 ## The router is just CPU
 
-The gateway does no model inference. It checks keys, routes a request, calls the student and teacher over HTTP, writes the [ledger](https://docs.ratchet.dualmindlab.tech/guides/glossary/#ledger) and serves the web pages, so a 2 vCPU, 8 GB machine is enough and costs about six cents an hour (estimate, below). That is why it already runs on Cloudflare's CPU-only containers and on a laptop. Only two things need a GPU: **training** (Night School, a job that runs for under an hour a night and then stops) and **serving the student** (an endpoint that bills for every hour it is on, so it should be stopped when idle). Without a student endpoint the whole system still works: the teacher answers every call, which is exactly how the live gateway runs today.
+The gateway does no model inference. It checks keys, routes a request, calls the student and teacher over HTTP, writes the [ledger](https://docs.ratchet.dualmindlab.tech/guides/glossary/#ledger) and serves the web pages, so a 2 vCPU, 8 GB machine is enough and costs about six cents an hour (estimate, below). That is why it already runs on Cloudflare's CPU-only containers and on a laptop. Only two things need a GPU: **training** (Night School, a job that runs for under an hour a night and then stops) and **serving the student** (an endpoint that bills for every hour it is on, so it should be stopped when idle). Without a student endpoint the whole system still works: the teacher answers every call except the live site's random 40% split to the hosted Nano 30B (a quarter of those re-checked by Ultra), which is how the live gateway runs today.
 
 ## One command to host it all on Nebius
 

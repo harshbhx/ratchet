@@ -41,7 +41,7 @@ flowchart TB
 
 ## If you pay for LLM calls
 
-Your bill is price per token times traffic. Much of that traffic is the same narrow task again and again. Ratchet moves the easy share of it to a small model and keeps the hard share on the teacher. Every request records what it cost and what the teacher alone would have cost, so the saving is a measured number, not a promise.
+Your bill is price per token times traffic. Much of that traffic is the same narrow task again and again. Ratchet moves the easy share of it to a small model and keeps the hard share on the teacher. Every request records what it cost and what the teacher alone would have cost, so the saving can be measured, not promised (no live saving has been measured yet).
 
 The catch is that a self-hosted model runs on a GPU that bills by the hour, busy or idle. So Ratchet counts both views:
 

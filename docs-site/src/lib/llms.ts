@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { getCollection } from 'astro:content';
 import { glossaryMarkdown } from './glossary';
+import { evaluateExpressions, pageScope } from './llms-eval';
 
 const SITE = 'https://docs.ratchet.dualmindlab.tech/';
 
@@ -71,6 +72,14 @@ function clean(body: string): string {
     .trim();
 }
 
+/** A page's body with its `{expression}` parts replaced by their values, when the page computes any from its own data. */
+function withValues(e: Entry): string {
+  const body = (e.body ?? '').replace('<Glossary />', glossaryMarkdown());
+  if (!/^export const /m.test(body)) return body;
+  const scope = pageScope(body, new URL(`../content/docs/${e.id}.mdx`, import.meta.url));
+  return evaluateExpressions(body, scope);
+}
+
 type Entry = { id: string; data: { title: string; description?: string }; body?: string };
 
 async function pages(): Promise<Entry[]> {
@@ -118,7 +127,7 @@ export async function llmsFull(site?: URL): Promise<string> {
   const out = ['# Ratchet docs: full text', '', `> ${SUMMARY}`, ''];
   for (const s of await ordered()) {
     for (const e of s.entries) {
-      out.push('---', '', `# ${e.data.title}`, '', `Source: ${url(e.id, site)}`, '', clean((e.body ?? '').replace('<Glossary />', glossaryMarkdown())), '');
+      out.push('---', '', `# ${e.data.title}`, '', `Source: ${url(e.id, site)}`, '', clean(withValues(e)), '');
     }
   }
   // The generated HTTP API pages come from the OpenAPI schema, not from a content file.

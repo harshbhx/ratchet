@@ -239,7 +239,7 @@ Ratchet measures the real thing once it runs: `python -m ratchet.cost report` (o
 |---|---|---|
 | Training run | L40S at $1.35/GPU-hour, 30–60 min per night | ~$0.70–1.35 per night (estimate) |
 | Student endpoint | L40S at $1.35/GPU-hour, only while testing or recording | ~$32 per full day if left on (estimate) |
-| Teacher calls | Ultra $1 / $3 per 1M tokens (list price in `ratchet/config.py`, research notes, 2026-10-25; unverified); ~150 input + ~380 output tokens per call | ~$1.30 per 1,000 calls |
+| Teacher calls | Ultra $1 / $3 per 1M tokens (list price in `ratchet/config.py`, checked against the Token Factory price list on 29 Oct 2026); ~150 input + ~380 output tokens per call | ~$1.30 per 1,000 calls |
 | Judge | Super $0.30 / $0.90 (same source); only for free-text tasks | small |
 | Hackathon total | 6–8 training runs, endpoint on a few hours a day, ~$20–30 of teacher calls | **~$35–75** (estimate) |
 

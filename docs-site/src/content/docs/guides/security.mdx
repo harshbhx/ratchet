@@ -322,7 +322,7 @@ The project keeps a list of rules that code and tests enforce. The ones about th
 - **No training while a release is in flight.** Nothing trains while a version is in shadow or canary.
 - **Precision is measured on <Term t="held-out">held-out</Term> data.** The threshold is calibrated on even golden rows and precision measured on odd rows.
 - **A student failure never fails the request.** It falls back to the teacher. A teacher failure on the serving path returns a mapped status (400 or 429 for client causes, 502, 503 or 504 otherwise).
-- **Model ids and prices are unverified until the day-1 check passes** with a real key.
+- **Model ids and per-token prices were checked on 29 Oct 2026** (`scripts/day1_check.py` passed); the GPU-hour rate is still unverified.
 - **Pinned tasks never become training data** and never reach the student.
 - **The Scout budget guard stays on in live mode.** Every Scout run goes through the guard before it starts and adds its spend after it ends, also on failure.
 
