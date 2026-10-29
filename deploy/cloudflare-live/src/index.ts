@@ -48,6 +48,7 @@ import { DurableObject } from "cloudflare:workers";
 import { PERSISTENT_PATH, claimPull, isPaidCall, isStreamedRun, parseSnapshot, readView, recordSnapshot, type CounterStore, type PublicView, type Snapshot } from "./counters";
 import { videoRedirect } from "./video";
 import { bumpCount, dailyLimits, forwardedHeaders, peekCount, takeQuota, usesDemoKey, visitorIp, type QuotaStore } from "./visitor";
+import { humanAnswer, withoutHumanCookie } from "./human";
 import { guardPaidCall, siteKeyAnswer, turnstileSettings, withoutTokenParam, type GuardNamespace } from "./turnstile";
 import { API_WAIT_MS, READ_RETRY_MS, WAKE_AFTER_MS, isRetryableRead, warmingFor, warmingJson, warmingPage, wantsPage } from "./waking";
 
@@ -244,12 +245,31 @@ function withDemoKey(request: Request, env: Env, ip: string | null): Request {
   const url = new URL(request.url);
   const headers = forwardedHeaders(request.headers, ip);
   if (usesDemoKey(url.pathname, headers)) headers.set("authorization", `Bearer ${clean(env.DEMO_API_KEY)}`);
+  // The human cookie is for this Worker only; the judge cookie and any other travel on.
+  const rest = withoutHumanCookie(headers.get("cookie"));
+  if (rest === null) headers.delete("cookie");
+  else headers.set("cookie", rest);
   // The human-check token (header or Scout's query parameter) was spent at the top of fetch; the gateway never sees it.
   return new Request(withoutTokenParam(url), new Request(request, { headers }));
 }
 
+/** The same answer with the human-check cookie added (an answer from the container is immutable, so it is copied; a streamed body passes through). */
+function withCookie(answer: Response, cookie: string): Response {
+  const headers = new Headers(answer.headers);
+  headers.append("set-cookie", cookie);
+  return new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // A token that passed the human check earns the visit's cookie (human.ts); it rides on whatever answer this request gets, a refusal included.
+    const out: { cookie?: string } = {};
+    const answer = await handle(request, env, ctx, out);
+    return out.cookie ? withCookie(answer, out.cookie) : answer;
+  },
+};
+
+async function handle(request: Request, env: Env, ctx: ExecutionContext, out: { cookie?: string }): Promise<Response> {
     const url = new URL(request.url);
     // The demo video's short link, answered here: it never wakes the container.
     const video = videoRedirect(url.pathname);
@@ -260,10 +280,12 @@ export default {
     const settings = turnstileSettings(env);
     // The widget's public site key, for the web app: answered here, never wakes the container.
     if (request.method === "GET" && url.pathname === "/ratchet/turnstile") return siteKeyAnswer(settings);
+    // Is this visitor already verified for the visit (the rt_human cookie)? Answered here too, so the page knows whether to show the check at all.
+    if (request.method === "GET" && url.pathname === "/ratchet/human") return humanAnswer(settings.secret, request.headers, ip);
     // The human check, then a few paid calls a day per visitor (Try a real request, Scout runs) and the shared curl total, refused here without
     // waking the container. The token is verified once, here: the loops below that re-send a request while the container wakes never ask again.
     const quotas = env.VISITOR_QUOTA as unknown as GuardNamespace | undefined;
-    const refused = await guardPaidCall({ quotas, limits: dailyLimits(env), settings, method: request.method, url, headers: request.headers, ip });
+    const refused = await guardPaidCall({ quotas, limits: dailyLimits(env), settings, method: request.method, url, headers: request.headers, ip, out });
     if (refused) return refused;
 
     // The running totals: answered here, from the Durable Object.
@@ -330,5 +352,4 @@ export default {
       await sleep(READ_RETRY_MS);
     }
     return warmingFor(request.method, request.headers.get("accept"));
-  },
-};
+}

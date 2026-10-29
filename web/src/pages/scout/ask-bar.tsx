@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRight, CornerDownLeft, Search, Square } from "lucide-react";
 import type { ScoutExamples } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,10 @@ export function AskBar({
   onStop,
   onRetryExamples,
   hint,
+  below,
 }: {
+  /** Drawn right under the Ask button (the inline human check). */
+  below?: ReactNode;
   examples: ScoutExamples | null;
   examplesError: string | null;
   running: boolean;
@@ -122,6 +125,7 @@ export function AskBar({
           )}
         </div>
       </form>
+      {below}
 
       <div
         className="-mx-4 mt-4 grid auto-cols-max grid-flow-col grid-rows-2 gap-2 overflow-x-auto px-4 pb-1 [mask-image:linear-gradient(to_right,#000_72%,transparent)] [scrollbar-width:none] sm:mx-0 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:overflow-visible sm:px-0 sm:pb-0 sm:[mask-image:none] [&::-webkit-scrollbar]:hidden"

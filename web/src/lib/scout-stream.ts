@@ -13,8 +13,10 @@ export interface ScoutSource {
 }
 
 export interface StreamDeps {
-  /** A fresh token for one attempt, or null when there is none to give. */
+  /** A fresh token for one attempt, or null when there is none to give (the visit's cookie covers it). */
   token: () => Promise<string | null>;
+  /** A token already obtained for the first attempt (the page ran the inline check before starting). Used once; every later attempt calls `token`. */
+  first?: string | null;
   /** The browser's EventSource; undefined where there is none (the fallback runs at once). */
   makeSource: ((url: string) => ScoutSource) | undefined;
   /** POST /scout/run with the given token. */
@@ -52,7 +54,8 @@ export function streamScoutWith(question: string, onEvent: (e: ScoutEvent) => vo
   };
 
   const open = async () => {
-    const token = await deps.token();
+    const token = deps.first !== undefined ? deps.first : await deps.token();
+    deps.first = undefined; // single-use: the fallback below asks for its own
     if (closed) return;
     const source = deps.makeSource!(scoutStreamUrl(question, token));
     es = source;
@@ -79,7 +82,13 @@ export function streamScoutWith(question: string, onEvent: (e: ScoutEvent) => vo
     };
   };
 
-  if (!deps.makeSource) void fallback();
+  // With no EventSource the first (only) attempt is the POST, which can use the token the page already has.
+  if (!deps.makeSource) {
+    const first = deps.first;
+    deps.first = undefined;
+    if (first !== undefined) deps = { ...deps, token: async () => first };
+    void fallback();
+  }
   else void open();
   return finish;
 }

@@ -7,6 +7,9 @@ import { WhoProvider } from "@/components/ui/who";
 import { Container, Eyebrow } from "@/components/ui/section";
 import { cn, fmtUsd } from "@/lib/utils";
 import { AgentGraph, GraphLegend } from "./agent-graph";
+import { HumanRow } from "@/components/human-row";
+import { FAILED_TEXT } from "@/lib/human-model";
+import { useHuman } from "@/lib/use-human";
 import { AskBar } from "./ask-bar";
 import { AGENTS, RouteNote } from "./bits";
 import { Explainer } from "./explainer";
@@ -98,9 +101,36 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
   const started = run.status !== "idle";
   const progress = phaseText(run, derived);
 
+  // The inline human check under the Ask button (once per visit: after one pass the Worker's cookie covers the stream, which is same-origin).
+  // Scout is browser-only while the check is on, so here it is required: a check that cannot load stops the run and says so.
+  const human = useHuman(true);
+  const gating = useRef(false);
+  const asked = useRef("");
+
   const go = useCallback(
-    (q: string) => {
-      start(q);
+    async (q: string) => {
+      if (gating.current) return;
+      gating.current = true;
+      asked.current = q; // what Try again asks for
+      let gate;
+      try {
+        gate = await human.gate();
+      } finally {
+        gating.current = false;
+      }
+      if (!gate.go) return;
+      start(q, {
+        tokens: {
+          first: gate.token,
+          // A later attempt (the fallback after a stream error) never reuses the spent token: it asks the inline check again.
+          next: async () => {
+            const again = await human.gate();
+            if (!again.go) throw new Error(FAILED_TEXT);
+            return again.token;
+          },
+        },
+        report: human.report,
+      });
       // Bring the graph into view on small screens, where it sits below the fold.
       // Wait two frames so the sticky totals bar has rendered and scroll-margin is right.
       requestAnimationFrame(() =>
@@ -112,7 +142,7 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
         }),
       );
     },
-    [start],
+    [start, human.gate, human.report],
   );
 
   useEffect(() => {
@@ -169,6 +199,7 @@ function ScoutBody({ scout }: { scout: ReturnType<typeof useScout> }) {
               onStop={stop}
               onRetryExamples={() => void reloadExamples()}
               hint={setHint}
+              below={<HumanRow human={human} onRetry={() => void go(asked.current)} />}
             />
             <JudgeCode status={status} running={running} onChange={refreshStatus} />
             {hint && (

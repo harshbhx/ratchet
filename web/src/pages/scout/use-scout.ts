@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { onRecovered } from "@/lib/waking-store";
-import { api, streamScout, type ScoutExamples, type ScoutStatus } from "@/lib/api";
+import { api, streamScout, type ScoutExamples, type ScoutStatus, type ScoutTokens } from "@/lib/api";
+import { failureOfMessage } from "@/lib/human-model";
 import { hostedServing, whoContext } from "@/lib/who-model";
 import { derive, initialRun, runReducer } from "./state";
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+
+/** The inline human check, as a run uses it: its tokens, and where to say that the Worker refused it (or that all went well, with null). */
+export interface ScoutHuman {
+  tokens: ScoutTokens;
+  report: (failure: "failed" | "blocked" | null) => void;
+}
 
 /** Page-level controller: examples, budget status, and one run at a time. */
 export function useScout() {
@@ -49,19 +56,32 @@ export function useScout() {
   }, [loadExamples, loadStatus]);
 
   const start = useCallback(
-    (question: string) => {
+    (question: string, human?: ScoutHuman) => {
       const q = question.trim();
       if (!q) return;
       cancelRef.current?.();
       dispatch({ type: "begin", question: q, at: now() });
       let ended = false;
-      const cancel = streamScout(q, (ev) => {
-        dispatch({ type: "event", ev, at: now() });
-        if (!ended && (ev.type === "done" || ev.type === "error")) {
-          ended = true;
-          void loadStatus();
-        }
-      });
+      const cancel = streamScout(
+        q,
+        (ev) => {
+          // The Worker refused the human check: the inline row under the Ask button says so, so the run just stops here (no second, raw error).
+          const refused = ev.type === "error" && human ? failureOfMessage(ev.message) : null;
+          if (refused && human) {
+            human.report(refused);
+            dispatch({ type: "stop", at: now() });
+            ended = true;
+            return;
+          }
+          if (ev.type === "done" && human) human.report(null);
+          dispatch({ type: "event", ev, at: now() });
+          if (!ended && (ev.type === "done" || ev.type === "error")) {
+            ended = true;
+            void loadStatus();
+          }
+        },
+        human?.tokens,
+      );
       cancelRef.current = cancel;
     },
     [loadStatus],
