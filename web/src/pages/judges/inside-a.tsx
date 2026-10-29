@@ -7,7 +7,7 @@ import type { LedgerEvent, ServedBy, Version } from "@/lib/api";
 import { cn, fmtInt, fmtPct } from "@/lib/utils";
 import { eventLabel, eventTone, STATE_TONE, stateLabel } from "@/pages/dashboard/model";
 import { MEASURED, TileCard, Traffic } from "@/components/measured/measured";
-import { nightSchoolTile, nightSchoolWording } from "@/lib/measured-model";
+import { nightSchoolTile, nightSchoolWording, rejectedVersion } from "@/lib/measured-model";
 import { TONE_DOT } from "@/pages/dashboard/ui";
 import { useGatewayText, useGateway, useJudges } from "./data";
 import { latestGlobalPeriod, parseLeaves, routeTotals, routeWords, shortHash, stageOf, studentRoute } from "./judges-model";
@@ -309,7 +309,7 @@ const STAGES = [
 ] as const;
 
 /** One stage of the release pipeline: the versions in it, or, plainly, that none has been here. */
-function StageTile({ stage, here, last }: { stage: (typeof STAGES)[number]; here: Version[]; last: boolean }) {
+function StageTile({ stage, here, last, rejected }: { stage: (typeof STAGES)[number]; here: Version[]; last: boolean; rejected: string | null }) {
   const Icon = stage.icon;
   const reached = here.length > 0;
   return (
@@ -327,7 +327,7 @@ function StageTile({ stage, here, last }: { stage: (typeof STAGES)[number]; here
       </div>
       <p className="mt-1.5 text-[12px] leading-snug text-muted">{stage.note}</p>
       <p className={cn("mt-2.5 text-[13px] leading-snug", reached ? "font-mono text-owned-ink" : "text-ink-2")}>
-        {reached ? here.map((v) => `v${v.id}`).join(", ") : <>Not reached: no version has come here on this gateway</>}
+        {reached ? here.map((v) => `v${v.id}`).join(", ") : rejected ? <>Not reached: the gate rejected {rejected}</> : <>Not reached: no version has come here on this gateway</>}
       </p>
       {!last && <ArrowRight className="absolute -right-3 top-1/2 z-10 hidden size-4 -translate-y-1/2 text-muted xl:block" aria-hidden />}
     </li>
@@ -371,6 +371,7 @@ export function ReleaseChapter() {
   const events = [...(stats?.events ?? [])].reverse().slice(0, 12);
   const words = MEASURED ? nightSchoolWording(MEASURED) : null;
   const night = MEASURED ? nightSchoolTile(MEASURED) : null;
+  const rejected = MEASURED ? rejectedVersion(MEASURED) : null;
   return (
     <Chapter
       id="release"
@@ -390,7 +391,7 @@ export function ReleaseChapter() {
         <div className="space-y-5">
           <ol className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Release stages and the versions in them">
             {STAGES.map((s, i) => (
-              <StageTile key={s.id} stage={s} here={versions.filter((v) => stageOf(v.state, v.traffic_pct) === s.id)} last={i === STAGES.length - 1} />
+              <StageTile key={s.id} stage={s} here={versions.filter((v) => stageOf(v.state, v.traffic_pct) === s.id)} last={i === STAGES.length - 1} rejected={rejected} />
             ))}
           </ol>
           {night && <TileCard tile={night} />}

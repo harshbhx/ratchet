@@ -184,7 +184,7 @@ export const STAGES: Stage[] = [
     sub: "train from base",
     tone: "neutral",
     does:
-      "Each night Night School fine-tunes a new LoRA adapter from the base model on every stored training example, then writes the adapter's bill of materials. Built to run as a Nebius Serverless Job: one such job has run by hand (27 Oct 2026); the nightly job is scripted and tested offline, ready to run.",
+      "Each night Night School fine-tunes a new LoRA adapter from the base model on every stored training example, then writes the adapter's bill of materials. It ran end to end once on Nebius, by hand (28 Oct 2026), as a spot L40S Serverless Job, and the golden gate rejected that student; the nightly schedule is scripted and tested offline and has not run on live traffic.",
     inputs: "Teacher answers and attested human labels",
     outputs: "A candidate adapter and its BOM",
     safeguards: [

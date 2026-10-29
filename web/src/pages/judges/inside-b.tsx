@@ -1,3 +1,5 @@
+import { MEASURED } from "@/components/measured/measured";
+import { nightSchoolWording } from "@/lib/measured-model";
 import { useEffect, useState } from "react";
 import { BadgeCheck, CircleAlert, Link2, Loader2, ShieldQuestion } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -75,7 +77,7 @@ export function CertificateChapter() {
         <p className="text-[13.5px] text-muted">
           {stats?.mode === "mock"
             ? "No version yet."
-            : "No version on this live gateway: the nightly loop is built and tested but has not run on live traffic, so the teacher answers every request."}
+            : (MEASURED ? nightSchoolWording(MEASURED).versions : "No version on this live gateway: the teacher answers every request.")}
         </p>
       ) : (
         <div className="space-y-4">

@@ -51,15 +51,25 @@ test("the headline numbers are the ones in the data", () => {
   assert.match(tiles.endpoint.headline, /7 min 38 s/);
 });
 
-test("the Night School tile is hidden until its evidence folder exists, and carries no number of its own", () => {
+test("the Night School tile is hidden until its evidence folder exists; then every value is the folder's", () => {
   assert.equal(m.nightSchoolTile({ ...data, nightschool: { present: false, source: "evidence/nightschool-nebius" } }), null);
-  const t = m.nightSchoolTile({ ...data, nightschool: { present: true, source: "evidence/nightschool-nebius", date: "2026-10-28", what: "the folder's own words", files: ["a", "b"] } });
-  assert.equal(t.headline, "the folder's own words");
+  assert.equal(m.rejectedVersion({ ...data, nightschool: { present: false, source: "x" } }), null);
+  const present = { present: true, source: "evidence/nightschool-nebius", date: "2026-10-28", what: "the folder's own words", verdict: "rejected", adapter_name: "student-v1", numbers: { precision: "81.8%", target: "95%", coverage: "4.8%" }, files: ["a"] };
+  const t = m.nightSchoolTile({ ...data, nightschool: present });
   assert.equal(t.source, "evidence/nightschool-nebius");
-  assert.deepEqual(t.facts, [{ label: "Evidence files", value: "2" }]);
-  // Without the evidence the wording stays as before; with it the page says the run is recorded and no version served.
+  assert.ok(t.facts.some((f) => f.value === "81.8% against the 95% target"));
+  assert.ok(t.facts.some((f) => f.value.startsWith("Rejected at the golden gate; v1")));
+  assert.equal(m.rejectedVersion({ ...data, nightschool: present }), "v1");
+  // No evidence: the old wording. With it: the run, its verdict and its limits, in the words the docs use.
   assert.match(m.nightSchoolWording({ ...data, nightschool: { present: false, source: "x" } }).versions, /has not run on live traffic/);
-  assert.match(m.nightSchoolWording({ ...data, nightschool: { present: true, source: "x" } }).versions, /recorded below/);
+  const w = m.nightSchoolWording({ ...data, nightschool: present });
+  assert.match(w.pipeline, /Night School ran end to end once on Nebius, by hand \(28 Oct 2026\)\. The golden gate rejected v1, so it was never made live\. The loop has not run nightly on live traffic\./);
+});
+
+test("the checked-in snapshot says the Night School run was rejected at v1, from the evidence folder", () => {
+  assert.equal(data.nightschool.present, true);
+  assert.equal(m.rejectedVersion(data), "v1");
+  assert.equal(data.nightschool.numbers.precision, "81.8%");
 });
 
 test("the live line: Live since the first record, requests, dollars, Scout runs", () => {

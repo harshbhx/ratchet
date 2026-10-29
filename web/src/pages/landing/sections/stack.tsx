@@ -3,7 +3,7 @@ import { HoverGrid } from "@/components/fx/hover-grid";
 import { Container } from "@/components/ui/section";
 import { RealBadge } from "@/components/ui/real-badge";
 import { WhoBadge } from "@/components/ui/who";
-import { Chapter, ChapterHead, Lead, Reveal } from "../shared";
+import { Chapter, ChapterHead, LINKS, Lead, Reveal } from "../shared";
 
 /** `RATCHET_FALLBACK_STUDENT`'s default; its badge is the hosted one the pages show for its answers. */
 const FALLBACK_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B";
@@ -29,21 +29,21 @@ const ROLES: Role[] = [
   },
   {
     role: "Student",
-    service: "Nemotron 3 Nano 4B + LoRA, vLLM (built for a Nebius Serverless Endpoint)",
+    service: "Nemotron 3 Nano 4B + LoRA, vLLM (served from a Nebius Serverless Endpoint for speed tests, 27 to 28 Oct 2026, then deleted)",
     id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
-    why: "Cheap and fast. The LoRA adapter is yours; the Nano base stays under NVIDIA's Nemotron Open Model License. Scripted for Nebius and ready to run.",
+    why: "Cheap and fast. The LoRA adapter is yours; the Nano base stays under NVIDIA's Nemotron Open Model License. Served once from a Nebius Serverless Endpoint for speed tests (then deleted); the live site is not connected to it.",
     badge: (
       <span className="flex flex-wrap items-center justify-end gap-1.5">
-        <RealBadge status="not-run" />
+        <RealBadge status="real" />
         <WhoBadge servedBy="student" />
       </span>
     ),
   },
   {
     role: "Night School",
-    service: "Nebius Serverless Jobs (L40S) with Unsloth (one hand-run job on 27 Oct 2026; the nightly job is scripted, ready to run)",
+    service: "Nebius Serverless Jobs (L40S) with Unsloth (a hand-run retraining on 27 Oct 2026 and one hand-run Night School on 28 Oct 2026, rejected by the gate; the nightly schedule has not run on live traffic)",
     why: "Built to fine-tune a new adapter each night. A job is billed only while it runs. The round-2 adapter was retrained once by hand on a Nebius L40S (27 Oct 2026); the original adapters were trained on a borrowed GPU.",
-    badge: <RealBadge status="not-run" />,
+    badge: <RealBadge status="real" />,
   },
   {
     role: "Judge",
@@ -60,9 +60,9 @@ const ROLES: Role[] = [
   },
   {
     role: "Storage",
-    service: "Nebius Object Storage (scripted, ready to run)",
+    service: "Nebius Object Storage (a bucket held the data, checkpoints and adapters in the Nebius runs)",
     why: "Datasets and adapters, in one bucket mounted in jobs and endpoints.",
-    badge: <RealBadge status="not-run" />,
+    badge: <RealBadge status="real" />,
   },
   {
     role: "Search",
@@ -82,8 +82,7 @@ const ROLES: Role[] = [
         >
           its docs<span className="sr-only"> (opens in a new tab)</span>
         </a>
-        , read 26 Oct 2026), so the student is designed to be trained and served on Nebius AI Cloud. The round-2 adapter was retrained once on Nebius AI Cloud by hand (27 Oct 2026); the student endpoint is tested offline and ready to
-        run with make nebius-plan. The original adapters were trained on a borrowed GPU.
+        , read 26 Oct 2026), so the student is designed to be trained and served on Nebius AI Cloud. The round-2 adapter was retrained once on Nebius AI Cloud by hand (27 Oct 2026); the student was served from a Nebius Serverless Endpoint for speed tests on 27 to 28 Oct 2026 and then deleted, and the live site is not connected to it. The original adapters were trained on a borrowed GPU.
       </>
     ),
     why: "",
@@ -99,7 +98,7 @@ export function Stack() {
           title="Built on Nebius and NVIDIA."
           lead={
             <Lead>
-              Open Nemotron models for every model role. Every model call on the live site runs on Nebius Token Factory, the adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job), and the student was served from a Nebius Serverless Endpoint in measured tests; the live gateway is not connected to it. The gateway itself does no inference, so it fits on a
+              Open Nemotron models for every model role. Every model call on the live site runs on Nebius Token Factory, the adapter was retrained on Nebius AI Cloud (one L40S, Serverless Job; <a href={LINKS.hfNebiusModel} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-ink">the retrained adapter</a> is on Hugging Face), and the student was served from a Nebius Serverless Endpoint in measured tests; the live gateway is not connected to it. The gateway itself does no inference, so it fits on a
               small CPU machine.
             </Lead>
           }

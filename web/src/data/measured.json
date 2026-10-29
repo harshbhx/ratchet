@@ -354,7 +354,35 @@
   "teacher_model": "nvidia/Nemotron-3-Ultra-550b-a55b"
  },
  "nightschool": {
-  "present": false,
-  "source": "evidence/nightschool-nebius"
+  "present": true,
+  "source": "evidence/nightschool-nebius",
+  "date": "2026-10-28",
+  "what": "the first end-to-end Night School run on Nebius, by hand: gateway on a CPU VM, a spot L40S training job, the adapter served from a Nebius Serverless Endpoint, the golden gate (rejected, never live); sanitised",
+  "verdict": "rejected",
+  "adapter_name": "student-v1",
+  "has_readme": true,
+  "numbers": {
+   "golden_agreement": "17.9%",
+   "coverage": "4.8%",
+   "precision": "81.8%",
+   "target": "95%",
+   "training_rows": "3,864",
+   "golden_rows": "458"
+  },
+  "files": [
+   "evidence/nightschool-nebius/MANIFEST.json",
+   "evidence/nightschool-nebius/README.md",
+   "evidence/nightschool-nebius/data/adapter_hash_bom.txt",
+   "evidence/nightschool-nebius/data/final_inventory.txt",
+   "evidence/nightschool-nebius/data/gpu_intervals_and_spend.txt",
+   "evidence/nightschool-nebius/data/ledger_dump.txt",
+   "evidence/nightschool-nebius/fixes/train_job_vm_local_fixes.diff",
+   "evidence/nightschool-nebius/logs/night_eval_rerun.log",
+   "evidence/nightschool-nebius/logs/night_run1.log",
+   "evidence/nightschool-nebius/logs/seed_import.txt",
+   "evidence/nightschool-nebius/logs/training_job2_FAILED_SAVE.log",
+   "evidence/nightschool-nebius/logs/training_job3_SAVED.log",
+   "evidence/nightschool-nebius/scripts/reuse_night.py"
+  ]
  }
 }

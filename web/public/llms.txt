@@ -1,0 +1,19 @@
+# Ratchet
+
+> An OpenAI-compatible gateway for license-clean distillation on open models: a small NVIDIA Nemotron student answers first, a teacher whose license allows distillation (Nemotron 3 Ultra on Nebius Token Factory) answers when the student is unsure, and every teacher answer is logged with its provenance. Apache-2.0. Built for the Nebius x NVIDIA Global AI Hackathon.
+
+What is real, in one paragraph: every model call on the live site runs on Nebius Token Factory (the teacher answers every live request). The text-to-SQL adapter was trained on a borrowed GPU and retrained on Nebius AI Cloud (27 Oct 2026); the student was served from a Nebius Serverless Endpoint in speed tests (27 to 28 Oct 2026, then deleted); Night School ran end to end once on Nebius, by hand (28 Oct 2026), and the golden gate rejected it, so it was never made live. The live site is not connected to a student endpoint, the nightly loop has not run on live traffic, and no savings are claimed.
+
+## The full documentation as plain text
+
+- [Docs index (llms.txt)](https://docs.ratchet.dualmindlab.tech/llms.txt): every docs page, one line each.
+- [Docs in full (llms-full.txt)](https://docs.ratchet.dualmindlab.tech/llms-full.txt): every docs page as one plain text file.
+
+## Key pages
+
+- [For judges](https://docs.ratchet.dualmindlab.tech/guides/for-judges/): a ten-minute tour, what is real and what is not.
+- [Results](https://docs.ratchet.dualmindlab.tech/guides/results/): the exam scores, read from the results files.
+- [Night School](https://docs.ratchet.dualmindlab.tech/guides/night-school/): how a new student is trained and gated, and the run on Nebius.
+- [Check it yourself](https://docs.ratchet.dualmindlab.tech/guides/evidence/): how to recompute each claim.
+- [What is real (site)](https://ratchet.dualmindlab.tech/judges): the same status table, on the main site.
+- [Source and evidence](https://github.com/harshbhx/ratchet): code, tests and the evidence folders.

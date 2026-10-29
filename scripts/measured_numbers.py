@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -240,6 +241,24 @@ def hosted_nano() -> dict:
     }
 
 
+def readme_numbers(text: str) -> dict:
+    """The gate's numbers as the run's own README prints them in its tables; a number it does not print is left out."""
+    wanted = {
+        "golden_agreement": r"\|\s*Golden agreement\s*\|\s*([\d.]+%)",
+        "coverage": r"\|\s*Coverage at that threshold\s*\|\s*([\d.]+%)",
+        "precision": r"\|\s*Precision at that threshold\s*\|\s*\**([\d.]+%)",
+        "target": r"\|\s*Target\s*\|\s*([\d.]+%)",
+        "training_rows": r"\|\s*Training rows\s*\|\s*([\d,]+)",
+        "golden_rows": r"\|\s*Golden rows\s*\|\s*([\d,]+)",
+    }
+    out = {}
+    for key, pat in wanted.items():
+        found = re.search(pat, text)
+        if found:
+            out[key] = found.group(1)
+    return out
+
+
 def nightschool() -> dict:
     rel = "evidence/nightschool-nebius"
     folder = ROOT / rel
@@ -251,7 +270,13 @@ def nightschool() -> dict:
         m = json.loads(manifest.read_text(encoding="utf-8"))
         out["date"] = m.get("made")
         out["what"] = m.get("what")
-    out["has_readme"] = (folder / "README.md").is_file()
+    if manifest.is_file():
+        out["verdict"] = m.get("verdict")
+        out["adapter_name"] = (m.get("adapter") or {}).get("name")
+    readme = folder / "README.md"
+    out["has_readme"] = readme.is_file()
+    if readme.is_file():
+        out["numbers"] = readme_numbers(readme.read_text(encoding="utf-8"))
     out["files"] = sorted(p.relative_to(ROOT).as_posix() for p in folder.rglob("*") if p.is_file())[:200]
     return out
 

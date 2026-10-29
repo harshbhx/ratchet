@@ -38,7 +38,7 @@ export const EDITS = {
     [/# goes in the submission's testing instructions only/, "# share it with evaluators directly, never publish it"],
     [/^## Keeping it alive until Dec 15$/m, '## Keeping it alive'],
     [/The period Oct 29 – Dec 15 is 48 days/, 'The public period is taken as 48 days'],
-    [/\| Oct 29 – Dec 15 \|/, '| Demo period (48 days) |'],
+    [/\| Oct 29 – Dec 15 \|/, '| Judging period (48 days) |'],
     [/until the last day of judging/, 'until the last public day'],
     [/\*\*After judging:\*\*/, '**When the public period ends:**'],
     [/On Dec 16, or whenever judging ends\./, 'When the public period ends.'],

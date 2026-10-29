@@ -35,7 +35,7 @@ export function OpenSource() {
                 <>
                   <Lead>
                     Apache-2.0. No keys and no GPU needed to try the code: mock mode runs the gateway, Night School, the gates and Scout on
-                    your laptop. Night School is built and tested, and has not run on live traffic.
+                    your laptop. Night School ran once on Nebius, by hand, and the gate rejected it; it has not run nightly on live traffic.
                   </Lead>
                   <Lead>
                     Model weights keep their own licenses: Nemotron Nano under the NVIDIA Nemotron Open Model License, Nemotron 3 Ultra under

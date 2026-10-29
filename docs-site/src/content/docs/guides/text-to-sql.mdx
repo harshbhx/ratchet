@@ -81,7 +81,7 @@ The honest question is "good enough at what, measured how?" This page and the [R
 
 <div class="rt-callout rt-callout--note">
 
-**Where it was trained.** On a borrowed GPU (both published rounds). On 27 Oct 2026 the round-2 recipe was retrained once on Nebius AI Cloud, as a Serverless Job on one preemptible L40S (new adapter SHA-256 `68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5`; scores 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance)). The teacher ran on Nebius: real calls to Nemotron 3 Ultra on Token Factory built this data on Oct 22, 2026.
+**Where it was trained.** On a borrowed GPU (both published rounds). On 27 Oct 2026 the round-2 recipe was retrained once on Nebius AI Cloud ([adapter on Hugging Face](https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius)), as a Serverless Job on one preemptible L40S (new adapter SHA-256 `68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5`; scores 40.7% (70 of 172) on exam 1 and 34.5% (69 of 200) on exam 2, against 39.0% and 33.0% for the original adapter: the result reproduces (the row-by-row differences are within chance)). The teacher ran on Nebius: real calls to Nemotron 3 Ultra on Token Factory built this data on Oct 22, 2026.
 
 </div>
 
@@ -253,7 +253,7 @@ python scripts/measure_adapter.py verify --raw raw.jsonl --results results.json 
 - **"Matches the teacher" is not "is what the user meant".** The teacher is a model too and can be wrong. The score measures how well the student copies the teacher, on queries that run.
 - **Small slices mean little.** The split by difficulty or by industry has few questions per cell.
 - **The cost is an estimate.** Token counts are measured. Prices are inputs. No student endpoint was run, so no GPU-hour bill is included. See [Cost and savings](/guides/cost-and-savings/).
-- **Trained on a borrowed GPU.** Both rounds were trained on a borrowed GPU with the training script in `scripts/text2sql/`; the teacher ran on Nebius Token Factory. Night School's Nebius Serverless Job is separate: it trains with `ratchet.nightschool.train` through `deploy/train_job.sh`, scripted and tested offline, ready to run with `make nebius-up`.
+- **Trained on a borrowed GPU.** Both rounds were trained on a borrowed GPU with the training script in `scripts/text2sql/`; the teacher ran on Nebius Token Factory. Night School's Nebius Serverless Job is separate: it trains with `ratchet.nightschool.train` through `deploy/train_job.sh`, and ran once by hand on 28 Oct 2026 on Nebius (a spot L40S; the golden gate rejected that student).
 
 ## The license chain
 

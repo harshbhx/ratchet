@@ -5,6 +5,9 @@ Usage (inside the job container):
     python -m ratchet.nightschool.train --data /data/night/train.jsonl \
         --base nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 --out /data/adapters/student-v3
 
+On a Nebius job the bucket mount refuses the in-place rename safetensors uses (EPERM): deploy/train_job.sh passes a local
+--out (/tmp/adapter-out) and copies the finished folder into /data/adapters/<version>. Do not point --out at the mount.
+
 Transformers + PEFT + TRL, at the exact versions deploy/Dockerfile.train installs (deploy/train-versions.txt). Unsloth
 is not used: its release of Oct 19, 2026 requires `trl<=1.15.0`, and the image pins TRL 1.16.0 (ADR 0145).
 
@@ -48,6 +51,7 @@ LIBRARIES = (
     "datasets",
     "causal-conv1d",
     "mamba-ssm",
+    "einops",
     "ninja",
     "packaging",
     "setuptools",

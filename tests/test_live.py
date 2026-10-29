@@ -171,7 +171,11 @@ def test_nebius_trainer_writes_syncs_trains_and_hot_loads(tmp_path, monkeypatch)
     # path the trainer hot-loads from, and reads the dataset where the synced data folder puts it.
     job = (ROOT / "deploy" / "train_job.sh").read_text(encoding="utf-8")
     assert '--volume "${RATCHET_BUCKET_ID}:/data"' in job
-    assert "--data /data/night/train.jsonl" in job and "--out /data/adapters/${VERSION}" in job
+    assert (
+        "--data /data/night/train.jsonl" in job
+        and "--out /tmp/adapter-out" in job
+        and "cp -r /tmp/adapter-out/. /data/adapters/${VERSION}/" in job
+    )
 
     # {version} and {data} are substituted into RATCHET_TRAIN_CMD; RATCHET_ADAPTER_ROOT moves the load path.
     monkeypatch.setenv("RATCHET_TRAIN_CMD", "bash deploy/train_job.sh {version} --data {data}")
@@ -421,11 +425,12 @@ def test_live_main_tick_reload_night_offline(tmp_path, monkeypatch, capsys):
     (job,) = led.compute_intervals("training_job")
     assert (job["source"], job["version"], job["usd_per_hour"], job["gpus"]) == ("night", 1, 1.55, 1)
     assert job["end_ts"] is not None and job["end_ts"] >= job["start_ts"]
-    # The judge is a teacher call (teacher timeouts and retries). The student keeps its own timeouts but is retried like
-    # the teacher, because no teacher stands behind it in the golden eval (ADR 0014). All defaults: _live_env cleared them.
+    # The judge is a teacher call (teacher timeouts and retries). The student gets the night's own read timeout
+    # (RATCHET_NIGHT_STUDENT_TIMEOUT_S, 120 s) and is retried like the teacher, because no teacher stands behind it in
+    # the golden eval (ADR 0014). All defaults: _live_env cleared them.
     retry = RetryPolicy(max_attempts=3, deadline_s=180.0)
     assert factory_calls == [
-        (STUDENT_BASE, STUDENT_KEY, {"timeout": timeouts(15.0, connect_s=2.0), "retry": retry}),
+        (STUDENT_BASE, STUDENT_KEY, {"timeout": timeouts(120.0, connect_s=2.0), "retry": retry}),
         (TEACHER_BASE, TEACHER_KEY, {"timeout": timeouts(120.0), "retry": retry}),
     ]
     assert run.commands == [sync, "bash deploy/train_job.sh student-v1", sync]
@@ -1826,10 +1831,23 @@ def test_train_job_uses_job_create(tmp_path):
     assert shlex.split(_opt(argv, "--args") or "") == [
         "-c",
         "bash /app/install_kernels.sh && python -m ratchet.nightschool.train"
-        f" --data /data/night/train.jsonl --base {base} --out /data/adapters/student-v3",
+        f" --data /data/night/train.jsonl --base {base} --out /tmp/adapter-out"
+        " && mkdir -p /data/adapters/student-v3 && cp -r /tmp/adapter-out/. /data/adapters/student-v3/",
     ]
+    # Spot by default (the 28 Oct 2026 run's first job was on demand by mistake); on demand only on an explicit opt-in.
+    assert "--preemptible" in argv and "--follows-spot-price" in argv
     assert not {"--subnet-id", "--registry-secret", "--dry-run"} & set(argv)
     assert "Submitted ratchet-student-v3" in r.stdout and "+ nebius ai job create" in r.stderr
+
+    r = run("student-v3", RATCHET_TRAIN_ON_DEMAND="1")
+    assert r.returncode == 0, r.stderr
+    (argv,) = nebius.calls
+    assert "--preemptible" not in argv and "--follows-spot-price" not in argv
+    r = run("student-v3", RATCHET_TRAIN_ON_DEMAND="0")
+    (argv,) = nebius.calls
+    assert "--preemptible" in argv
+    r = run("student-v3", RATCHET_TRAIN_ON_DEMAND="yes")  # anything but 0 or 1 is refused, never read as on demand
+    assert r.returncode != 0 and "RATCHET_TRAIN_ON_DEMAND must be 0 or 1" in r.stderr and nebius.calls == []
 
     r = run("student-v3", RATCHET_SUBNET_ID="vpcsubnet-e00test", RATCHET_REGISTRY_SECRET="mbsec-e00registry")
     assert r.returncode == 0, r.stderr
@@ -3759,3 +3777,58 @@ def test_load_and_unload_adapter_return_the_response():
         assert call.json == {"lora_name": "student-v1"} and call.headers["authorization"] == f"Bearer {STUDENT_KEY}"
         gone = live.unload_adapter(base, "", "student-v1", client=_http(server))  # a 404 is returned, never raised
         assert gone.status_code == 404 and "cannot be found" in gone.text and "authorization" not in server.calls[1].headers
+
+
+# ---------- the first real night (28 Oct 2026): fixes found on the VM ----------
+@pytest.mark.req("FR-4.6")
+def test_night_stops_when_aws_is_missing_for_the_wait_loop(tmp_path, monkeypatch):
+    """train_job.sh polls the bucket with `aws` when RATCHET_BUCKET_S3 is set; with no `aws` on PATH the night stops
+    before writing the dataset or paying for a job, instead of waiting two hours."""
+    data = tmp_path / "data"
+    _live_env(monkeypatch, RATCHET_DATA_DIR=str(data), RATCHET_BUCKET_S3="s3://customer-bucket")
+    monkeypatch.setattr(live.shutil, "which", lambda name: None)
+    run, vllm = RecordingRun(), FakeOpenAIServer()
+    rows = [{"task": TRIAGE, "messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": LABELS}]}]
+    trainer = live.NebiusTrainer(_live_settings(tmp_path), run=run, http=_http(vllm))
+    with pytest.raises(RuntimeError, match="`aws` CLI is not on PATH"):
+        trainer.train(rows, "base-model", "student-v1")
+    assert run.commands == [] and not (data / "night").exists() and vllm.calls_to("/load_lora_adapter") == []
+    # With aws on PATH, or no wait loop (RATCHET_BUCKET_S3 unset), the night goes on as before.
+    monkeypatch.setattr(live.shutil, "which", lambda name: "/usr/bin/aws")
+    assert trainer.train(rows, "base-model", "student-v1") == "student-v1"
+    monkeypatch.setattr(live.shutil, "which", lambda name: None)
+    monkeypatch.delenv("RATCHET_BUCKET_S3")
+    assert live.NebiusTrainer(_live_settings(tmp_path), run=RecordingRun(), http=_http(vllm)).train(rows, "b", "student-v2")
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.req("FR-4.6")
+def test_train_job_script_stops_without_aws_on_path(tmp_path):
+    """The script's own wait loop checks for `aws` after the job is submitted and says so, instead of polling forever."""
+    nebius = FakeNebius(tmp_path / "nebius")
+    env = _deploy_env(tmp_path, nebius, RATCHET_BUCKET_S3="s3://bucket-e00test")
+    shim = tmp_path / "shim"  # a PATH of the fake nebius and a `bash`, nothing else: in particular no aws
+    shim.mkdir()
+    script = "#!/bin/sh" + chr(10) + f'exec "{BASH}" "$@"' + chr(10)
+    (shim / "bash").write_bytes(script.encode("utf-8"))
+    (shim / "bash").chmod(0o755)
+    env["PATH"] = f"{nebius.bin}{os.pathsep}{shim}"
+    r = _deploy(tmp_path, "train_job.sh", "student-v3", env=env)
+    assert r.returncode == 3 and "needs the aws CLI on PATH" in r.stderr and "Waiting for" not in r.stdout
+
+
+@pytest.mark.req("FR-8.2")
+def test_night_student_timeout_is_its_own_setting(monkeypatch):
+    """The golden eval's student calls get RATCHET_NIGHT_STUDENT_TIMEOUT_S (120 s by default: the first call after a
+    hot-load timed out at the request path's 15 s on 28 Oct 2026); the request path keeps RATCHET_STUDENT_TIMEOUT_S."""
+    _live_env(monkeypatch)
+    s = Settings()
+    assert s.night_student_timeout() == timeouts(120.0, connect_s=2.0) and s.student_timeout() == timeouts(15.0, connect_s=2.0)
+    monkeypatch.setenv("RATCHET_NIGHT_STUDENT_TIMEOUT_S", "300")
+    assert Settings().night_student_timeout().read == 300.0 and Settings().student_timeout().read == 15.0
+    monkeypatch.setenv("RATCHET_NIGHT_STUDENT_TIMEOUT_S", "0")
+    with pytest.raises(ValueError):
+        Settings().night_student_timeout()
+    from ratchet import config
+
+    assert "RATCHET_NIGHT_STUDENT_TIMEOUT_S" in {i.var for i in config.check(Settings())}  # the startup check lists it

@@ -94,7 +94,17 @@ export interface MeasuredData {
   smoke: { date: string; source: string; what: string; run_id: string; requests: number; total_usd: number; teacher_p50_wall_ms: number; ultra_p50_client_ms: number; wall_s: number; student_share_pct: number };
   labelling: { date: string; source: string; what: string; rounds: { id: string; date: string; usd: number; calls: number; rows: number; source: string }[] };
   hosted_nano: { date: string; source: string; what: string; rows: Record<string, number>; spend_usd: number; student_model: string; teacher_model: string };
-  nightschool: { present: boolean; source: string; date?: string | null; what?: string | null; has_readme?: boolean; files?: string[] };
+  nightschool: {
+    present: boolean;
+    source: string;
+    date?: string | null;
+    what?: string | null;
+    verdict?: string | null;
+    adapter_name?: string | null;
+    numbers?: { golden_agreement?: string; coverage?: string; precision?: string; target?: string; training_rows?: string; golden_rows?: string };
+    has_readme?: boolean;
+    files?: string[];
+  };
 }
 
 interface Score2 {
@@ -289,18 +299,37 @@ export function measuredTiles(d: MeasuredData): Tile[] {
   return tiles;
 }
 
-/** The Night School tile exists only once its evidence folder does; it carries the folder's own words, never a number typed here. */
+/** The version the golden gate rejected in the Night School run ("v1"), or null while there is no such evidence or it did not say so. */
+export function rejectedVersion(d: MeasuredData): string | null {
+  const n = d.nightschool;
+  if (!n.present || n.verdict !== "rejected") return null;
+  const m = /(v\d+)$/.exec(n.adapter_name ?? "");
+  return m ? m[1] : null;
+}
+
+/** The Night School tile exists only once its evidence folder does; every value in it is read from that folder (its manifest and the run's README tables). */
 export function nightSchoolTile(d: MeasuredData): Tile | null {
   const n = d.nightschool;
   if (!n.present) return null;
+  const v = rejectedVersion(d);
+  const x = n.numbers ?? {};
+  const facts: Tile["facts"] = [];
+  if (v) facts.push({ label: "Verdict", value: `Rejected at the golden gate; ${v} was never made live` });
+  if (x.precision && x.target) facts.push({ label: "Precision at the gate's threshold", value: `${x.precision} against the ${x.target} target` });
+  if (x.coverage) facts.push({ label: "Coverage at that threshold", value: x.coverage });
+  if (x.golden_agreement) facts.push({ label: "Golden agreement", value: x.golden_agreement });
+  if (x.training_rows && x.golden_rows) facts.push({ label: "Rows", value: `${x.training_rows} training, ${x.golden_rows} golden` });
+  if (facts.length === 0) facts.push({ label: "Evidence files", value: String(n.files?.length ?? 0) });
   return {
     id: "nightschool",
     title: "Night School on Nebius",
-    headline: n.what ?? "A Night School run on Nebius; the evidence folder has the details",
+    headline: v
+      ? "Night School ran end to end once on Nebius, by hand: trained on a spot L40S, the adapter served from a Nebius endpoint, and the golden gate rejected it"
+      : (n.what ?? "A Night School run on Nebius; the evidence folder has the details"),
     date: n.date ?? "",
     source: n.source,
     tag: "Recorded run",
-    facts: [{ label: "Evidence files", value: String(n.files?.length ?? 0) }],
+    facts,
   };
 }
 
@@ -375,10 +404,12 @@ export function liveLine(p: Persistent): LiveLine {
 
 /** The wording of the Night School and release pages: honest before and after the Nebius run's evidence is on the site. */
 export function nightSchoolWording(d: MeasuredData): { versions: string; pipeline: string } {
-  if (d.nightschool.present) {
+  const v = rejectedVersion(d);
+  if (d.nightschool.present && v) {
+    const ran = `Night School ran end to end once on Nebius, by hand (${fmtDay(d.nightschool.date ?? "")}). The golden gate rejected ${v}, so it was never made live. The loop has not run nightly on live traffic.`;
     return {
-      versions: "No version has served on this live gateway: the Night School run on Nebius is recorded below, and the teacher answers every request here.",
-      pipeline: "Night School has run once on Nebius (a recorded run, below); no version has served live traffic, so the teacher answers every request.",
+      versions: `No version has served on this live gateway, and the teacher answers every request. ${ran}`,
+      pipeline: ran,
     };
   }
   return {

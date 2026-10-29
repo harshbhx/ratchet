@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-26",
+  "updated": "2026-10-28",
   "links": {
     "repo": "https://github.com/harshbhx/ratchet",
     "docs": "https://docs.ratchet.dualmindlab.tech/",
@@ -166,10 +166,47 @@
       "metrics": []
     },
     {
+      "id": "night-school-nebius-run",
+      "claim": "Night School ran end to end once on Nebius, by hand, and the golden gate rejected the student",
+      "status": "real",
+      "evidence": "Night School ran end to end once on Nebius, by hand (28 Oct 2026): the gateway on a Nebius CPU VM, the training job on a spot L40S, the adapter served from a Nebius Serverless Endpoint. The golden gate rejected it (81.8% precision against the 95% target), so it was never made live. It imported 4,322 existing Ultra-labelled rows (no new teacher calls, no exam rows), trained on 3,864 of them (2 epochs, 966 steps, 1,478 s, loss about 0.15 to 0.08, token accuracy about 0.975) and was graded on 458 golden rows, SQL compared as text: agreement 17.9%; at the gate's threshold the student would answer 4.8% of questions with 81.8% precision (9 of 11) against the 95% target. Caveats: four job submissions (an accidental on-demand job that was cancelled, a missing einops, a save that failed and was recovered, then the job that saved); the night's own evaluation timed out at 15 s, so the gate result comes from running the eval and the gate again on the saved adapter with a 120 s timeout, through a one-off driver; five problems fixed by hand on the VM are now fixed in the repository; about 2.7 GPU-hours, at most about $4 at list prices (an estimate; the Nebius bill decides). The live site's own gateway is still on Cloudflare and is not connected to that endpoint, and the loop has not run nightly on live traffic. No saving is claimed.",
+      "check": {
+        "label": "Read the evidence folder",
+        "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius"
+      },
+      "paths": [
+        "evidence/nightschool-nebius/"
+      ],
+      "date": "2026-10-28",
+      "facts": [
+        {
+          "label": "Where",
+          "value": "A Nebius CPU VM (eu-west1), a spot L40S Serverless Job, a Serverless Endpoint"
+        },
+        {
+          "label": "Rows",
+          "value": "4,322 imported; 3,864 trained on, 458 golden"
+        },
+        {
+          "label": "Training",
+          "value": "2 epochs, 966 steps, 1,478 s; loss about 0.15 to 0.08"
+        },
+        {
+          "label": "Golden gate",
+          "value": "Rejected: 81.8% precision (9 of 11) against the 95% target; never made live"
+        },
+        {
+          "label": "Not claimed",
+          "value": "A nightly run on live traffic, any saving, or a connection to the live site"
+        }
+      ],
+      "metrics": []
+    },
+    {
       "id": "gateway-live",
-      "claim": "The live gateway served from a Nebius Serverless Endpoint, and the nightly job",
+      "claim": "The live gateway served from a Nebius Serverless Endpoint, and Night School every night",
       "status": "not-run",
-      "evidence": "The live gateway is not connected to a student endpoint, so the teacher answers every request. The Serverless Endpoint script and the nightly Night School job are tested offline and ready to run with make nebius-plan. The student was served on an endpoint, by hand, in two short sessions, for speed tests (see the entry above), and that endpoint was deleted. One Nebius Serverless Job has run, by hand: the round-2 retraining on 27 Oct 2026 (see the adapter entry). The nightly loop itself has not run on live traffic: it is built and tested. Both published text-to-SQL rounds were trained on a borrowed GPU.",
+      "evidence": "The live gateway is not connected to a student endpoint, so the teacher answers every request. The one-command Nebius host and the nightly schedule are tested offline and ready to run with make nebius-plan. The student was served on an endpoint, by hand, in two short sessions, for speed tests (see the entry above), and that endpoint was deleted. One Nebius Serverless Job has run, by hand: the round-2 retraining on 27 Oct 2026 (see the adapter entry). Night School ran end to end once on Nebius, by hand, on 28 Oct 2026, and the golden gate rejected that student, so it was never made live (see the Night School entry); the nightly loop itself has not run on live traffic. Both published text-to-SQL rounds were trained on a borrowed GPU.",
       "check": {
         "label": "Print every command the Nebius path runs (it changes nothing)",
         "command": "make nebius-plan"

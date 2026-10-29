@@ -296,7 +296,7 @@ test("the story is nine steps of 60 to 90 seconds, in the order of the brief, wi
   );
   const exam = steps.find((s) => s.id === "exam").caption;
   for (const n of ["39.0%", "33.0%", "12.8%", "12.5%"]) assert.ok(exam.includes(n), n);
-  assert.match(steps.find((s) => s.id === "night").caption, /not yet run on live traffic/i);
+  assert.match(steps.find((s) => s.id === "night").caption, /rejected it.*not yet run nightly on live traffic/i);
   assert.match(steps.find((s) => s.id === "retrain").caption, /Nebius AI Cloud/);
   assert.match(steps.find((s) => s.id === "endpoint").caption, /Ultra/);
   assert.match(steps.find((s) => s.id === "gate").caption, /not yet/i);

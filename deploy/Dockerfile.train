@@ -6,7 +6,8 @@
 # The Mamba kernels (causal-conv1d, mamba-ssm) are NOT compiled here: a GPU-less builder compiles for the wrong
 # architectures and for hours. As in run.sh, deploy/install_kernels.sh restores the wheels built for the L40S (sm_89) from the
 # job's bucket (/data/wheels-8.9) when the job starts, and compiles them with run.sh's flags only when they are missing.
-# Unsloth is not installed: its release of Oct 19, 2026 requires trl<=1.15.0 (ADR 0145). Build from the repository root:
+# einops is installed here because mamba-ssm needs it and install_kernels.sh restores the wheels with --no-deps (the 28 Oct
+# 2026 night's kernel check failed without it). Unsloth is not installed: its release of Oct 19, 2026 requires trl<=1.15.0 (ADR 0145). Build from the repository root:
 # docker build -f deploy/Dockerfile.train .
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel
 
@@ -16,7 +17,7 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 COPY deploy/train-versions.txt /tmp/train-versions.txt
 # --ignore-installed: the base image's own wheel and setuptools have no pip RECORD to uninstall.
 RUN pip install --no-cache-dir --ignore-installed -c /tmp/train-versions.txt "ninja==1.13.0" "packaging==26.0" "setuptools==81.0.0" "wheel==0.46.3"
-RUN pip install --no-cache-dir -c /tmp/train-versions.txt "trl==1.16.0" "transformers==5.20.1" "peft==0.21.2" "accelerate==1.15.0" "datasets==5.1.0"
+RUN pip install --no-cache-dir -c /tmp/train-versions.txt "trl==1.16.0" "transformers==5.20.1" "peft==0.21.2" "accelerate==1.15.0" "datasets==5.1.0" "einops==0.8.2"
 RUN python -c "import torch, trl, transformers, peft; assert torch.__version__.startswith('2.11.0') and torch.version.cuda == '12.8', (torch.__version__, torch.version.cuda)"
 
 WORKDIR /app
