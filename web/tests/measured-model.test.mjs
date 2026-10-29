@@ -93,3 +93,14 @@ test("dollars keep four places when small and the wording has no demo or simulat
   const all = JSON.stringify(m.measuredTiles(data)) + JSON.stringify(m.nightSchoolWording(data)) + JSON.stringify(m.liveLine(persistent()));
   assert.ok(!/demo|simulat/i.test(all));
 });
+
+test("recorded runs to date are sums of the evidence values", () => {
+  const r = m.recordedToDate(data);
+  const calls = data.scout.runs.reduce((n, x) => n + x.llm_calls, 0);
+  assert.ok(r.headline.startsWith(`Recorded runs to date: ${calls} model calls across ${data.scout.runs.length} Scout runs`));
+  assert.equal(r.source, "evidence/scout");
+  assert.equal(r.date, "2026-10-23");
+  assert.equal(r.dateEnd, "2026-10-24");
+  assert.equal(m.recordedToDate({ ...data, scout: { ...data.scout, runs: [] } }), null);
+  assert.ok(!/demo|simulat|sample/i.test(r.headline));
+});

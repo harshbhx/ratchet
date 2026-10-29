@@ -386,3 +386,30 @@ export function nightSchoolWording(d: MeasuredData): { versions: string; pipelin
     pipeline: "The nightly loop is built and tested but has not run on live traffic.",
   };
 }
+
+/** Live totals this small are shown beside the recorded runs instead of alone. */
+export const THIN_LIVE_REQUESTS = 100;
+
+export interface RecordedToDate {
+  headline: string;
+  source: string;
+  date: string;
+  dateEnd: string;
+}
+
+/**
+ * "Recorded runs to date": what the saved runs add up to, summed from the snapshot (the recorded Scout runs and the live smoke run), for a
+ * page whose live totals are thin. Every figure is a sum of values the evidence files hold; nothing is estimated.
+ */
+export function recordedToDate(d: MeasuredData): RecordedToDate | null {
+  const runs = d.scout.runs;
+  if (runs.length === 0) return null;
+  const calls = runs.reduce((n, r) => n + r.llm_calls, 0);
+  const usd = runs.reduce((n, r) => n + r.cost_usd, 0);
+  return {
+    headline: `Recorded runs to date: ${fmtInt(calls)} model calls across ${runs.length} Scout runs, ${fmtUsd(usd)}; ${fmtInt(d.smoke.requests)} requests in the live smoke run, ${fmtUsd(d.smoke.total_usd)}`,
+    source: d.scout.source,
+    date: d.scout.date,
+    dateEnd: d.smoke.date > d.scout.date_end ? d.smoke.date : d.scout.date_end,
+  };
+}

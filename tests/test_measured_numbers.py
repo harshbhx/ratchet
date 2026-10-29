@@ -56,6 +56,8 @@ def test_values_recomputed_by_hand():
     assert DATA["smoke"]["requests"] <= len([ln for ln in log if ln.strip()])
     for run in DATA["scout"]["runs"]:
         rec = json.loads((ROOT / run["file"]).read_text(encoding="utf-8"))
+        done = [e for e in rec["events"] if e["type"] == "done"][-1]
+        assert run["llm_calls"] == done["totals"]["llm_calls"]
         assert run["recorded_at"] == rec["recorded_at"] and run["question"] == rec["question"]
         assert (
             sum(e["cost_usd"] or 0 for e in rec["events"] if e["type"] == "step") == run["cost_usd"]

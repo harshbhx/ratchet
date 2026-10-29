@@ -11,6 +11,8 @@ import {
   nightSchoolTile,
   parseMeasured,
   parsePersistent,
+  recordedToDate,
+  THIN_LIVE_REQUESTS,
   sourceHref,
   fmtDay,
   type Persistent,
@@ -140,6 +142,18 @@ export function MeasuredTiles({ ids, className }: { ids?: string[]; className?: 
   );
 }
 
+/** "Recorded runs to date: ..." with its date badge and the evidence folder, from the snapshot's own sums. */
+export function RecordedLine({ className }: { className?: string }) {
+  const r = MEASURED ? recordedToDate(MEASURED) : null;
+  if (!r) return null;
+  return (
+    <div className={cn("flex min-w-0 flex-col gap-1.5", className)}>
+      <p className="text-[13.5px] leading-relaxed text-ink-2">{r.headline}</p>
+      <MeasuredChip date={r.date} dateEnd={r.dateEnd} source={r.source} tag="Recorded run" />
+    </div>
+  );
+}
+
 /**
  * "Live since 29 Oct 2026: N requests, $X Token Factory, ..." from the Worker's running totals, which survive restarts. With nothing
  * recorded (or while the first read is out) it says what the page shows instead, never a zero.
@@ -166,6 +180,7 @@ export function LiveSince({ className }: { className?: string }) {
             </div>
           ))}
         </dl>
+        {p.totals.requests < THIN_LIVE_REQUESTS && MEASURED && <RecordedLine className="mt-3" />}
         <p className="mt-2 text-[12px] leading-snug text-muted">
           Counts and dollars only, kept outside the container so a restart does not reset them. Counted since the first record. No trained adapter serves live traffic yet.
         </p>
@@ -180,6 +195,7 @@ export function LiveSince({ className }: { className?: string }) {
         </Badge>
         The live counters start with the first request and are kept across restarts. Until then this page shows what was measured, each value dated and linked to its evidence.
       </p>
+      {MEASURED && <RecordedLine className="mt-2" />}
     </section>
   );
 }
