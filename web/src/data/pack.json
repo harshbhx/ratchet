@@ -1,0 +1,545 @@
+{
+  "updated": "2026-10-29",
+  "headline": "Built on NVIDIA Nemotron and Nebius: every model call on the live site runs on Nebius Token Factory, the adapter was retrained on Nebius AI Cloud, and the student was served from a Nebius Serverless Endpoint in a measured test.",
+  "pitch": "Ratchet is an OpenAI-compatible gateway for license-clean distillation on open models. A small NVIDIA Nemotron 3 Nano 4B student answers first. When it is unsure, the request goes to the teacher, Nemotron 3 Ultra on Nebius Token Factory, and the answer is logged with the teacher's name and license. Night School is built to train a new student from those answers and release it only if it passes a statistical gate. Measured: a Nano adapter taught by Ultra goes from 12.8% to 39.0% on a text-to-SQL exam it never saw, for about $17 on record, and every score recomputes from the saved answers.",
+  "path": [
+    {
+      "id": "live",
+      "title": "Use it",
+      "body": "Open /live and send a real request. Nemotron 3 Ultra on Nebius Token Factory answers, and a badge says who answered. No key needed; send a few at most.",
+      "cta": {
+        "label": "Open /live",
+        "href": "/live"
+      }
+    },
+    {
+      "id": "results",
+      "title": "Read the exam results",
+      "body": "Two held-out exams, scored strictly, with every saved answer public.",
+      "cta": {
+        "label": "See the proof",
+        "href": "#proof"
+      }
+    },
+    {
+      "id": "verify",
+      "title": "Run one check",
+      "body": "Open one evidence folder and run one command on a clone. Nothing needs a GPU or a key.",
+      "command": "python scripts/text2sql/exam_numbers.py --check",
+      "cta": {
+        "label": "Evidence folders",
+        "href": "https://github.com/harshbhx/ratchet/tree/main/evidence"
+      }
+    },
+    {
+      "id": "video",
+      "title": "Watch the video",
+      "body": "The whole project in 2 minutes 59 seconds.",
+      "cta": {
+        "label": "Watch (2:59)",
+        "href": "https://video.ratchet.dualmindlab.tech/?from=judges"
+      }
+    }
+  ],
+  "proof": [
+    {
+      "id": "text2sql",
+      "title": "Text-to-SQL exams",
+      "status": "measured",
+      "number": "39.0% / 33.0%",
+      "note": "Adapter on exam 1 / exam 2. Untrained 12.8% / 12.5%, teacher (Ultra) 25.6% / 15.0%.",
+      "date": "22 to 24 Oct 2026",
+      "evidence": [
+        {
+          "label": "Round 1",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round1"
+        },
+        {
+          "label": "Round 2",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2"
+        },
+        {
+          "label": "Exam 2",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-exam2"
+        }
+      ],
+      "command": "python scripts/text2sql/exam_numbers.py --check"
+    },
+    {
+      "id": "toolcall",
+      "title": "Tool calling",
+      "status": "measured",
+      "number": "90.7%",
+      "note": "Hard exam; Ultra scores 91.3%. On the BFCL sample the adapter scores 80.3%.",
+      "date": "24 Oct 2026",
+      "evidence": [
+        {
+          "label": "evidence/toolcall",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/toolcall"
+        }
+      ],
+      "command": "python scripts/toolcall_results.py --check"
+    },
+    {
+      "id": "retrain",
+      "title": "Retrain on Nebius AI Cloud",
+      "status": "measured",
+      "number": "40.7% / 34.5%",
+      "note": "The 39.0% / 33.0% result reproduces on a Nebius Serverless Job (one spot L40S). About $2.16 at list prices.",
+      "date": "27 Oct 2026",
+      "evidence": [
+        {
+          "label": "evidence/text2sql-round2-nebius",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius"
+        }
+      ],
+      "command": "python evidence/text2sql-round2-nebius/score_nebius.py verify"
+    },
+    {
+      "id": "endpoint",
+      "title": "Student on a Nebius Serverless Endpoint",
+      "status": "measured",
+      "number": "7.2 to 7.6 min",
+      "note": "Cold start; a restart took 7.1 min. With 16 users at once the median answer took 1.6 s (SQL adapter) and 1.2 s (tool calling). Speed only, no accuracy scored.",
+      "date": "27 to 28 Oct 2026",
+      "evidence": [
+        {
+          "label": "evidence/student-endpoint-nebius",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius"
+        }
+      ]
+    },
+    {
+      "id": "nightschool",
+      "title": "Night School, once, on Nebius",
+      "status": "measured",
+      "number": "81.8% vs 95%",
+      "note": "End to end by hand: gateway on a CPU VM, a spot L40S job, the adapter on an endpoint. The golden gate rejected it, so it was never made live.",
+      "date": "28 Oct 2026",
+      "evidence": [
+        {
+          "label": "evidence/nightschool-nebius",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius"
+        }
+      ]
+    },
+    {
+      "id": "prices",
+      "title": "Prices verified",
+      "status": "real",
+      "number": "29 Oct",
+      "note": "Token Factory list prices read from the price list it serves and matched to the gateway's config; every probe passed.",
+      "date": "29 Oct 2026",
+      "evidence": [
+        {
+          "label": "evidence/day1",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/day1"
+        }
+      ]
+    },
+    {
+      "id": "scout",
+      "title": "Scout runs",
+      "status": "real",
+      "number": "about $0.02",
+      "note": "A run of the multi-agent research tool: 18 to 20 model calls, all answered by the teacher. Three recorded live runs, replayable in the browser.",
+      "date": "23 to 24 Oct 2026",
+      "evidence": [
+        {
+          "label": "evidence/scout",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/scout"
+        },
+        {
+          "label": "Replay Space",
+          "href": "https://huggingface.co/spaces/harshbhx/ratchet-scout"
+        }
+      ]
+    },
+    {
+      "id": "bom",
+      "title": "Signed bill of materials",
+      "status": "real",
+      "number": "81b0a086250a81d0",
+      "note": "Ed25519 key id. The Night School BOM was signed on 29 Oct, after the run; the content is unchanged from the run's own record.",
+      "date": "29 Oct 2026",
+      "evidence": [
+        {
+          "label": "Public key",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/keys"
+        },
+        {
+          "label": "Signed BOM",
+          "href": "https://github.com/harshbhx/ratchet/blob/main/evidence/nightschool-nebius/ratchet_bom.signed.json"
+        }
+      ],
+      "command": "python -m ratchet.bom verify evidence/nightschool-nebius/ratchet_bom.signed.json --public-key Gh68hnDDlRSjBRxmc5dTo4l+rvqkftUsH7B2Nm72gpc= --notice evidence/nightschool-nebius/NOTICE.md"
+    }
+  ],
+  "groups": [
+    {
+      "id": "live",
+      "title": "Live",
+      "icon": "radio",
+      "items": [
+        {
+          "label": "The site",
+          "href": "https://ratchet.dualmindlab.tech",
+          "note": "The story"
+        },
+        {
+          "label": "Try it live",
+          "href": "/live",
+          "note": "A real request"
+        },
+        {
+          "label": "Judges page",
+          "href": "/judges",
+          "note": "You are here"
+        },
+        {
+          "label": "Dashboard",
+          "href": "/dashboard",
+          "note": "Operator console"
+        },
+        {
+          "label": "Scout",
+          "href": "/scout",
+          "note": "Multi-agent research"
+        }
+      ]
+    },
+    {
+      "id": "docs",
+      "title": "Docs",
+      "icon": "book",
+      "items": [
+        {
+          "label": "Docs home",
+          "href": "https://docs.ratchet.dualmindlab.tech",
+          "note": "Guides and reference"
+        },
+        {
+          "label": "Quickstart",
+          "href": "https://docs.ratchet.dualmindlab.tech/guides/quickstart/",
+          "note": "Five minutes"
+        },
+        {
+          "label": "For judges",
+          "href": "https://docs.ratchet.dualmindlab.tech/guides/for-judges/",
+          "note": "This pack, in the docs"
+        },
+        {
+          "label": "llms.txt",
+          "href": "https://docs.ratchet.dualmindlab.tech/llms.txt",
+          "note": "Every page as text"
+        }
+      ]
+    },
+    {
+      "id": "code",
+      "title": "Code",
+      "icon": "github",
+      "items": [
+        {
+          "label": "GitHub repository",
+          "href": "https://github.com/harshbhx/ratchet",
+          "note": "Public"
+        },
+        {
+          "label": "README",
+          "href": "https://github.com/harshbhx/ratchet/blob/main/README.md",
+          "note": "Overview and feedback"
+        },
+        {
+          "label": "Apache-2.0 license",
+          "href": "https://github.com/harshbhx/ratchet/blob/main/LICENSE",
+          "note": "Open source"
+        },
+        {
+          "label": "Changelog",
+          "href": "https://github.com/harshbhx/ratchet/blob/main/CHANGELOG.md",
+          "note": "What changed"
+        },
+        {
+          "label": "Latest release",
+          "href": "https://github.com/harshbhx/ratchet/releases/latest",
+          "note": "v0.5.0"
+        },
+        {
+          "label": "Check it yourself",
+          "href": "https://github.com/harshbhx/ratchet/blob/main/docs/VERIFY.md",
+          "note": "VERIFY.md"
+        }
+      ]
+    },
+    {
+      "id": "evidence",
+      "title": "Evidence",
+      "icon": "shield",
+      "items": [
+        {
+          "label": "text2sql-round1",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round1",
+          "note": "Exam 1"
+        },
+        {
+          "label": "text2sql-round2",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2",
+          "note": "Headline adapter"
+        },
+        {
+          "label": "text2sql-exam2",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-exam2",
+          "note": "Exam 2"
+        },
+        {
+          "label": "toolcall",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/toolcall",
+          "note": "Tool calling"
+        },
+        {
+          "label": "text2sql-round2-nebius",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/text2sql-round2-nebius",
+          "note": "Nebius retrain"
+        },
+        {
+          "label": "student-endpoint-nebius",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/student-endpoint-nebius",
+          "note": "Speed tests"
+        },
+        {
+          "label": "nightschool-nebius",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/nightschool-nebius",
+          "note": "Night School run"
+        },
+        {
+          "label": "keys",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/keys",
+          "note": "Signing key"
+        },
+        {
+          "label": "day1",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/day1",
+          "note": "Prices checked"
+        },
+        {
+          "label": "live-smoke-2026-10-23",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/live-smoke-2026-10-23",
+          "note": "Live smoke run"
+        },
+        {
+          "label": "scout",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/scout",
+          "note": "Recorded Scout runs"
+        },
+        {
+          "label": "hosted-nano",
+          "href": "https://github.com/harshbhx/ratchet/tree/main/evidence/hosted-nano",
+          "note": "Hosted Nano check"
+        }
+      ]
+    },
+    {
+      "id": "hf",
+      "title": "Hugging Face",
+      "icon": "hf",
+      "items": [
+        {
+          "label": "The collection",
+          "href": "https://huggingface.co/collections/harshbhx/ratchet",
+          "note": "Everything below"
+        },
+        {
+          "label": "ratchet-nemotron-nano-4b-text2sql",
+          "href": "https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql",
+          "note": "Model"
+        },
+        {
+          "label": "ratchet-nemotron-nano-4b-toolcall",
+          "href": "https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-toolcall",
+          "note": "Model"
+        },
+        {
+          "label": "ratchet-nemotron-nano-4b-text2sql-nebius",
+          "href": "https://huggingface.co/harshbhx/ratchet-nemotron-nano-4b-text2sql-nebius",
+          "note": "Model, retrained on Nebius"
+        },
+        {
+          "label": "Text-to-SQL exams",
+          "href": "https://huggingface.co/datasets/harshbhx/ratchet-text2sql-exams",
+          "note": "Dataset, every answer"
+        },
+        {
+          "label": "Tool-calling hard exam",
+          "href": "https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-hard",
+          "note": "Dataset"
+        },
+        {
+          "label": "BFCL exam",
+          "href": "https://huggingface.co/datasets/harshbhx/ratchet-toolcall-exam-bfcl",
+          "note": "Dataset"
+        },
+        {
+          "label": "Scout replay",
+          "href": "https://huggingface.co/spaces/harshbhx/ratchet-scout",
+          "note": "Space"
+        },
+        {
+          "label": "Exam explorer",
+          "href": "https://huggingface.co/spaces/harshbhx/ratchet-toolcall-explorer",
+          "note": "Space"
+        }
+      ]
+    },
+    {
+      "id": "video",
+      "title": "Video",
+      "icon": "youtube",
+      "items": [
+        {
+          "label": "Watch the video",
+          "href": "https://video.ratchet.dualmindlab.tech/?from=judges",
+          "note": "2:59, public on YouTube"
+        }
+      ]
+    }
+  ],
+  "where": [
+    {
+      "where": "Nebius Token Factory",
+      "what": "Every model call on the live site: the teacher (Nemotron 3 Ultra), the hosted Nano for the random split, the judge."
+    },
+    {
+      "where": "Nebius AI Cloud",
+      "what": "The round-2 retrain (27 Oct) and the Night School training job (28 Oct) on a spot L40S; the Serverless Endpoint for the speed tests and the Night School adapter; a CPU VM for the Night School gateway; an Object Storage bucket. All by hand."
+    },
+    {
+      "where": "NVIDIA Nemotron",
+      "what": "Ultra (teacher), Nano 4B (student, with a LoRA adapter), hosted Nano 30B (random split)."
+    },
+    {
+      "where": "Cloudflare",
+      "what": "The story site, the docs and the live gateway, CPU only."
+    },
+    {
+      "where": "A borrowed GPU",
+      "what": "Training of the two original adapters."
+    }
+  ],
+  "checklist": [
+    {
+      "id": "nebius-nvidia",
+      "item": "Nebius Token Factory and AI Cloud, with NVIDIA open models",
+      "detail": "Nemotron 3 Ultra on Token Factory; Nemotron 3 Nano 4B retrained on AI Cloud.",
+      "links": [
+        {
+          "label": "What runs where",
+          "href": "https://github.com/harshbhx/ratchet/blob/main/docs/WHERE_IT_RUNS.md"
+        }
+      ]
+    },
+    {
+      "id": "video",
+      "item": "Video",
+      "detail": "2 minutes 59 seconds, public on YouTube.",
+      "links": [
+        {
+          "label": "Watch",
+          "href": "https://video.ratchet.dualmindlab.tech/?from=judges"
+        }
+      ]
+    },
+    {
+      "id": "repo",
+      "item": "Public repository with license and README",
+      "detail": "Apache-2.0.",
+      "links": [
+        {
+          "label": "Repository",
+          "href": "https://github.com/harshbhx/ratchet"
+        },
+        {
+          "label": "License",
+          "href": "https://github.com/harshbhx/ratchet/blob/main/LICENSE"
+        },
+        {
+          "label": "README",
+          "href": "https://github.com/harshbhx/ratchet/blob/main/README.md"
+        }
+      ]
+    },
+    {
+      "id": "url",
+      "item": "Working URL",
+      "detail": "The live site; /live sends a real request.",
+      "links": [
+        {
+          "label": "Site",
+          "href": "https://ratchet.dualmindlab.tech"
+        },
+        {
+          "label": "/live",
+          "href": "/live"
+        }
+      ]
+    },
+    {
+      "id": "feedback",
+      "item": "Feedback on Nebius and NVIDIA",
+      "detail": "A section of the README.",
+      "links": [
+        {
+          "label": "Read it",
+          "href": "https://github.com/harshbhx/ratchet#feedback-on-nebius-and-nvidia"
+        }
+      ]
+    }
+  ],
+  "trackNote": "The track is the one chosen on the Devpost page.",
+  "ran": [
+    "Real Token Factory calls on the live site",
+    "The text-to-SQL and tool-calling adapters and their exams",
+    "The retrain on Nebius AI Cloud",
+    "The endpoint speed tests",
+    "One Night School run on Nebius, by hand, that the gate rejected",
+    "The signed BOM and the 29 Oct price check"
+  ],
+  "notYet": [
+    "The nightly loop on live traffic",
+    "The live site connected to a student endpoint: the teacher answers every request",
+    "Measured savings",
+    "The GPU-hour rate used in estimates is unverified; the Nebius bill decides"
+  ],
+  "costs": [
+    {
+      "item": "Labelling by the teacher",
+      "value": "$2.87 + $9.18",
+      "note": "round 1 and round 2"
+    },
+    {
+      "item": "Nebius retrain",
+      "value": "about $2.16",
+      "note": "27 Oct, failed attempts included"
+    },
+    {
+      "item": "Endpoint speed tests",
+      "value": "about $0.67",
+      "note": "27 to 28 Oct, two sessions"
+    },
+    {
+      "item": "Night School run",
+      "value": "about 2.7 GPU-hours",
+      "note": "28 Oct, at most about $4 at list prices"
+    },
+    {
+      "item": "One real request on the live site",
+      "value": "about $0.0002",
+      "note": "29 Oct check"
+    },
+    {
+      "item": "One Scout run",
+      "value": "about $0.02",
+      "note": "29 Oct check"
+    }
+  ]
+}

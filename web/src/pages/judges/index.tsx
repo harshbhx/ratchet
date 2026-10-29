@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router";
-import { ChevronsDownUp, ChevronsUpDown, Compass, LayoutDashboard } from "lucide-react";
+import { useSearchParams } from "react-router";
+import { ChevronsDownUp, ChevronsUpDown, Compass } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Container } from "@/components/ui/section";
 import { RealBadge } from "@/components/ui/real-badge";
@@ -18,11 +18,15 @@ import { CertificateChapter, ProofChapter, ReceiptsChapter, WatchChapter } from 
 import { CostChapter, PrivacyChapter, ResilienceChapter } from "./inside-c";
 import { CheckChapter, LimitsChapter, SponsorsChapter } from "./check";
 import { ChapterProvider, useChapters } from "./ui";
-import { StageOneCard } from "./stage-one";
+import { ChecklistSection, LinksSection, PackHero, ProofSection } from "./pack";
+import { JUDGES_VIDEO } from "./real";
 
 /** The page's sections, in order: what the sticky bar links to and what each section's header says. */
 const SECTIONS = [
   { id: "overview", label: "Overview" },
+  { id: "proof", label: "Proof" },
+  { id: "links", label: "Links" },
+  { id: "checklist", label: "Checklist" },
   { id: "group-results", label: "Results" },
   { id: "group-outside", label: "Use it" },
   { id: "group-inside", label: "Inside" },
@@ -76,15 +80,6 @@ function scrollToId(id: string) {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
   window.setTimeout(() => (document.getElementById(`${id}-title`) as HTMLElement | null)?.focus({ preventScroll: true }), reduce ? 0 : 450);
-}
-
-/** Opens a chapter, then scrolls to its head; the same for a plain section. */
-function useGo() {
-  const ctl = useChapters();
-  return (id: string) => {
-    if (JUDGE_CHAPTERS.some((c) => c.id === id)) ctl?.reveal(id);
-    scrollToId(id);
-  };
 }
 
 /** One sticky bar for every screen size: five sections, the guided tour on the right. */
@@ -180,7 +175,6 @@ function Page() {
   const ids = useMemo(() => SECTIONS.map((s) => s.id) as string[], []);
   const current = useCurrentSection(ids);
   const headerH = useHeaderHeight();
-  const go = useGo();
   const [, setParams] = useSearchParams();
 
   useEffect(() => {
@@ -202,45 +196,30 @@ function Page() {
   return (
     <div className="relative overflow-x-clip">
       <div id="overview" className="scroll-mt-28">
-        <Container className="pb-10 pt-8 sm:pt-12">
-          <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-12">
-            <div className="min-w-0">
-              <p className="font-mono text-[12.5px] text-muted">For judges</p>
-              <h1 className="mt-3 text-balance text-[34px] font-semibold leading-[1.06] tracking-[-0.03em] text-ink sm:text-[44px]">
-                What is real in Ratchet, and how to check it.
-              </h1>
-              <p className="mt-4 text-pretty text-[17px] leading-relaxed text-ink-2">
-                Ratchet is an OpenAI-compatible gateway: a small model answers first and a larger open model steps in when it is unsure. Every claim below carries one
-                status, so you can see what ran for real and what is still to come.
-              </p>
-              <div className="mt-6 flex flex-wrap items-center gap-2">
-                <Button size="lg" onClick={startTour}>
-                  <Compass aria-hidden /> Start the guided tour
-                </Button>
-                <Link
-                  to="/dashboard?tour=1"
-                  className="inline-flex h-12 items-center gap-2 rounded-full px-4 text-[15px] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
-                >
-                  <LayoutDashboard className="size-4" aria-hidden /> Tour the dashboard
-                </Link>
-              </div>
-              <div className="mt-6 space-y-3">
-                <GatewayLine />
-                <LiveSince />
-              </div>
-            </div>
-            <StageOneCard onChapter={go} />
-          </div>
-          <div className="mt-6 rounded-2xl border border-line bg-bg-sunken/50 px-4 py-3.5 sm:px-5">
-            <p className="mb-2.5 text-[13px] font-medium text-ink">Status key</p>
-            <Legend />
-          </div>
-        </Container>
+        <PackHero video={JUDGES_VIDEO ?? "https://video.ratchet.dualmindlab.tech/?from=judges"}>
+          <GatewayLine />
+          <LiveSince />
+        </PackHero>
       </div>
 
       <SectionBar current={current} top={headerH} onTour={startTour} />
 
       <Container className="pb-24">
+        <ProofSection />
+        <LinksSection />
+        <ChecklistSection />
+
+        <div className="mt-16 border-t border-line pt-10 sm:mt-20">
+          <p className="text-[26px] font-semibold leading-tight tracking-[-0.025em] text-ink sm:text-[32px]">Go deeper: the console</p>
+          <p className="mt-1.5 max-w-[62ch] text-pretty text-[15.5px] leading-relaxed text-ink-2">
+            The same claims, chapter by chapter, with the live gateway's own numbers. Every claim carries one status.
+          </p>
+          <div className="mt-4 rounded-2xl border border-line bg-bg-sunken/50 px-4 py-3.5 sm:px-5">
+            <p className="mb-2.5 text-[13px] font-medium text-ink">Status key</p>
+            <Legend />
+          </div>
+        </div>
+
         <StartHere />
 
         <Group id="group-results" title="Results" group="start" purpose="What was measured, and what every claim on this site rests on.">
