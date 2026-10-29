@@ -20,11 +20,12 @@ export function ThemeIcon({ theme, className }: { theme: "light" | "dark"; class
   );
 }
 
-export function ThemeToggle({ className }: { className?: string }) {
+export function ThemeToggle({ className, tour = false }: { className?: string; tour?: boolean }) {
   const { theme, toggle } = useTheme();
   return (
     <button
       type="button"
+      data-tour={tour ? "theme" : undefined}
       onClick={(e) => toggle(e.currentTarget)}
       className={cn(
         "inline-flex size-9 items-center justify-center rounded-full text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:rounded-full",
@@ -295,7 +296,7 @@ export function SiteHeader({ gateway = "unknown" }: { gateway?: GatewayState }) 
           <NavPill items={items} pathname={pathname} activeSection={activeSection} />
 
           <div className="col-start-3 flex items-center justify-end gap-1">
-            <ThemeToggle className="hidden md:inline-flex" />
+            <ThemeToggle tour className="hidden md:inline-flex" />
             <LiveButton state={gateway} pathname={pathname} />
             <button
               ref={menuButton}

@@ -1,6 +1,7 @@
 import { useRef, type PointerEvent } from "react";
 import { Link } from "react-router";
 import { ArrowUpRight, BookOpen } from "lucide-react";
+import { signal, useCompanionsHidden } from "@/components/companions/companion-bus";
 import { GithubIcon, HuggingFaceIcon, YoutubeIcon } from "@/components/ui/brand-icons";
 import { Logo } from "@/components/ui/logo";
 import type { Stats } from "@/lib/api";
@@ -71,6 +72,20 @@ const ICON =
 const CTA = "inline-flex h-10 items-center gap-1.5 rounded-full px-4 text-[14px] font-medium transition-colors";
 const UL = "underline decoration-line-strong underline-offset-2 hover:text-ink";
 
+/** Brings Nano and Ultra back, or hides them; remembered on this device. */
+function HideCompanions() {
+  const hidden = useCompanionsHidden();
+  return (
+    <button
+      type="button"
+      onClick={() => signal({ type: hidden ? "show" : "hide" })}
+      className="inline-flex h-9 items-center rounded-full border border-line px-3.5 text-[13px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+    >
+      {hidden ? "Show Nano & Ultra" : "Hide Nano & Ultra"}
+    </button>
+  );
+}
+
 export function SiteFooter({ stats, error }: { stats: Stats | null; error: string | null }) {
   const root = useRef<HTMLElement | null>(null);
   const video = videoHref(REAL.links, "site");
@@ -97,7 +112,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
       />
 
       <div className="mx-auto w-full max-w-[1960px] px-4 sm:px-6 lg:px-10">
-        <div className="relative mt-12 overflow-hidden rounded-3xl border border-line bg-surface/90 p-6 shadow-card sm:p-8">
+        <div data-tour="check-numbers" className="relative mt-12 overflow-hidden rounded-3xl border border-line bg-surface/90 p-6 shadow-card sm:p-8">
           <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-50 [mask-image:linear-gradient(to_left,black,transparent_65%)]" />
           <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="max-w-xl">
@@ -125,7 +140,7 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
               <Logo />
             </Link>
             <p className="mt-5 text-balance text-[22px] font-semibold leading-snug tracking-[-0.025em] text-ink">{TAGLINE}</p>
-            <p className="mt-3 inline-flex max-w-full items-center rounded-full border border-line bg-surface/80 px-3 py-1 text-[12.5px] font-medium text-ink-2">{BUILT_ON}</p>
+            <p data-tour="built-on" className="mt-3 inline-flex max-w-full items-center rounded-full border border-line bg-surface/80 px-3 py-1 text-[12.5px] font-medium text-ink-2">{BUILT_ON}</p>
             </div>
             <div className="max-w-md">
             <p className="text-pretty text-[13px] leading-relaxed text-muted">
@@ -187,7 +202,10 @@ export function SiteFooter({ stats, error }: { stats: Stats | null; error: strin
               . Icons: Lucide (ISC) and Simple Icons (CC0); the GitHub, Hugging Face and YouTube marks belong to their owners and only link to them.
             </p>
           </div>
-          <ThemeToggle className="-my-1 shrink-0 self-start border border-line" />
+          <div className="flex shrink-0 flex-wrap items-center gap-2 self-start">
+            <HideCompanions />
+            <ThemeToggle className="-my-1 border border-line" />
+          </div>
         </div>
       </div>
 

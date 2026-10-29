@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from "react";
+import { useLocation } from "react-router";
 import { LoaderCircle, Radio, Send } from "lucide-react";
+import { signal } from "@/components/companions/companion-bus";
 import type { Mode } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,7 +36,9 @@ type State =
  */
 export function LiveRequest({ mode, className }: { mode: Mode | null; className?: string }) {
   const waking = isWaking(useWaking());
-  const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
+  // Nano and Ultra's "Send it for real" hands the visitor's own text over in the navigation state (never in the URL).
+  const handed = (useLocation().state as { companionPrefill?: unknown } | null)?.companionPrefill;
+  const [prompt, setPrompt] = useState(typeof handed === "string" && handed.trim() ? handed.slice(0, MAX_PROMPT_CHARS) : DEFAULT_PROMPT);
   const [state, setState] = useState<State>({ kind: "idle" });
   const sending = state.kind === "sending";
   const live = mode === "live";
@@ -44,6 +48,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
     e.preventDefault();
     if (sending || waking || limited || !mode || !prompt.trim()) return;
     setState({ kind: "sending" });
+    signal({ type: "live", phase: "sent" });
     try {
       const r = await gatewayFetch("/v1/chat/completions", {
         method: "POST",
@@ -55,18 +60,24 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
         const body = r.status === 429 ? await r.json().catch(() => null) : null;
         if (isDailyLimit(r.status, body)) {
           setState({ kind: "limit" });
-        } else setState({ kind: "error", message: errorText(r.status) });
+          signal({ type: "live", phase: "limit" });
+        } else {
+          setState({ kind: "error", message: errorText(r.status) });
+          signal({ type: "live", phase: "error" });
+        }
         return;
       }
       const answer = parseAnswer(await r.json());
       setState(answer && answer.text ? { kind: "done", answer } : { kind: "error", message: EMPTY_TEXT });
+      signal({ type: "live", phase: answer && answer.text ? "answer" : "error" });
     } catch {
       setState({ kind: "error", message: errorText(0) });
+      signal({ type: "live", phase: "error" });
     }
   };
 
   return (
-    <div className={cn("mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6", className)} aria-labelledby="live-req-title">
+    <div data-tour="live-request" data-live={live ? "true" : "false"} className={cn("mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6", className)} aria-labelledby="live-req-title">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <h3 id="live-req-title" className="text-[16px] font-semibold tracking-[-0.01em] text-ink">
           Try a real request
@@ -82,7 +93,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
           ? "This sends one short request to the live gateway. It is a real model call and costs a small amount, so each visitor gets a few a day. Your text is not stored."
           : "This sends one short request to mock models. The answer is not from a real model."}
       </p>
-      <form onSubmit={send} className="mt-4 flex flex-col gap-2.5 sm:flex-row">
+      <form onSubmit={send} data-companion-avoid className="mt-4 flex flex-col gap-2.5 sm:flex-row">
         <label htmlFor="live-req" className="sr-only">
           Your question
         </label>
@@ -121,7 +132,7 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
         {state.kind === "done" && (
           <div>
             <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{state.answer.text}</p>
-            <p className="mt-2.5 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+            <p data-tour="live-who" data-served-by={state.answer.servedBy ?? ""} className="mt-2.5 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
               {state.answer.servedBy ? (
                 <>
                   Answered by <WhoBadge servedBy={state.answer.servedBy} model={state.answer.model} route={state.answer.route} simulated={!live} />
@@ -132,9 +143,13 @@ export function LiveRequest({ mode, className }: { mode: Mode | null; className?
             </p>
           </div>
         )}
-        {state.kind === "error" && <p className="text-[14px] text-ink-2">{state.message}</p>}
+        {state.kind === "error" && (
+          <p data-tour="live-error" className="text-[14px] text-ink-2">
+            {state.message}
+          </p>
+        )}
         {state.kind === "limit" && (
-          <p className="text-[14.5px] leading-relaxed text-ink">
+          <p data-tour="live-limit" className="text-[14.5px] leading-relaxed text-ink">
             {DAILY_LIMIT_TEXT}
           </p>
         )}
