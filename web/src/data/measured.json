@@ -1,0 +1,390 @@
+{
+ "generator": "scripts/measured_numbers.py",
+ "exams": {
+  "date": "2026-10-24",
+  "source": "evidence/text2sql-round2",
+  "what": "Text-to-SQL, strict scoring: a query counts only if it returns exactly the reference rows",
+  "exams": [
+   {
+    "id": "exam1",
+    "name": "Exam 1",
+    "rows": 172,
+    "built": "22 Oct 2026",
+    "evidence": "evidence/text2sql-round1",
+    "scores": [
+     {
+      "model": "base",
+      "label": "Base model",
+      "agree": 22,
+      "n": 172,
+      "rate": 0.1279
+     },
+     {
+      "model": "teacher",
+      "label": "Teacher",
+      "agree": 44,
+      "n": 172,
+      "rate": 0.2558
+     },
+     {
+      "model": "r1",
+      "label": "Adapter, round 1",
+      "agree": 57,
+      "n": 172,
+      "rate": 0.3314
+     },
+     {
+      "model": "r2",
+      "label": "Adapter, round 2",
+      "agree": 67,
+      "n": 172,
+      "rate": 0.3895
+     }
+    ]
+   },
+   {
+    "id": "exam2",
+    "name": "Exam 2",
+    "rows": 200,
+    "built": "23 Oct 2026",
+    "evidence": "evidence/text2sql-exam2",
+    "scores": [
+     {
+      "model": "base",
+      "label": "Base model",
+      "agree": 25,
+      "n": 200,
+      "rate": 0.125
+     },
+     {
+      "model": "teacher",
+      "label": "Teacher",
+      "agree": 30,
+      "n": 200,
+      "rate": 0.15
+     },
+     {
+      "model": "r1",
+      "label": "Adapter, round 1",
+      "agree": 56,
+      "n": 200,
+      "rate": 0.28
+     },
+     {
+      "model": "r2",
+      "label": "Adapter, round 2",
+      "agree": 66,
+      "n": 200,
+      "rate": 0.33
+     }
+    ]
+   }
+  ]
+ },
+ "toolcall": {
+  "date": "2026-10-24",
+  "source": "evidence/toolcall",
+  "what": "Tool calling: the model's call agrees with the reference call, on two exams",
+  "exams": [
+   {
+    "id": "hard",
+    "label": "Hard exam",
+    "rows": 150,
+    "scores": [
+     {
+      "model": "base",
+      "agree": 94,
+      "n": 150,
+      "rate": 0.6267
+     },
+     {
+      "model": "adapter",
+      "agree": 136,
+      "n": 150,
+      "rate": 0.9067
+     },
+     {
+      "model": "ultra",
+      "agree": 137,
+      "n": 150,
+      "rate": 0.9133
+     }
+    ]
+   },
+   {
+    "id": "bfcl",
+    "label": "BFCL exam",
+    "rows": 300,
+    "scores": [
+     {
+      "model": "base",
+      "agree": 232,
+      "n": 300,
+      "rate": 0.7733
+     },
+     {
+      "model": "adapter",
+      "agree": 241,
+      "n": 300,
+      "rate": 0.8033
+     },
+     {
+      "model": "ultra",
+      "agree": 265,
+      "n": 300,
+      "rate": 0.8833
+     }
+    ]
+   }
+  ]
+ },
+ "retrain": {
+  "date": "2026-10-27",
+  "source": "evidence/text2sql-round2-nebius",
+  "what": "the round-2 recipe retrained on Nebius AI Cloud (one preemptible L40S, Serverless Job); adapter answers only",
+  "exams": [
+   {
+    "id": "exam1",
+    "nebius": {
+     "agree": 70,
+     "n": 172,
+     "rate": 0.407
+    },
+    "original": {
+     "agree": 67,
+     "n": 172,
+     "rate": 0.3895
+    }
+   },
+   {
+    "id": "exam2",
+    "nebius": {
+     "agree": 69,
+     "n": 200,
+     "rate": 0.345
+    },
+    "original": {
+     "agree": 66,
+     "n": 200,
+     "rate": 0.33
+    }
+   }
+  ],
+  "machine_hours": 2.73,
+  "cost_usd": 2.16,
+  "jobs": 10,
+  "adapter_sha256": "68b9ed06d984a2ec38a32b58090c246a56ae12ba65f3277f66b5d74227ea25d5"
+ },
+ "endpoint": {
+  "date": "2026-10-27",
+  "date_end": "2026-10-28",
+  "source": "evidence/student-endpoint-nebius",
+  "what": "The student served by hand on a Nebius Serverless Endpoint for speed tests; no accuracy was scored and it serves no live traffic",
+  "gpu_usd_per_hour": 0.74,
+  "max_tokens": 256,
+  "cold_start_s": 457.7,
+  "cold_running_s": 275.9,
+  "restart_s": 424.5,
+  "restart_running_s": 275.9,
+  "adapter_load_s": 0.74,
+  "bench": [
+   {
+    "adapter": "sql-r2",
+    "concurrency": 1,
+    "requests": 20,
+    "ok": 19,
+    "errors": 1,
+    "lat_p50_s": 0.9904,
+    "lat_p95_s": 1.7393,
+    "tokens_per_s_total": 11.4,
+    "requests_per_s": 0.301,
+    "usd_per_1000": 0.683
+   },
+   {
+    "adapter": "sql-r2",
+    "concurrency": 4,
+    "requests": 40,
+    "ok": 40,
+    "errors": 0,
+    "lat_p50_s": 1.2542,
+    "lat_p95_s": 1.8919,
+    "tokens_per_s_total": 121.3,
+    "requests_per_s": 3.111,
+    "usd_per_1000": 0.0661
+   },
+   {
+    "adapter": "sql-r2",
+    "concurrency": 16,
+    "requests": 64,
+    "ok": 64,
+    "errors": 0,
+    "lat_p50_s": 1.6334,
+    "lat_p95_s": 3.9434,
+    "tokens_per_s_total": 276.3,
+    "requests_per_s": 7.059,
+    "usd_per_1000": 0.0291
+   },
+   {
+    "adapter": "toolcall",
+    "concurrency": 1,
+    "requests": 20,
+    "ok": 20,
+    "errors": 0,
+    "lat_p50_s": 0.9479,
+    "lat_p95_s": 1.2551,
+    "tokens_per_s_total": 27.7,
+    "requests_per_s": 0.974,
+    "usd_per_1000": 0.2111
+   },
+   {
+    "adapter": "toolcall",
+    "concurrency": 4,
+    "requests": 40,
+    "ok": 40,
+    "errors": 0,
+    "lat_p50_s": 1.0489,
+    "lat_p95_s": 1.306,
+    "tokens_per_s_total": 100.7,
+    "requests_per_s": 3.447,
+    "usd_per_1000": 0.0596
+   },
+   {
+    "adapter": "toolcall",
+    "concurrency": 16,
+    "requests": 64,
+    "ok": 64,
+    "errors": 0,
+    "lat_p50_s": 1.2303,
+    "lat_p95_s": 2.525,
+    "tokens_per_s_total": 302.1,
+    "requests_per_s": 10.628,
+    "usd_per_1000": 0.0193
+   }
+  ]
+ },
+ "scout": {
+  "date": "2026-10-23",
+  "date_end": "2026-10-24",
+  "source": "evidence/scout",
+  "what": "Three recorded Scout runs on Token Factory with live search; the teacher answered every model call",
+  "runs": [
+   {
+    "file": "evidence/scout/20261023T231345Z-what-is-lora-fine-tuning-and-why-is-it-c.json",
+    "recorded_at": "2026-10-23T23:13:45Z",
+    "question": "What is LoRA fine-tuning and why is it cheaper than full fine-tuning?",
+    "duration_s": 16.2,
+    "calls": 23,
+    "llm_calls": 20,
+    "teacher_calls": 20,
+    "student_calls": 0,
+    "cost_usd": 0.02767,
+    "citations": 3
+   },
+   {
+    "file": "evidence/scout/20261023T231400Z-what-is-model-distillation-and-when-does.json",
+    "recorded_at": "2026-10-23T23:14:00Z",
+    "question": "What is model distillation and when does it fail?",
+    "duration_s": 13.2,
+    "calls": 21,
+    "llm_calls": 18,
+    "teacher_calls": 18,
+    "student_calls": 0,
+    "cost_usd": 0.022347,
+    "citations": 1
+   },
+   {
+    "file": "evidence/scout/20261024T115646Z-what-is-retrieval-augmented-generation-a.json",
+    "recorded_at": "2026-10-24T11:56:46Z",
+    "question": "What is retrieval-augmented generation and when does it help?",
+    "duration_s": 14.8,
+    "calls": 22,
+    "llm_calls": 19,
+    "teacher_calls": 19,
+    "student_calls": 0,
+    "cost_usd": 0.022516,
+    "citations": 5
+   }
+  ]
+ },
+ "smoke": {
+  "date": "2026-10-23",
+  "source": "evidence/live-smoke-2026-10-23",
+  "what": "One live smoke run on Token Factory, no student endpoint: the teacher answered every request",
+  "run_id": "20261023T211213Z",
+  "requests": 20,
+  "total_usd": 0.013255999999999999,
+  "teacher_p50_wall_ms": 917.5443999993149,
+  "ultra_p50_client_ms": 892.2662999975728,
+  "wall_s": 8.1,
+  "student_share_pct": 0.0
+ },
+ "labelling": {
+  "date": "2026-10-23",
+  "source": "evidence/text2sql-round2/data/teacher_manifest_round2.json",
+  "what": "What the teacher's text-to-SQL labels cost on Token Factory, at list prices",
+  "rounds": [
+   {
+    "id": "round1",
+    "date": "2026-10-22",
+    "usd": 2.8701,
+    "calls": 273,
+    "rows": 993,
+    "source": "evidence/text2sql-round1/data/teacher_manifest.json"
+   },
+   {
+    "id": "round2",
+    "date": "2026-10-23",
+    "usd": 9.1845,
+    "calls": 914,
+    "rows": 3507,
+    "source": "evidence/text2sql-round2/data/teacher_manifest_round2.json"
+   }
+  ]
+ },
+ "hosted_nano": {
+  "date": "2026-10-26",
+  "source": "evidence/hosted-nano",
+  "what": "The untuned hosted Nano scored as a stand-in student on Scout's two distillable calls, against the teacher's labels",
+  "rows": {
+   "source-triage": 99,
+   "page-read": 33
+  },
+  "spend_usd": 0.157,
+  "student_model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "teacher_model": "nvidia/Nemotron-3-Ultra-550b-a55b"
+ },
+ "nightschool": {
+  "present": true,
+  "source": "evidence/nightschool-nebius",
+  "date": "2026-10-28",
+  "what": "the first end-to-end Night School run on Nebius, by hand: gateway on a CPU VM, a spot L40S training job, the adapter served from a Nebius Serverless Endpoint, the golden gate (rejected, never live); sanitised",
+  "verdict": "rejected",
+  "adapter_name": "student-v1",
+  "has_readme": true,
+  "numbers": {
+   "golden_agreement": "17.9%",
+   "coverage": "4.8%",
+   "precision": "81.8%",
+   "target": "95%",
+   "training_rows": "3,864",
+   "golden_rows": "458"
+  },
+  "files": [
+   "evidence/nightschool-nebius/MANIFEST.json",
+   "evidence/nightschool-nebius/NOTICE.md",
+   "evidence/nightschool-nebius/README.md",
+   "evidence/nightschool-nebius/data/final_inventory.txt",
+   "evidence/nightschool-nebius/data/gpu_intervals_and_spend.txt",
+   "evidence/nightschool-nebius/data/ledger_dump.txt",
+   "evidence/nightschool-nebius/fixes/train_job_vm_local_fixes.diff",
+   "evidence/nightschool-nebius/logs/night_eval_rerun.log",
+   "evidence/nightschool-nebius/logs/night_run1.log",
+   "evidence/nightschool-nebius/logs/seed_import.txt",
+   "evidence/nightschool-nebius/logs/training_job2_FAILED_SAVE.log",
+   "evidence/nightschool-nebius/logs/training_job3_SAVED.log",
+   "evidence/nightschool-nebius/ratchet_bom.json",
+   "evidence/nightschool-nebius/ratchet_bom.signed.json",
+   "evidence/nightschool-nebius/scripts/reuse_night.py"
+  ]
+ }
+}

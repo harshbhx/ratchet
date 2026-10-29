@@ -13,6 +13,8 @@ import { CostChart, PrecisionChart, ShareChart } from "./charts";
 import { EconomicsPanel, hasEconomics } from "./economics";
 import { DemoSplitTile, KpiSkeleton, Kpis } from "./kpis";
 import { MeasuredResults } from "./measured";
+import { LiveSince, MEASURED, MeasuredTiles } from "@/components/measured/measured";
+import { nightSchoolWording } from "@/lib/measured-model";
 import { Group, JumpBar, SECTIONS, type SectionId } from "./sections";
 import { armedFault, fmtTime } from "./model";
 import { Pipeline } from "./pipeline";
@@ -109,13 +111,15 @@ function ColdStart({ mock }: { mock: boolean }) {
     <div className="relative overflow-hidden rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
       <div aria-hidden className="bg-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:linear-gradient(to_left,black,transparent_70%)]" />
       <div className="relative max-w-2xl">
-        <p className="font-mono text-[11.5px] uppercase tracking-[0.14em] text-muted">No traffic yet</p>
+        <p className="font-mono text-[11.5px] uppercase tracking-[0.14em] text-muted">{mock ? "No traffic yet" : "Since the last restart"}</p>
         <h2 className="mt-1.5 text-[18px] font-semibold tracking-[-0.015em] text-ink">
-          {mock ? "No traffic yet. Every request will go to the teacher at first." : "No requests yet on this live gateway. The teacher answers every request here."}
+          {mock ? "No traffic yet. Every request will go to the teacher at first." : "This gateway has not answered a request since it last started."}
         </h2>
         <p className="mt-1.5 text-pretty text-[14px] leading-6 text-ink-2">
-          Send requests to <span className="font-mono text-[13px]">/v1/chat/completions</span> with an <span className="font-mono text-[13px]">X-Ratchet-Task</span>{" "}
-          header. The nightly training loop is built and tested but has not run on live traffic, so no student is trained from this traffic yet.
+          {mock
+            ? "Send requests to /v1/chat/completions with an X-Ratchet-Task header."
+            : "Its own ledger lives on the container's disk, so a restart empties it. The totals kept across restarts are above when there are any; below, what was measured on real runs, each with its date and the evidence it was read from."}{" "}
+          {MEASURED ? nightSchoolWording(MEASURED).pipeline : ""} The teacher answers every request here.
         </p>
       </div>
     </div>
@@ -181,15 +185,19 @@ function Header({
             {!mock && stats.upstream?.recording && (
               <LastCalls stats={stats} />
             )}
-            <div className="flex items-center gap-1.5">
-              <dt>Day</dt>
-              <dd className="font-medium text-ink-2 tabular">{stats.day}</dd>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <dt className="sr-only">Total requests</dt>
-              <dd className="font-medium text-ink-2 tabular">{fmtInt(stats.totals.requests)}</dd>
-              <span>requests</span>
-            </div>
+            {stats.totals.requests > 0 && (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <dt>Day</dt>
+                  <dd className="font-medium text-ink-2 tabular">{stats.day}</dd>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <dt className="sr-only">Total requests</dt>
+                  <dd className="font-medium text-ink-2 tabular">{fmtInt(stats.totals.requests)}</dd>
+                  <span>requests since it started</span>
+                </div>
+              </>
+            )}
           </dl>
         )}
       </div>
@@ -237,6 +245,8 @@ export default function DashboardPage() {
       <Container className="py-8 sm:py-10">
         <Header stats={stats} updatedAt={updatedAt} refreshing={refreshing} onRefresh={() => void refresh()} />
 
+        {stats && <LiveSince className="mt-5" />}
+
         {stats && <JumpBar show={shown} />}
 
         <div className="mt-6 space-y-4">
@@ -262,8 +272,14 @@ export default function DashboardPage() {
 
                 <Group id="overview" title="Overview" hint={mock ? "Mock models" : "Live"}>
                   <Reveal>
-                    <Kpis stats={stats} />
-                    <DemoSplitTile stats={stats} />
+                    {cold && !mock ? (
+                      <MeasuredTiles ids={["toolcall", "smoke", "hosted-nano"]} />
+                    ) : (
+                      <>
+                        <Kpis stats={stats} />
+                        <DemoSplitTile stats={stats} />
+                      </>
+                    )}
                   </Reveal>
                   <Reveal delay={0.05}>
                     <Pipeline versions={stats.versions} faultId={fault?.id} />
@@ -271,24 +287,34 @@ export default function DashboardPage() {
                 </Group>
 
                 <Group id="money" title="Money" hint="What each answer cost, and what the student saved">
-                  {hasEconomics(stats, cost) && (
+                  {cold && !mock ? (
                     <Reveal delay={0.08}>
-                      <EconomicsPanel stats={stats} cost={cost} />
+                      <MeasuredTiles ids={["labelling", "endpoint", "scout"]} />
                     </Reveal>
+                  ) : (
+                    <>
+                      {hasEconomics(stats, cost) && (
+                        <Reveal delay={0.08}>
+                          <EconomicsPanel stats={stats} cost={cost} />
+                        </Reveal>
+                      )}
+                      <Reveal delay={0.1} className="grid gap-4 lg:grid-cols-2">
+                        <CostChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
+                        <ShareChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
+                      </Reveal>
+                    </>
                   )}
-                  <Reveal delay={0.1} className="grid gap-4 lg:grid-cols-2">
-                    <CostChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
-                    <ShareChart days={stats.days} hosted={hostedServing(stats.student_serving)} />
-                  </Reveal>
                 </Group>
 
                 <Group id="versions" title="Versions and tasks" hint="Which student is serving, and for which tasks">
                   <Reveal delay={0.12}>
                     <VersionsTable versions={stats.versions} live={stats.mode === "live"} />
                   </Reveal>
-                  <Reveal delay={0.13}>
-                    <TasksTable tasks={stats.tasks} hosted={hostedServing(stats.student_serving)} />
-                  </Reveal>
+                  {!(cold && !mock) && (
+                    <Reveal delay={0.13}>
+                      <TasksTable tasks={stats.tasks} hosted={hostedServing(stats.student_serving)} />
+                    </Reveal>
+                  )}
                   {!registry.missing && (
                     <Reveal delay={0.14}>
                       <TaskRegistryPanel state={registry} mode={stats.mode} onChanged={() => void refresh()} />
@@ -312,12 +338,13 @@ export default function DashboardPage() {
                   <Reveal delay={0.17} className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
                     <ReleaseLog events={stats.events} fresh={NO_FRESH} />
                     <div className="flex min-w-0 flex-col gap-4">
-                      <PrecisionChart
+                      {cold && !mock && <MeasuredTiles ids={["retrain"]} className="md:grid-cols-1 xl:grid-cols-1" />}
+                      {!(cold && !mock) && <PrecisionChart
                         days={stats.days}
                         rollbacks={stats.events
                           .filter((e) => e.kind === "rollback")
                           .map((e) => ({ day: e.day, label: `${/\bv\d+\b/.exec(e.detail)?.[0] ?? ""} rolled back`.trim() }))}
-                      />
+                      />}
                       <Provenance bom={stats.bill_of_materials} />
                     </div>
                   </Reveal>

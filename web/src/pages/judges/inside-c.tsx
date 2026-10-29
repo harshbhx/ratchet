@@ -1,3 +1,4 @@
+import { Traffic } from "@/components/measured/measured";
 import { useId, useState } from "react";
 import { Eraser, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -243,40 +244,42 @@ export function CostChapter() {
       ) : cost.state !== "ok" ? (
         <Loading what="the cost report" />
       ) : (
-        <div className="space-y-4">
-          <Panel title="One dollar scale" aside={status && <RealBadge status={status} />}>
-            <ul className="space-y-3">
-              {rows.map((r) => (
-                <li key={r.label} className="min-w-0">
-                  <div className="flex items-baseline justify-between gap-3 text-[13px]">
-                    <span className="text-ink-2">{r.label}</span>
-                    <span className="tabular-nums font-medium text-ink">{fmtUsd(r.usd)}</span>
-                  </div>
-                  <div className="mt-1 h-2 overflow-hidden rounded-full bg-line" aria-hidden>
-                    <div className={cn("h-full rounded-full", r.tone)} style={{ width: `${((r.usd ?? 0) / max) * 100}%` }} />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-          <Facts
-            items={[
-              { label: "Saved, per token", value: fmtPct(num(perToken.savings_pct), 1) },
-              { label: "Saved, by GPU-hours", value: fmtPct(num(gpu.savings_pct), 0), hint: (num(gpu.savings_pct) ?? 0) < 0 ? "a loss at this volume" : undefined },
-              { label: "Endpoint hours", value: fmtInt(num(c.endpoint_hours)), hint: num(c.idle_share) != null ? `${fmtPct(num(c.idle_share))} idle` : undefined },
-              {
-                label: "Break-even",
-                value: num(c.break_even_student_requests_per_gpu_hour) != null ? `${fmtInt(num(c.break_even_student_requests_per_gpu_hour))} / GPU-hour` : "–",
-                hint: "student requests needed",
-              },
-            ]}
-          />
-          <p className="rounded-xl border border-line bg-surface px-4 py-3 text-[14px] leading-relaxed text-ink">
-            <span className="font-semibold">{REC_WORDS[String(c.recommendation)] ?? String(c.recommendation ?? "–")}.</span>{" "}
-            {typeof c.explanation === "string" && <span className="text-ink-2">{c.explanation}</span>}
-          </p>
-          <p className="text-[12.5px] text-muted">Prices: {String(prices.label ?? "list prices")}, not verified against a real bill.</p>
-        </div>
+        <Traffic requests={baseline ?? 0} ids={["labelling", "endpoint", "scout"]}>
+          <div className="space-y-4">
+            <Panel title="One dollar scale" aside={status && <RealBadge status={status} />}>
+              <ul className="space-y-3">
+                {rows.map((r) => (
+                  <li key={r.label} className="min-w-0">
+                    <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                      <span className="text-ink-2">{r.label}</span>
+                      <span className="tabular-nums font-medium text-ink">{fmtUsd(r.usd)}</span>
+                    </div>
+                    <div className="mt-1 h-2 overflow-hidden rounded-full bg-line" aria-hidden>
+                      <div className={cn("h-full rounded-full", r.tone)} style={{ width: `${((r.usd ?? 0) / max) * 100}%` }} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+            <Facts
+              items={[
+                { label: "Saved, per token", value: fmtPct(num(perToken.savings_pct), 1) },
+                { label: "Saved, by GPU-hours", value: fmtPct(num(gpu.savings_pct), 0), hint: (num(gpu.savings_pct) ?? 0) < 0 ? "a loss at this volume" : undefined },
+                { label: "Endpoint hours", value: fmtInt(num(c.endpoint_hours)), hint: num(c.idle_share) != null ? `${fmtPct(num(c.idle_share))} idle` : undefined },
+                {
+                  label: "Break-even",
+                  value: num(c.break_even_student_requests_per_gpu_hour) != null ? `${fmtInt(num(c.break_even_student_requests_per_gpu_hour))} / GPU-hour` : "–",
+                  hint: "student requests needed",
+                },
+              ]}
+            />
+            <p className="rounded-xl border border-line bg-surface px-4 py-3 text-[14px] leading-relaxed text-ink">
+              <span className="font-semibold">{REC_WORDS[String(c.recommendation)] ?? String(c.recommendation ?? "–")}.</span>{" "}
+              {typeof c.explanation === "string" && <span className="text-ink-2">{c.explanation}</span>}
+            </p>
+            <p className="text-[12.5px] text-muted">Prices: {String(prices.label ?? "list prices")}, not verified against a real bill.</p>
+          </div>
+        </Traffic>
       )}
     </Chapter>
   );

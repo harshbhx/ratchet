@@ -23,6 +23,13 @@
 // the gateway). If the Durable Object fails, the call goes through: the demo key's limits and the budgets still cap the spend. The key's own rpm (60)
 // and concurrency (4) are only the ceiling all visitors share.
 //
+// THE RUNNING TOTALS (LiveCounters, one Durable Object, SQLite-backed, migration v3): the ledger above is emptied by every restart, so the Worker
+// keeps the gateway's aggregate counters itself. After each paid call, when someone reads the totals while the container is up, and when the
+// container's idle timeout expires, it reads GET /ratchet/counters from the container and adds the difference to what it holds (counters.ts
+// says how a restart is told apart and why nothing is counted twice). GET /ratchet/stats/persistent answers from the Durable Object without
+// waking the container: totals since the first record, requests by route group, student tokens, Token Factory cost, Scout runs, errors.
+// Counts and dollars only, never an address, a prompt or a client. Nothing to configure and no secret: the binding is in wrangler.json.
+//
 // THE VISITOR'S ADDRESS: a request that came through the site's Pages proxy (web/public/_worker.js) reaches this Worker from Cloudflare, so its
 // cf-connecting-ip is not the visitor's. The proxy sends the visitor's address as x-ratchet-client-ip with x-ratchet-edge set to the secret
 // EDGE_TOKEN. This Worker believes x-ratchet-client-ip only when x-ratchet-edge equals ITS OWN EDGE_TOKEN (anyone can call this Worker directly with any
@@ -32,6 +39,7 @@
 // `npx wrangler pages secret put EDGE_TOKEN --project-name ratchet` for the site. Without it every main-site visitor looks like one address.
 import { Container, getContainer, type StopParams } from "@cloudflare/containers";
 import { DurableObject } from "cloudflare:workers";
+import { PERSISTENT_PATH, claimPull, isPaidCall, isStreamedRun, parseSnapshot, readView, recordSnapshot, type CounterStore, type PublicView, type Snapshot } from "./counters";
 import { videoRedirect } from "./video";
 import { dailyLimits, forwardedHeaders, overQuota, takeQuota, usesDemoKey, visitorIp, type QuotaNamespace } from "./visitor";
 import { API_WAIT_MS, READ_RETRY_MS, WAKE_AFTER_MS, isRetryableRead, warmingFor, warmingJson, warmingPage, wantsPage } from "./waking";
@@ -45,6 +53,8 @@ interface Env {
   EDGE_TOKEN?: string;
   /** The daily counters, one object per bucket, day and visitor (wrangler.json). Absent: no daily limit. */
   VISITOR_QUOTA?: DurableObjectNamespace<VisitorQuota>;
+  /** The running totals that survive restarts (wrangler.json). Absent: /ratchet/stats/persistent says nothing is recorded. */
+  LIVE_COUNTERS?: DurableObjectNamespace<LiveCounters>;
   /** Calls per visitor per UTC day for the `try` and `scout` buckets: default 3, "0" is off. Not RATCHET_*: those are passed to the gateway. */
   EDGE_DAILY_TRIES?: string;
   EDGE_DAILY_SCOUT?: string;
@@ -102,6 +112,20 @@ export class RatchetLive extends Container<Env> {
     console.log(JSON.stringify({ event: "container_start" }));
   }
 
+  /** The idle timeout: take the counters while the container is still up, then stop it as the default does. A failure here never keeps it running. */
+  override async onActivityExpired(): Promise<void> {
+    try {
+      if (this.env.LIVE_COUNTERS) {
+        const answer = await this.containerFetch(new Request("http://container/ratchet/counters"));
+        const snap = answer.ok ? parseSnapshot(await answer.json()) : null;
+        if (snap) await countersOf(this.env).record(snap);
+      }
+    } catch {
+      console.log(JSON.stringify({ event: "counters_error", where: "idle" }));
+    }
+    await super.onActivityExpired();
+  }
+
   override onStop(params: StopParams): void {
     console.log(JSON.stringify({ event: "container_stop", exitCode: params.exitCode, reason: params.reason }));
   }
@@ -123,6 +147,61 @@ export class VisitorQuota extends DurableObject {
     await this.ctx.storage.deleteAll();
   }
 }
+
+/** The gateway's running totals: one object that holds them all, so two calls never write at once (counters.ts). */
+export class LiveCounters extends DurableObject {
+  private get store(): CounterStore {
+    return this.ctx.storage as unknown as CounterStore;
+  }
+
+  async record(snap: Snapshot): Promise<PublicView> {
+    return recordSnapshot(this.store, snap);
+  }
+
+  async view(): Promise<PublicView> {
+    return readView(this.store);
+  }
+
+  /** True when no pull started within `gapMs`: a burst of calls takes one snapshot. */
+  async claim(gapMs: number): Promise<boolean> {
+    return claimPull(this.store, gapMs);
+  }
+}
+
+/** The one counters object, by name. */
+function countersOf(env: Env) {
+  const ns = env.LIVE_COUNTERS as DurableObjectNamespace<LiveCounters>;
+  return ns.get(ns.idFromName("totals"));
+}
+
+/** Read the container's counters and add them to the totals. Never throws: the counters are a courtesy, not part of any request. */
+async function pullCounters(env: Env, origin: string, gapMs: number): Promise<void> {
+  if (!env.LIVE_COUNTERS) return;
+  try {
+    const counters = countersOf(env);
+    if (!(await counters.claim(gapMs))) return;
+    const answer = await getContainer(env.RATCHET_LIVE).fetch(new Request(new URL("/ratchet/counters", origin)));
+    const snap = answer.ok ? parseSnapshot(await answer.json()) : null;
+    if (snap) await counters.record(snap);
+  } catch {
+    console.log(JSON.stringify({ event: "counters_error", where: "pull" }));
+  }
+}
+
+/** The totals for GET /ratchet/stats/persistent. While the container is up the Worker first brings them up to date; it never wakes it. */
+async function persistentTotals(env: Env, origin: string): Promise<Response> {
+  const headers = { "content-type": "application/json", "cache-control": "no-store" };
+  if (!env.LIVE_COUNTERS) return new Response(JSON.stringify({ recorded: false, since: null, updated: null, instances: 0, totals: null }), { headers });
+  try {
+    const state = await getContainer(env.RATCHET_LIVE).getState();
+    if (state.status === "running" || state.status === "healthy") await pullCounters(env, origin, 5000);
+    return new Response(JSON.stringify(await countersOf(env).view()), { headers });
+  } catch {
+    return new Response(JSON.stringify({ recorded: false, since: null, updated: null, instances: 0, totals: null }), { headers });
+  }
+}
+
+const STREAM_RUN_MS = 25_000;
 
 /** How long the readiness check waits for one answer. */
 const READY_CHECK_MS = 2500;
@@ -151,7 +230,15 @@ export default {
     const refused = await overQuota(quotas, dailyLimits(env), request.method, url.pathname, request.headers, ip);
     if (refused) return refused;
 
+    // The running totals: answered here, from the Durable Object.
+    if (request.method === "GET" && url.pathname === PERSISTENT_PATH) return persistentTotals(env, url.origin);
+
     const live = getContainer(env.RATCHET_LIVE);
+    // After a paid call, catch the totals up (a Scout stream answers at once and runs on, so its pull waits for the run).
+    const catchUp = (): void => {
+      if (isPaidCall(request.method, url.pathname)) ctx.waitUntil(pullCounters(env, url.origin, 3000));
+      else if (isStreamedRun(request.method, url.pathname)) ctx.waitUntil(sleep(STREAM_RUN_MS).then(() => pullCounters(env, url.origin, 3000)));
+    };
 
     if (url.pathname === "/__ready") {
       const answer = live.fetch(new Request(new URL("/healthz", url.origin)));
@@ -197,7 +284,9 @@ export default {
       ]);
       if (ok) {
         try {
-          return await live.fetch(withDemoKey(request, env, ip));
+          const answer = await live.fetch(withDemoKey(request, env, ip));
+          catchUp();
+          return answer;
         } catch {
           return warmingJson();
         }

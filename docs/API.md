@@ -45,6 +45,7 @@ Sections after the route table: [OpenAI endpoints](#openai-endpoints), [Authenti
 | POST | `/v1/ratchet/feedback` | both | [api](#access-levels) | A verdict on a served answer, optionally with a correction stored as a human label ([Feedback](#feedback)) |
 | GET | `/v1/ratchet/requests/{request_id}` | both | [api](#access-levels) | One request this API key sent, by its id: metadata and failures, never text ([Request ids](#request-ids)) |
 | GET | `/ratchet/stats` | both | [dashboard](#access-levels) | Everything the dashboard shows |
+| GET | `/ratchet/counters` | both | [dashboard](#access-levels) | Cumulative aggregates of this gateway process (requests by route group, student tokens, Token Factory cost, Scout runs, errors), for an outside keeper of running totals ([Counters](#get-ratchetcounters)) |
 | GET | `/ratchet/requests/{request_id}` | both | [dashboard](#access-levels) | Any request by its id: metadata and failures, never text ([Request ids](#request-ids)) |
 | GET | `/metrics` | both | [metrics](#access-levels) | Prometheus metrics, text format 0.0.4 ([Metrics](#get-metrics)) |
 | GET | `/ratchet/bom` | both | [bom](#access-levels) | Bill of materials for the whole ledger (provenance) |
@@ -1033,6 +1034,20 @@ print(resp.output_text)
 ## Unsupported endpoints
 
 `POST /v1/moderations` and the stored-response routes (`GET` and `DELETE /v1/responses/{id}`, `POST /v1/responses/{id}/cancel`, `GET /v1/responses/{id}/input_items`) answer 404 `unsupported_endpoint` after the key check, with a message that says why and links [OpenAI endpoints](#openai-endpoints), so a library that calls them fails with a clear reason (`openai.NotFoundError`, `e.code == "unsupported_endpoint"`). Any other path under `/v1/` is a 404 `unknown_url`.
+
+## GET `/ratchet/counters`
+
+Access level `dashboard`, like `/ratchet/stats`. Cumulative aggregates of this gateway process, small enough to poll after every paid call. The ledger of the live demo is on the container's own disk, so a restart empties it; the Worker in front of the container (`deploy/cloudflare-live`) therefore keeps running totals outside it, from the difference between two of these snapshots (`GET /ratchet/stats/persistent` on that Worker).
+
+```json
+{"instance": "9f2c...", "started": 1793000000.0, "mode": "live",
+ "requests": 41, "requests_teacher": 30, "requests_split": 4, "requests_student": 7,
+ "student_tokens_in": 5120, "student_tokens_out": 1840, "cost_usd": 0.0412, "errors": 1, "scout_runs": 3}
+```
+
+- `instance` names the process and `started` is when it began. Every number only grows while the instance is the same; a new instance counts from its own empty ledger, so a reader adds the difference of two snapshots of one instance and the whole first snapshot of a new one.
+- `requests` counts gateway calls (Scout's model calls included, embeddings pass-through left out), `requests_split` the live demo's random split (route `demo_split`), `requests_student` the other student-served ones and `requests_teacher` the rest. `student_tokens_*` are the student calls' tokens only: the ledger keeps no teacher token counts. `cost_usd` is what requests and failed requests spent (Token Factory list prices). `scout_runs` counts the Scout runs this process admitted.
+- Counts and dollars only: no text, no address, no client name, no end user.
 
 ## GET `/ratchet/stats`
 

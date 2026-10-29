@@ -1704,6 +1704,29 @@
         ]
       }
     },
+    "/ratchet/counters": {
+      "get": {
+        "summary": "Counters",
+        "description": "Cumulative aggregates of this gateway process, for something outside the container to keep running totals of (the live\nWorker does, so they survive a restart): requests in all and by route group, the student calls' tokens, what Token\nFactory calls cost (requests and failures), Scout runs and errors. `instance` names this process and `started` is when\nit began: every number grows while the instance is the same and a new instance starts again from its own ledger, so a\nreader adds the difference between two snapshots of one instance and the first snapshot of a new one. Counts and dollars\nonly, never text, an address or a client. Read like /ratchet/stats.",
+        "operationId": "counters_ratchet_counters_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Counters Ratchet Counters Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Stats and provenance"
+        ]
+      }
+    },
     "/ratchet/requests/{request_id}": {
       "get": {
         "summary": "Request Lookup",

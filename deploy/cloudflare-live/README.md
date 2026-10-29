@@ -76,6 +76,16 @@ without waking the container, with `retry-after` set to the seconds until 00:00 
 (the gateway's own shape) for Scout. If the Durable Object fails the call goes through (the site key's limits and the budgets still hold) and the Worker logs
 `quota_error` with no address.
 
+**Running totals that survive restarts.** The gateway's ledger is on the container's own disk, so a restart or a redeploy empties `/ratchet/stats`. The Worker therefore
+keeps aggregate totals itself, in one more SQLite-backed Durable Object (`LiveCounters`, binding `LIVE_COUNTERS`, migration `v3`): after every paid call, when the totals
+are read while the container is up, and when the container's idle timeout expires, it reads `GET /ratchet/counters` from the container and adds the difference since
+its last reading of the same instance (a new random `instance` id means a restart, so that reading counts in full). `GET /ratchet/stats/persistent` answers from the
+Durable Object without waking the container: `{"recorded", "since", "updated", "instances", "totals"}` with requests by route group, student tokens, Token Factory
+cost, Scout runs and errors since the first record (`recorded: false` while nothing is stored, and the pages then show their measured snapshot instead). Counts and
+dollars only: no address, prompt, client or key. What can be missed is what a container counted after the Worker's last reading of it, if it is killed straight after.
+No secret and no setting; **the migration is applied by `wrangler deploy`** (the deploy workflow), so there is nothing else to run. `curl -s https://live.ratchet.dualmindlab.tech/ratchet/stats/persistent`
+checks it after the deploy.
+
 Change the limits in the dashboard like any other setting, with the variables `EDGE_DAILY_TRIES` and `EDGE_DAILY_SCOUT` (a whole number; `0` turns that bucket
 off). They have no `RATCHET_` prefix on purpose: the Worker passes every `RATCHET_*` variable to the gateway, which warns about names it does not know. The Worker
 picks them up at once, without a container restart.

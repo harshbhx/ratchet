@@ -40,6 +40,13 @@ export const JUDGE_CHAPTERS: JudgeChapter[] = [
     tour: "Exam 1 was written by the teacher and exam 2 by a different model, for testing only. Both adapters, the teacher and the untrained model took both; the charts show every score with its range.",
   },
   {
+    id: "measured",
+    group: "start",
+    label: "Measured runs",
+    tourTitle: "Measured, with dates",
+    tour: "Every run and cost on this page, each with the day it was measured and a link to the evidence folder it was read from: the endpoint speed tests, the Nebius retrain, the recorded Scout runs, the live smoke run and the labelling cost.",
+  },
+  {
     id: "real",
     group: "start",
     label: "What's real",

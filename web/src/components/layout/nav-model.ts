@@ -20,6 +20,7 @@ export const STORY_NAV: readonly NavItem[] = [
   { label: "Learn", href: "#learn", kind: "section" },
   { label: "The bill", href: "#bill", kind: "section" },
   { label: "Scout", href: "#scout", kind: "section" },
+  { label: "For judges", href: "/judges", kind: "route" },
   { label: "Docs", href: DOCS_URL as `https://${string}`, kind: "external" },
 ];
 

@@ -19,6 +19,10 @@
       {
         "class_name": "VisitorQuota",
         "name": "VISITOR_QUOTA"
+      },
+      {
+        "class_name": "LiveCounters",
+        "name": "LIVE_COUNTERS"
       }
     ]
   },
@@ -33,6 +37,12 @@
       "tag": "v2",
       "new_sqlite_classes": [
         "VisitorQuota"
+      ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": [
+        "LiveCounters"
       ]
     }
   ],
