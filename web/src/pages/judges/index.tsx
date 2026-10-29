@@ -20,6 +20,7 @@ import { CheckChapter, LimitsChapter, SponsorsChapter } from "./check";
 import { ChapterProvider, useChapters } from "./ui";
 import { ChecklistSection, LinksSection, PackHero, ProofSection } from "./pack";
 import { JUDGES_VIDEO } from "./real";
+import { JudgeMode } from "./judge-mode";
 
 /** The page's sections, in order: what the sticky bar links to and what each section's header says. */
 const SECTIONS = [
@@ -175,6 +176,7 @@ function Page() {
   const ids = useMemo(() => SECTIONS.map((s) => s.id) as string[], []);
   const current = useCurrentSection(ids);
   const headerH = useHeaderHeight();
+  const { stats } = useJudges();
   const [, setParams] = useSearchParams();
 
   useEffect(() => {
@@ -205,6 +207,7 @@ function Page() {
       <SectionBar current={current} top={headerH} onTour={startTour} />
 
       <Container className="pb-24">
+        <JudgeMode mode={stats?.mode ?? null} />
         <ProofSection />
         <LinksSection />
         <ChecklistSection />
